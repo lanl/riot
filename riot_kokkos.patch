@@ -1,0 +1,65 @@
+diff --git a/core/src/Cuda/Kokkos_Cuda_Parallel_Team.hpp b/core/src/Cuda/Kokkos_Cuda_Parallel_Team.hpp
+index 44bcd5c0b..6886b2d37 100644
+--- a/core/src/Cuda/Kokkos_Cuda_Parallel_Team.hpp
++++ b/core/src/Cuda/Kokkos_Cuda_Parallel_Team.hpp
+@@ -197,7 +197,7 @@ class TeamPolicyInternal<Kokkos::Cuda, Properties...>
+     // arbitrarily setting level 1 scratch limit to 20MB, for a
+     // Volta V100 that would give us about 3.2GB for 2 teams per SM
+     constexpr size_t max_l1_scratch_size =
+-        static_cast<size_t>(20) * 1024 * 1024;
++        static_cast<size_t>(1)  * 1024 * 1024 * 1024;
+ 
+     size_t max_shmem = Cuda().cuda_device_prop().sharedMemPerBlock;
+     return (level == 0 ? max_shmem - max_reserved_shared_mem_per_team
+diff --git a/core/src/HIP/Kokkos_HIP_TeamPolicyInternal.hpp b/core/src/HIP/Kokkos_HIP_TeamPolicyInternal.hpp
+index eb1f4557d..17f921357 100644
+--- a/core/src/HIP/Kokkos_HIP_TeamPolicyInternal.hpp
++++ b/core/src/HIP/Kokkos_HIP_TeamPolicyInternal.hpp
+@@ -160,7 +160,7 @@ class TeamPolicyInternal<HIP, Properties...>
+     // arbitrarily setting level 1 scratch limit to 20MB, for a
+     // MI250 that would give us about 4.4GB for 2 teams per CU
+     constexpr size_t max_l1_scratch_size =
+-        static_cast<size_t>(20 * 1024 * 1024);
++        static_cast<size_t>(1  * 1024 * 1024 * 1024);
+ 
+     size_t max_shmem = HIP().hip_device_prop().sharedMemPerBlock;
+     return (level == 0 ? max_shmem - max_reserved_shared_mem_per_team
+diff --git a/core/src/Kokkos_TypeInfo.hpp b/core/src/Kokkos_TypeInfo.hpp
+index ad0d7ed12..27e1b1aea 100644
+--- a/core/src/Kokkos_TypeInfo.hpp
++++ b/core/src/Kokkos_TypeInfo.hpp
+@@ -11,7 +11,7 @@
+ #include <Kokkos_Macros.hpp>
+ 
+ // NVCC+MSVC doesn't work at all - it simply reports "T" inside type_name
+-#if !(defined(KOKKOS_COMPILER_NVCC) && defined(KOKKOS_COMPILER_MSVC))
++#if 0 && !(defined(KOKKOS_COMPILER_NVCC) && defined(KOKKOS_COMPILER_MSVC))
+ 
+ #define KOKKOS_ENABLE_IMPL_TYPEINFO
+ 
+diff --git a/core/src/OpenMP/Kokkos_OpenMP_Team.hpp b/core/src/OpenMP/Kokkos_OpenMP_Team.hpp
+index 0efd57206..0d9c658fd 100644
+--- a/core/src/OpenMP/Kokkos_OpenMP_Team.hpp
++++ b/core/src/OpenMP/Kokkos_OpenMP_Team.hpp
+@@ -86,7 +86,7 @@ class TeamPolicyInternal<Kokkos::OpenMP, Properties...>
+ 
+   inline static int scratch_size_max(int level) {
+     return (level == 0 ? 1024 * 32 :  // Roughly L1 size
+-                20 * 1024 * 1024);    // Limit to keep compatibility with CUDA
++            1  * 1024 * 1024 * 1024); // Limit to keep compatibility with CUDA
+   }
+ 
+   //----------------------------------------
+diff --git a/core/src/Serial/Kokkos_Serial_Parallel_Team.hpp b/core/src/Serial/Kokkos_Serial_Parallel_Team.hpp
+index d5f5946f2..fa882eaaf 100644
+--- a/core/src/Serial/Kokkos_Serial_Parallel_Team.hpp
++++ b/core/src/Serial/Kokkos_Serial_Parallel_Team.hpp
+@@ -99,7 +99,7 @@ class TeamPolicyInternal<Kokkos::Serial, Properties...>
+   }  // Use arbitrary large number, is meant as a vectorizable length
+ 
+   inline static int scratch_size_max(int level) {
+-    return (level == 0 ? 1024 * 32 : 20 * 1024 * 1024);
++    return (level == 0 ? 1024 * 32 : 1  * 1024 * 1024 * 1024);
+   }
+   /** \brief  Specify league size, request team size */
+   TeamPolicyInternal(const execution_space& space, int league_size_request,

@@ -1,0 +1,15 @@
+[submodule "external/Catch2"]
+	path = external/Catch2
+	url = https://github.com/catchorg/Catch2
+[submodule "external/kokkos-kernels"]
+	path = external/kokkos-kernels
+	url = https://github.com/kokkos/kokkos-kernels
+[submodule "external/external/parthenon"]
+	path = external/external/parthenon
+	url = https://github.com/parthenon-hpc-lab/parthenon
+[submodule "external/singularity-eos"]
+	path = external/singularity-eos
+	url = https://github.com/lanl/singularity-eos
+[submodule "external/singularity-opac"]
+	path = external/singularity-opac
+	url = https://github.com/lanl/singularity-opac

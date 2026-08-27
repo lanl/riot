@@ -1,0 +1,2 @@
+These are the materials needed for the simplified problem.  Run to generate the actual data:
+./sesame2spiner *.dat

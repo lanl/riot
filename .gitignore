@@ -1,0 +1,65 @@
+# Object and binary directories
+bin/
+BIN/
+build*/
+generated/
+debug/
+
+# Visualization package files
+.smhist
+
+# Mac OS metadata
+.DS_Store
+
+# editor temp files
+*~
+*.swp
+
+# Gcov: GCC coverage testing tool- data files
+*.gcno
+*.gcda
+
+# Gcov log files
+*.gcov
+
+# Lcov: graphical frontend for Gcov- tracefiles
+*.info
+
+# genhtml test case description format produced by gendesc
+*.desc
+
+# User editor files
+.vscode
+.cache/
+compile_commands.json
+
+# Tex output
+*.aux
+*.log
+*.synctex.gz
+
+# Python artifacts
+auto
+script/auto
+script/.ipynb_checkpoints/
+.ipynb_checkpoints
+*.pyc
+__pycache__
+
+# AI artifacts
+.aider.*
+
+# test-based input deck artifacts
+inputs/adiabatic_compression.rin
+inputs/bubble_source.dat
+
+# Ignore .rin input files (converted to .py)
+*.rin
+
+# Prompt-spectrum problem: generated opacity table + its generator and reference data
+inputs/radiation_transport/prompt/make_prompt_opacity_table.py
+inputs/radiation_transport/prompt/prompt_exact.txt
+inputs/radiation_transport/prompt/prompt_opacity.sp5
+inputs/radiation_transport/prompt/prompt.png
+inputs/radiation_transport/prompt/*.phdf
+inputs/radiation_transport/prompt/*.xdmf

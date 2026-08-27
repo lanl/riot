@@ -1,0 +1,23 @@
+These are the SESAME materials needed for the double-shell problem.  The Spiner EOS
+tables (materials.sp5) are NOT distributed; generate them from the *.dat descriptors 
+with
+sesame2spiner (built alongside singularity-eos):
+
+    ./sesame2spiner -s materials.sp5 *.dat
+
+You will have to create a sesameFilesDir.txt that points sesame2spiner 
+at the SESAME data directories.
+
+Material -> SESAME id map (see doubleshell.py MATERIALS):
+    al.dat    3720   Aluminum (ablator)
+    au.dat    2705   Gold (gap liner)
+    be.dat    2024   Beryllium (tamper)
+    ch.dat    7592   CH / plastic (foam cushion, glue)
+    dt.dat    1018   DT gas (LLNL)
+    glass.dat 7387   Glass (fill tube)
+    he.dat    5762   Helium (background; only used if not treated as ideal gas)
+    mo.dat    3539   Molybdenum (alternate inner shell)
+    w.dat     3541   Tungsten (inner shell)
+
+Note: doubleshell.py initializes Helium as an IdealGas (material0), so he.dat is only
+needed if you switch the background to a tabular EOS.
