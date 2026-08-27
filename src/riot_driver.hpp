@@ -39,6 +39,7 @@ class RiotDriver : public EvolutionDriver {
   TaskCollection RiotPostStepTasks();
   virtual TaskListStatus Step();
   void ReportBlockHistogram();
+  void OutputDownstreamCycleDiagnostics();
   void ReportMemUsage();
   static Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin);
   static std::vector<TaskCollectionFnPtr> OperatorSplitTasks;

@@ -157,6 +157,7 @@ template <LoopConstraint... Cs>
 struct LoopType {
   using idx_space_t = RiotLoop::IndexSpace<GetLoopTag<Cs...>(), GetInnerTag<Cs...>()>;
   using idx_range_t = RiotLoop::InnerIndexRange<idx_space_t>;
+  using inner_idx_t = typename idx_space_t::inner_idx_t;
 
   template <class MeshDataOrMeshBlockData>
   static idx_space_t GetIndexSpace(parthenon::IndexDomain domain, int halo, int nblocks,

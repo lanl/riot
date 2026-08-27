@@ -536,9 +536,15 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
   auto &materials = pm->packages.Get("materials");
   auto &strength_mats = materials->Param<std::vector<int>>("strength_mats");
 
-  auto v =
-      riot::MakePack<ccbulk::pressure, ccmat::volume_fraction, cm::deviatoric_stress>(
-          state, strength_mats);
+  const bool do_ionization = pm->packages.Get("riot")->Param<bool>("do_ionization");
+  bool do_plasma_viscosity = false;
+  if (do_ionization) {
+    do_plasma_viscosity = pm->packages.Get("ionization")->Param<bool>("plasma_viscosity");
+  }
+
+  auto v = riot::MakePack<ccbulk::pressure, ccmat::volume_fraction, cm::deviatoric_stress,
+                          ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(
+      state, strength_mats);
   const int nblocks = v.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
   auto vsrc = riot::MakePack<ccbulk::momentum>(src);
@@ -548,10 +554,12 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, nblocks, state, TE::CC);
   idx_space.template AddPerPointScratch<Real>(1);
   idx_space.template AddPerPointScratch<Real>(1);
+  idx_space.template AddPerPointScratch<Real>(1);
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
+        auto visc_stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto geom = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto &coords = v.GetCoordinates(b);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
@@ -591,6 +599,22 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
               }
             });
           }
+        }
+
+        if (do_plasma_viscosity) {
+          auto pv = RiotLoop::make_pack_view(idx_range, v);
+          idx_range.TeamBarrier();
+          RiotLoop::inner(idx_range, [&](const auto kji) {
+            if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+              const Real Pi_tt = 2.0 * pv(ccbulk::strain_rate(3), kji) *
+                                 pv(ccbulk::ion_shear_viscosity(), kji);
+              stress(kji) -= Pi_tt;
+            } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+              const Real Pi_pp = 2.0 * pv(ccbulk::strain_rate(5), kji) *
+                                 pv(ccbulk::ion_shear_viscosity(), kji);
+              stress(kji) -= Pi_pp;
+            }
+          });
         }
 
         idx_range.TeamBarrier();

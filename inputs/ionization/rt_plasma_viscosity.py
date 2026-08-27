@@ -194,7 +194,7 @@ def make_input():
 
     riot.input(
         "ionization",
-        Te_root_tol=1e-20,
+        root_tol=1e-20,
         fully_ionized=True,
         # ei coupling
         electron_ion_coupling=True,

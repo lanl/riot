@@ -72,6 +72,7 @@ set (SRC_LIST
   radiation_diffusion/multigroup_diffusion-package.cpp 
   radiation_diffusion/multigroup_diffusion-solver.cpp
   radiation_diffusion/multigroup_diffusion-tasks.cpp
+  radiation_diffusion/multigroup_diffusion-tasks-init.cpp
   radiation_diffusion/material_helpers.hpp
   radiation_diffusion/polylog.hpp
 

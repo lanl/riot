@@ -476,6 +476,20 @@ void RiotDriver::ReportBlockHistogram() {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void RiotDriver::OutputDownstreamCycleDiagnostics
+//! \brief
+void RiotDriver::OutputDownstreamCycleDiagnostics() {
+  try {
+    auto pkg = pmesh->packages.Get("multigroup_diffusion_package");
+    std::cout << " lin_sol_iters=" << std::setw(2)
+              << pkg->Param<int>("step_solver_iterations");
+    std::cout << " newt_iters=" << std::setw(2)
+              << pkg->Param<int>("step_newt_iterations");
+  } catch (...) {
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::ReportMemUsage
 //! \brief
 void RiotDriver::ReportMemUsage() {

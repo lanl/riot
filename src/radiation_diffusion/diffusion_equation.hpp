@@ -48,28 +48,27 @@ CalculateFluxes(std::shared_ptr<parthenon::MeshData<Real>> &md_mat,
 
   for (int dim = 0; dim < ndim; ++dim) {
     const auto te = dim == 0 ? TE::F1 : (dim == 1 ? TE::F2 : TE::F3);
-    const int ioff = dim == 0;
-    const int joff = dim == 1;
-    const int koff = dim == 2;
-    const int dir = dim + 1;
     // The diffusion coefficient arrays are cell mem aligned
-    using lt = RiotUtils::LoopType<LoopConstraint::NoGhost>;
+    using lt = RiotUtils::LoopType<>;
     auto idx_space =
         lt::GetIndexSpace(IndexDomain::interior, 0, pack.GetNBlocks(), md.get(), te);
+
+    const auto dir = static_cast<parthenon::CoordinateDirection>(dim + 1);
+    auto offset = idx_space.GetDelta(dir);
     RiotLoop::outer(
         idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           const int ngroup = pack.GetSize(b, var_t());
-          RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-            const Real one_over_dx = pack_mat(b, te, DeltaX(), k, j, i);
-            for (int n = 0; n < ngroup; ++n) {
-              const Real Dup = pack_mat(b, te, Dup_t(n), k, j, i);
-              const Real Dlo = pack_mat(b, te, Dlo_t(n), k, j, i);
-              const Real vup = pack(b, var_t(n), k, j, i);
-              const Real vlo = pack(b, var_t(n), k - koff, j - joff, i - ioff);
-              pack.flux(b, dir, var_t(n), k, j, i) =
-                  -(Dup * vup - Dlo * vlo) * one_over_dx;
-            }
-          });
+          auto one_over_dx = make_var_view(idx_range, pack_mat, te, DeltaX());
+          for (int n = 0; n < ngroup; ++n) {
+            auto Dup = make_var_view(idx_range, pack_mat, te, Dup_t(n));
+            auto Dlo = make_var_view(idx_range, pack_mat, te, Dlo_t(n));
+            auto vv = make_var_view(idx_range, pack, var_t(n));
+            auto fv = make_flux_view(idx_range, pack, dir, var_t(n));
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              fv(kji) =
+                  -(Dup(kji) * vv(kji) - Dlo(kji) * vv(kji - offset)) * one_over_dx(kji);
+            });
+          }
         });
   }
   return TaskStatus::complete;
@@ -96,31 +95,31 @@ FluxMultiplyMatrix(std::shared_ptr<parthenon::MeshData<Real>> &md_mat,
   auto pack_mat = desc_mat.GetPack(md_mat.get());
 
   using TE = parthenon::TopologicalElement;
-  using lt = RiotUtils::LoopType<LoopConstraint::NoGhost>;
+  using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, pack_in.GetNBlocks(),
                                      md_in.get(), TE::CC);
+  const auto di = idx_space.GetDelta(X1DIR);
+  const auto dj = idx_space.GetDelta(X2DIR);
+  const auto dk = idx_space.GetDelta(X3DIR);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         const int ngroup = pack_in.GetSize(b, var_t());
-        RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-          const Real AreaX1p = pack_mat(b, TE::F1, face_area(), k, j, i + 1);
-          const Real AreaX1m = pack_mat(b, TE::F1, face_area(), k, j, i);
-          const Real AreaX2p = pack_mat(b, TE::F2, face_area(), k, j + (ndim > 1), i);
-          const Real AreaX2m = pack_mat(b, TE::F2, face_area(), k, j, i);
-          const Real AreaX3p = pack_mat(b, TE::F3, face_area(), k + (ndim > 2), j, i);
-          const Real AreaX3m = pack_mat(b, TE::F3, face_area(), k, j, i);
-          const Real iVol = pack_mat(b, volume(), k, j, i);
-
-          for (int n = 0; n < ngroup; ++n) {
-            Real div_flux = AreaX1p * pack_in.flux(b, X1DIR, var_t(n), k, j, i + 1) -
-                            AreaX1m * pack_in.flux(b, X1DIR, var_t(n), k, j, i);
-            div_flux += AreaX2p * pack_in.flux(b, X2DIR, var_t(n), k, j + (ndim > 1), i) -
-                        AreaX2m * pack_in.flux(b, X2DIR, var_t(n), k, j, i);
-            div_flux += AreaX3p * pack_in.flux(b, X3DIR, var_t(n), k + (ndim > 2), j, i) -
-                        AreaX3m * pack_in.flux(b, X3DIR, var_t(n), k, j, i);
-            pack_out(b, var_t(n), k, j, i) += div_flux * iVol * fac;
-          }
-        });
+        auto AreaX1 = make_var_view(idx_range, pack_mat, TE::F1, face_area());
+        auto AreaX2 = make_var_view(idx_range, pack_mat, TE::F2, face_area());
+        auto AreaX3 = make_var_view(idx_range, pack_mat, TE::F3, face_area());
+        auto iVol = make_var_view(idx_range, pack_mat, TE::CC, volume());
+        for (int n = 0; n < ngroup; ++n) {
+          auto fv1 = make_flux_view(idx_range, pack_in, X1DIR, var_t(n));
+          auto fv2 = make_flux_view(idx_range, pack_in, X2DIR, var_t(n));
+          auto fv3 = make_flux_view(idx_range, pack_in, X3DIR, var_t(n));
+          auto vv = make_var_view(idx_range, pack_out, var_t(n));
+          RiotLoop::inner(idx_range, [&](const auto kji) {
+            Real div_flux = AreaX1(kji + di) * fv1(kji + di) - AreaX1(kji) * fv1(kji);
+            div_flux += AreaX2(kji + dj) * fv2(kji + dj) - AreaX2(kji) * fv2(kji);
+            div_flux += AreaX3(kji + dk) * fv3(kji + dk) - AreaX3(kji) * fv3(kji);
+            vv(kji) += div_flux * iVol(kji) * fac;
+          });
+        }
       });
   return TaskStatus::complete;
 }
@@ -148,25 +147,26 @@ CalculateLocalLinear(std::shared_ptr<parthenon::MeshData<Real>> &md_mat,
                                      md_mat.get(), TE::CC);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-        RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-          for (int g = 0; g < ngroup; ++g) {
-            pack_out(b, var_t(g), k, j, i) =
-                pack_mat(b, diag_loc_t(g), k, j, i) * pack_in(b, var_t(g), k, j, i);
-          }
-
+        for (int g = 0; g < ngroup; ++g) {
+          auto voutv = make_var_view(idx_range, pack_out, var_t(g));
+          auto vinv = make_var_view(idx_range, pack_in, var_t(g));
+          auto diagv = make_var_view(idx_range, pack_mat, diag_loc_t(g));
+          RiotLoop::inner(idx_range,
+                          [&](const auto kji) { voutv(kji) = diagv(kji) * vinv(kji); });
           if constexpr (group_couple) {
-            for (int g = 0; g < ngroup; ++g) {
-              for (int gp = 0; gp < ngroup; ++gp) {
-                if (gp != g) {
-                  pack_out(b, var_t(g), k, j, i) -=
-                      pack_mat(b, MultiGroupVars::sigma(gp), k, j, i) *
-                      pack_mat(b, MultiGroupVars::dSdT(g), k, j, i) *
-                      pack_in(b, var_t(gp), k, j, i);
-                }
+            auto dsdtv = make_var_view(idx_range, pack_mat, MultiGroupVars::dSdT(g));
+            for (int gp = 0; gp < ngroup; ++gp) {
+              if (gp != g) {
+                auto sigmapv =
+                    make_var_view(idx_range, pack_mat, MultiGroupVars::sigma(gp));
+                auto vpv = make_var_view(idx_range, pack_in, var_t(gp));
+                RiotLoop::inner(idx_range, [&](const auto kji) {
+                  voutv(kji) -= sigmapv(kji) * dsdtv(kji) * vpv(kji);
+                });
               }
             }
           }
-        });
+        }
       });
   return TaskStatus::complete;
 }

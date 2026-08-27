@@ -87,6 +87,31 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("err_thr",
              pin->GetOrAddReal(input_block, "err_thr", 1.0e-8,
                                "Residual error threshold for Jacobi integration"));
+  const int nreduce_limit = pin->GetOrAddInteger(
+      input_block, "nreduce_limit", 0,
+      "Maximum number of timestep reductions permitted when the implicit Jacobi solve "
+      "diverges.  On divergence the operator-split step is subcycled with dt reduced by "
+      "reduce_factor and re-solved from the pristine base state.  Setting to 0 disables "
+      "subcycling (a diverging solve aborts the run).");
+  const int reduce_factor = pin->GetOrAddInteger(
+      input_block, "reduce_factor", 2,
+      "Integer factor by which the subcycle timestep is divided each time the implicit "
+      "Jacobi solve diverges (e.g. 2 halves dt). Setting to -1 disables the stall "
+      "detector entirely in which only a NaN/Inf residual can fail a solve)");
+  const int ndiverge_limit = pin->GetOrAddInteger(
+      input_block, "ndiverge_limit", -1,
+      "Number of consecutive Jacobi iterations without improvement on the best residual "
+      "seen so far that constitutes divergence and triggers a dt reduction/subcycle.");
+  PARTHENON_REQUIRE(nreduce_limit >= 0,
+                    "radiation_transport/jacobi/nreduce_limit must be >= 0!");
+  PARTHENON_REQUIRE(reduce_factor > 1,
+                    "radiation_transport/jacobi/reduce_factor must be an integer > 1!");
+  PARTHENON_REQUIRE(
+      ndiverge_limit == -1 || ndiverge_limit > 0,
+      "radiation_transport/jacobi/ndiverge_limit must be > 0, or -1 to disable");
+  params.Add("nreduce_limit", nreduce_limit);
+  params.Add("reduce_factor", reduce_factor);
+  params.Add("ndiverge_limit", ndiverge_limit);
 
   // Timestep controllers
   params.Add("dt_ratio_hyperbolic",
@@ -111,9 +136,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                  input_block, "verbose", 0,
                  "Sets verbosity of implicit (Jacobi) thermal radiation transport "
                  "package.  0: Report no diagnostics, 1: Only report at final Jacobi "
-                 "iteration, 2: Report every Jacobi iteration"));
+                 "iteration, 2: Report every Jacobi iteration, 3: Report every Jacobi "
+                 "iteration and temperature root find failures"));
   params.Add("current_residual", std::numeric_limits<Real>::max(), true);
   params.Add("current_iter", std::numeric_limits<int>::max(), true);
+  params.Add("solve_diverged", false, true);
+  params.Add("best_residual", std::numeric_limits<Real>::max(), true);
+  params.Add("nstall", 0, true);
   params.Add("time", 0.0, Params::Mutability::Restart);
 
   // Reducer for residual
@@ -334,7 +363,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskCollection JacobiTasks
-//! \brief Assemble MeshData registers and create/return Jacobi TaskCollection
+//! \brief Allocate MeshData registers and drive the (subcycled) Jacobi update
 TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   // Extract Jacobi package
   auto jacobi_pkg = pm->packages.Get(pkg_name);
@@ -351,7 +380,7 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     unsplit_names = pm->GetVariableNames(flags_unsplit);
   }
 
-  // Assemble MeshData subsets
+  // Assemble MeshData subsets once; they are reused across any subcycles this step
   namespace mdname = container_names;
   namespace ccrad = cell_variables::cell_averaged::rad;
   std::vector<std::string> intensity_names = pm->GetVariableNames(
@@ -359,19 +388,82 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   std::vector<std::string> opac_names = pm->GetVariableNames(
       std::vector<std::string>{ccrad::aa::name(), ccrad::ss::name()}, std::vector<int>{});
   auto &base = pm->mesh_data.Get();
-  auto &riter = pm->mesh_data.Add(mdname::riter, base, intensity_names);
-  auto &rout = pm->mesh_data.Add(mdname::rout, base, intensity_names);
-  auto &rbase = pm->mesh_data.AddShallow(mdname::rbase, base, jacobi_names);
-  auto &ubase = pm->mesh_data.AddShallow(mdname::ubase, base, unsplit_names);
-  auto &ropac = pm->mesh_data.AddShallow(mdname::ropac, base, opac_names);
+  pm->mesh_data.Add(mdname::riter, base, intensity_names);
+  pm->mesh_data.Add(mdname::rout, base, intensity_names);
+  pm->mesh_data.AddShallow(mdname::rbase, base, jacobi_names);
+  pm->mesh_data.AddShallow(mdname::ubase, base, unsplit_names);
+  pm->mesh_data.AddShallow(mdname::ropac, base, opac_names);
 
-  return JacobiTransport(pm, tm.time, dt);
+  // Subcycle controls
+  const int nreduce_limit = jacobi_pkg->Param<int>("nreduce_limit");
+  const int reduce_factor = jacobi_pkg->Param<int>("reduce_factor");
+  const int verbose = jacobi_pkg->Param<int>("verbose");
+
+  // Adaptive subcycle loop
+  int ndiv = 1;
+  int nremaining = 1;
+  int nreduce = 0;
+  int nsub = 0;
+  while (nremaining > 0) {
+    const Real dt_this = dt / ndiv;
+    const Real t_local = dt * (ndiv - nremaining) / ndiv;
+
+    // Report subcycle progress
+    if (nreduce > 0 && Globals::my_rank == 0 && verbose >= 1) {
+      printf(
+          "(Jacobi) Subcycle attempt %d | dt_sub: %24.16e | committed: %6.2f%% of dt\n",
+          nsub + 1, dt_this, 100.0 * t_local / dt);
+    }
+
+    // Initialize subcycler params
+    jacobi_pkg->UpdateParam("solve_diverged", false);
+    jacobi_pkg->UpdateParam("nstall", 0);
+    jacobi_pkg->UpdateParam("best_residual", std::numeric_limits<Real>::max());
+
+    // Solve from the current base state
+    const auto solve_status = JacobiSolve(pm, tm.time + t_local, dt_this).Execute();
+    PARTHENON_REQUIRE(solve_status == TaskListStatus::complete,
+                      "Jacobi solve task list did not complete.");
+
+    if (!jacobi_pkg->Param<bool>("solve_diverged")) {
+      // Solve did not diverge (converged, or hit niter_limit without diverging): commit.
+      // Advance the intensity and (if coupled) the fluid.
+      const auto commit_status = JacobiCommit(pm, dt_this).Execute();
+      PARTHENON_REQUIRE(commit_status == TaskListStatus::complete,
+                        "Jacobi commit task list did not complete.");
+      --nremaining;
+      ++nsub;
+    } else {
+      // Solve diverged: back out and retry the remaining span with a reduced timestep
+      ++nreduce;
+      PARTHENON_REQUIRE(
+          nreduce <= nreduce_limit,
+          "Implicit Jacobi radiation solve diverged after " +
+              std::to_string(nreduce_limit) + " timestep reduction(s).  Residual: " +
+              std::to_string(jacobi_pkg->Param<Real>("current_residual")) +
+              ", dt_sub: " + std::to_string(dt_this) +
+              ".  Raise nreduce_limit, loosen ndiverge_limit, or check the setup.");
+      ndiv *= reduce_factor;
+      nremaining *= reduce_factor;
+      if (Globals::my_rank == 0 && verbose >= 1)
+        printf("(Jacobi) Solve diverged; reducing dt (reduction %d/%d), "
+               "new dt_sub: %24.16e\n",
+               nreduce, nreduce_limit, dt / ndiv);
+    }
+  }
+
+  if (nreduce > 0 && Globals::my_rank == 0 && verbose >= 1) {
+    printf("(Jacobi) Completed operator-split step in %d subcycles (%d reduction(s))\n",
+           nsub, nreduce);
+  }
+
+  return TaskCollection();
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  TaskCollection JacobiTransport
-//! \brief Generates TaskCollection for Jacobi Transport
-TaskCollection JacobiTransport(Mesh *pmesh, const Real time, const Real dt) {
+//! \fn  TaskCollection JacobiSolve
+//! \brief
+TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
   using namespace ::parthenon::Update;
   namespace mdname = container_names;
   TaskCollection tc;
@@ -381,15 +473,13 @@ TaskCollection JacobiTransport(Mesh *pmesh, const Real time, const Real dt) {
   // Jacobi params
   auto jacobi_pkg = pmesh->packages.Get(pkg_name);
   const int max_iters = jacobi_pkg->Param<int>("niter_limit");
-  const bool affect_fluid = jacobi_pkg->Param<bool>("affect_fluid");
   AllReduce<HostArray1D<Real>> *presidual =
       jacobi_pkg->MutableParam<AllReduce<HostArray1D<Real>>>("jresidual_reducer");
 
-  // Construct JacobiTransport TaskList
+  // Construct JacobiSolve TaskList
   const int num_partitions = pmesh->DefaultNumPartitions();
   TaskRegion &tr = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
-    auto &base = pmesh->mesh_data.Get();
     auto &rbase = pmesh->mesh_data.GetOrAdd(mdname::rbase, i);
     auto &riter = pmesh->mesh_data.GetOrAdd(mdname::riter, i);
     auto &rout = pmesh->mesh_data.GetOrAdd(mdname::rout, i);
@@ -400,9 +490,6 @@ TaskCollection JacobiTransport(Mesh *pmesh, const Real time, const Real dt) {
     // Start receives on MeshData registers
     auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, ropac);
     srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, rout);
-    if (affect_fluid) {
-      srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, ubase);
-    }
 
     // Set opacities
     auto set_opac = tl.AddTask(none, SetOpacities, rbase.get(), ubase.get());
@@ -425,12 +512,46 @@ TaskCollection JacobiTransport(Mesh *pmesh, const Real time, const Real dt) {
 
     // Execute Jacobi iterations
     auto [solver, solver_id] = tl.AddSublist(prep_jacobi, {1, max_iters});
-    auto jacobi = CreateJacobiTaskList(none, i, pmesh, solver, solver_id, presidual,
-                                       rbase, riter, rout, ubase, dt);
+    CreateJacobiTaskList(none, i, pmesh, solver, solver_id, presidual, rbase, riter, rout,
+                         ubase, dt);
+  }
+
+  return tc;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  TaskCollection JacobiCommit
+//! \brief
+TaskCollection JacobiCommit(Mesh *pmesh, const Real dt) {
+  using namespace ::parthenon::Update;
+  namespace mdname = container_names;
+  TaskCollection tc;
+  TaskID none(0);
+  const auto any = parthenon::BoundaryType::any;
+
+  // Jacobi params
+  auto jacobi_pkg = pmesh->packages.Get(pkg_name);
+  const bool affect_fluid = jacobi_pkg->Param<bool>("affect_fluid");
+
+  // Construct JacobiCommit TaskList
+  const int num_partitions = pmesh->DefaultNumPartitions();
+  TaskRegion &tr = tc.AddRegion(num_partitions);
+  for (int i = 0; i < num_partitions; i++) {
+    auto &rbase = pmesh->mesh_data.GetOrAdd(mdname::rbase, i);
+    auto &riter = pmesh->mesh_data.GetOrAdd(mdname::riter, i);
+    auto &rout = pmesh->mesh_data.GetOrAdd(mdname::rout, i);
+    auto &ubase = pmesh->mesh_data.GetOrAdd(mdname::ubase, i);
+    auto &tl = tr[i];
+
+    // Start receives for the fluid boundary exchange (if radiation affects fluid)
+    TaskID srec = none;
+    if (affect_fluid) {
+      srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, ubase);
+    }
 
     // Apply feedback to fluid (if radiation affects fluid)
-    auto feedback = tl.AddTask(solver_id, JacobiFeedback, rbase.get(), riter.get(),
-                               rout.get(), ubase.get(), dt);
+    auto feedback = tl.AddTask(srec, JacobiFeedback, rbase.get(), riter.get(), rout.get(),
+                               ubase.get(), dt);
 
     // Update intensity registers
     auto copy_reg = tl.AddTask(
@@ -554,6 +675,18 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
   const Real current_residual = v(0) / (std::max(v(1), 1.0e-100) + (v(1) <= 1.0e-100));
   jacobi_pkg->UpdateParam("current_residual", current_residual);
 
+  // Divergence detection
+  const Real best_residual = jacobi_pkg->Param<Real>("best_residual");
+  const int ndiverge_limit = jacobi_pkg->Param<int>("ndiverge_limit");
+  int nstall = jacobi_pkg->Param<int>("nstall");
+  const bool improved = current_residual < best_residual;
+  nstall = improved ? 0 : nstall + 1;
+  const bool stalled = (ndiverge_limit >= 0) && (nstall >= ndiverge_limit);
+  const bool diverged = !std::isfinite(current_residual) || stalled;
+  jacobi_pkg->UpdateParam("nstall", nstall);
+  if (improved) jacobi_pkg->UpdateParam("best_residual", current_residual);
+  if (diverged) jacobi_pkg->UpdateParam("solve_diverged", true);
+
   // zero residuals in prep for next iteration
   v(0) = 0.0;
   v(1) = 0.0;
@@ -577,7 +710,12 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
   const int verbose = jacobi_pkg->Param<int>("verbose");
 
   // Iterate or finalize
-  if (residual <= err_thr) {
+  if (jacobi_pkg->Param<bool>("solve_diverged")) {
+    // Divergence detected: stop iterating, back out, retry at smaller dt
+    if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
+      printf("(Jacobi) Diverged! iter: %d err: %24.16e\n", iter_counter - 1, residual);
+    return TaskStatus::complete;
+  } else if (residual <= err_thr) {
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
       printf("(Jacobi) Converged! iter: %d err: %24.16e\n", iter_counter - 1, residual);
     return TaskStatus::complete;
@@ -858,8 +996,8 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   if (!(coupling)) return TaskStatus::complete;
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
 
-  // Riot verbosity flag
-  const bool verbose = pm->packages.Get("riot")->Param<bool>("verbose");
+  // troot verbosity flag
+  const bool verbose = (jacobi_pkg->Param<int>("verbose") == 3);
 
   // Resolved packages and indexing
   auto &resolved_pkgs = pm->resolved_packages;

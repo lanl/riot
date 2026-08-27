@@ -258,13 +258,16 @@ void CalculateStrainRate(MeshData<Real> *state, const PACK &vb) {
           const Real dvyz = (pvb(ccbulk::face_velocity(7), k + dk, j, i) -
                              pvb(ccbulk::face_velocity(7), k, j, i)) /
                             dz;
-          const Real dvzz = (pvb(ccbulk::face_velocity(8), k + dk, j, i) -
-                             pvb(ccbulk::face_velocity(8), k, j, i)) /
-                            dz;
-          if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+          Real dvzz = (pvb(ccbulk::face_velocity(8), k + dk, j, i) -
+                       pvb(ccbulk::face_velocity(8), k, j, i)) /
+                      dz;
+          if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>() ||
+                        parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+
             const Real r0 = coords.template Xf<X1DIR>(i);
             const Real r1 = coords.template Xf<X1DIR>(i + 1);
-            const Real avg_v =
+
+            const Real avg_vr =
                 (2.0 * r0 * r1 *
                      (pvb(ccbulk::face_velocity(0), k, j, i) +
                       pvb(ccbulk::face_velocity(0), k, j, i + 1)) +
@@ -273,7 +276,17 @@ void CalculateStrainRate(MeshData<Real> *state, const PACK &vb) {
                  SQR(r1) * (pvb(ccbulk::face_velocity(0), k, j, i) +
                             3.0 * pvb(ccbulk::face_velocity(0), k, j, i + 1))) /
                 (4.0 * (SQR(r0) + r0 * r1 + SQR(r1)));
-            dvyy = avg_v / coords.template Xc<X1DIR>(i);
+
+            const Real vr_over_r = avg_vr / coords.template Xc<X1DIR>(i);
+
+            if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+              // theta-theta and phi-phi
+              dvyy = vr_over_r;
+              dvzz = vr_over_r;
+            } else {
+              // cylindrical phi-phi
+              dvzz = vr_over_r;
+            }
           }
 
           pvb(ccbulk::strain_rate(0), k, j, i) = dvxx - vdiv;

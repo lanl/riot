@@ -52,7 +52,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Root find parameters
   const Real Te_root_tol =
-      pin->GetOrAddReal("ionization", "root_tol", 1e-20,
+      pin->GetOrAddReal("ionization", "root_tol", 1e-8,
                         "Root finding tolerance for electron temperature equilibrium");
   physics->AddParam("Te_root_tol", Te_root_tol);
 
@@ -1418,7 +1418,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           });
         });
     const auto &cfl = hydro_params.Get<Real>("cfl");
-    dt_viscosity = cfl * min_dt;
+    dt_viscosity = 0.5 * cfl * min_dt;
   }
 
   return std::min(dt_conduction, dt_viscosity);
@@ -1491,15 +1491,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
           Real &fmomzx = vb.flux(b, X1DIR, ccbulk::momentum(2), k, j, i);
           Real &fEx = vb.flux(b, X1DIR, ccbulk::total_material_energy(), k, j, i);
 
-          // compute the fluxes
-          const Real lambda_visc = bulk_viscosity - 2. / 3. * eta;
-          const Real lambda_viscm = bulk_viscosity - 2. / 3. * etam;
-          // velocity divergence
-          const Real vdiv = exx + eyy + ezz;
-          const Real vdivm = exxm + eyym + ezzm;
-          // stress tensor components
-          const Real sxx = 2.0 * eta * exx + lambda_visc * vdiv;
-          const Real sxxm = 2.0 * etam * exxm + lambda_viscm * vdivm;
+          // stress tensor components (assuming no bulk viscosity)
+          const Real sxx = 2.0 * eta * exx;
+          const Real sxxm = 2.0 * etam * exxm;
           const Real syx = 2.0 * eta * exy;
           const Real syxm = 2.0 * etam * exym;
           const Real szx = 2.0 * eta * exz;
@@ -1547,15 +1541,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
             Real &fmomzy = vb.flux(b, X2DIR, ccbulk::momentum(2), k, j, i);
             Real &fEy = vb.flux(b, X2DIR, ccbulk::total_material_energy(), k, j, i);
 
-            // compute the fluxes
-            const Real lambda_visc = bulk_viscosity - 2. / 3. * eta;
-            const Real lambda_viscm = bulk_viscosity - 2. / 3. * etam;
-            // velocity divergence
-            const Real vdiv = exx + eyy + ezz;
-            const Real vdivm = exxm + eyym + ezzm;
-            // stress tensor components
-            const Real syy = 2.0 * eta * eyy + lambda_visc * vdiv;
-            const Real syym = 2.0 * etam * eyym + lambda_viscm * vdivm;
+            // stress tensor components (assuming no bulk viscosity)
+            const Real syy = 2.0 * eta * eyy;
+            const Real syym = 2.0 * etam * eyym;
             const Real sxy = 2.0 * eta * exy;
             const Real sxym = 2.0 * etam * exym;
             const Real szy = 2.0 * eta * eyz;
@@ -1579,7 +1567,7 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
           auto pvb = RiotLoop::make_pack_view(idx_range, vb);
           RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
             Real &eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
-            Real &etam = pvb(ccbulk::ion_shear_viscosity(), k, j - 1, i);
+            Real &etam = pvb(ccbulk::ion_shear_viscosity(), k - 1, j, i);
 
             Real &vxz = pvb(ccbulk::face_velocity(6), k, j, i);
             Real &vyz = pvb(ccbulk::face_velocity(7), k, j, i);
@@ -1604,15 +1592,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
             Real &fmomzz = vb.flux(b, X3DIR, ccbulk::momentum(2), k, j, i);
             Real &fEz = vb.flux(b, X3DIR, ccbulk::total_material_energy(), k, j, i);
 
-            // compute the fluxes
-            const Real lambda_visc = bulk_viscosity - 2. / 3. * eta;
-            const Real lambda_viscm = bulk_viscosity - 2. / 3. * etam;
-            // velocity divergence
-            const Real vdiv = exx + eyy + ezz;
-            const Real vdivm = exxm + eyym + ezzm;
-            // stress tensor components
-            const Real szz = 2.0 * eta * ezz + lambda_visc * vdiv;
-            const Real szzm = 2.0 * etam * ezzm + lambda_viscm * vdivm;
+            // stress tensor components (assuming no bulk viscosity)
+            const Real szz = 2.0 * eta * ezz;
+            const Real szzm = 2.0 * etam * ezzm;
             const Real sxz = 2.0 * eta * exz;
             const Real sxzm = 2.0 * etam * exzm;
             const Real syz = 2.0 * eta * eyz;

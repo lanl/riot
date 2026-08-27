@@ -37,8 +37,9 @@ Real EstimateTimestepMesh(MeshData<Real> *md);
 TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt);
 
 //----------------------------------------------------------------------------------------
-// Jacobi Transport
-TaskCollection JacobiTransport(Mesh *pmesh, const Real time, const Real dt);
+// Jacobi Transport (host-driven, subcycle-capable): solve and commit phases
+TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt);
+TaskCollection JacobiCommit(Mesh *pmesh, const Real dt);
 TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             TaskList &solver, TaskID solver_id,
                             parthenon::AllReduce<HostArray1D<Real>> *presidual,

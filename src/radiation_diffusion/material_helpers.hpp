@@ -131,25 +131,28 @@ struct MaterialHelpers {
       ([&] { outputs.scratch(k, j, i) = 0.0; }(), ...);
     });
 
+    using idx_t = typename idx_range_t::inner_idx_t;
     const int nmat = pack.GetSize(b, ccmat::rho());
+    auto T = make_var_view(idx_range, pack_temperature, temperature_t());
     for (int m = 0; m < nmat; ++m) {
       const int mat_id = pack(b, cm::rho(m)).sparse_id;
       const int phase_id = pack(b, cm::rho(m)).v;
       const int eos_id = eos_from_matid(mat_id) + phase_id;
       const auto &eosm = eos(eos_id);
       idx_range.TeamBarrier();
-      RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-        const Real T = pack_temperature(b, temperature_t(), k, j, i);
-        const Real rhom = pack(b, cm::rho(m), k, j, i);
-        const Real rhobarm = pack(b, ccmat::rho(m), k, j, i);
+      auto rhom = make_var_view(idx_range, pack, cm::rho(m));
+      auto rhobarm = make_var_view(idx_range, pack, ccmat::rho(m));
+      RiotLoop::inner(idx_range, [&](const idx_t kji) {
         (
             [&] {
               if constexpr (std::is_same_v<typename output_ts::tag, EgasTag>) {
-                outputs.scratch(k, j, i) +=
-                    rhobarm * eosm.InternalEnergyFromDensityTemperature(rhom, T);
+                outputs.scratch(kji) +=
+                    rhobarm(kji) *
+                    eosm.InternalEnergyFromDensityTemperature(rhom(kji), T(kji));
               } else if constexpr (std::is_same_v<typename output_ts::tag, CvTag>) {
-                outputs.scratch(k, j, i) +=
-                    rhobarm * eosm.SpecificHeatFromDensityTemperature(rhom, T);
+                outputs.scratch(kji) +=
+                    rhobarm(kji) *
+                    eosm.SpecificHeatFromDensityTemperature(rhom(kji), T(kji));
               } else {
                 PARTHENON_FAIL("Unknown type.");
               }
@@ -172,6 +175,7 @@ struct MaterialHelpers {
     constexpr bool calculate_a = true;
     constexpr bool calculate_s = true;
 
+    using idx_t = typename idx_range_t::inner_idx_t;
     const int ng = ngroup;
     idx_range.TeamBarrier();
     RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
@@ -181,18 +185,20 @@ struct MaterialHelpers {
     });
 
     const int nmat = pack.GetSize(b, cm::rho());
+    auto T = make_var_view(idx_range, pack_temperature, temperature_t());
     for (int m = 0; m < nmat; ++m) {
       const int mat_id = pack(b, cm::rho(m)).sparse_id;
       const int phase_id = pack(b, cm::rho(m)).v;
       const int opac_id = opac_from_matid(mat_id) + phase_id;
       const auto &opac_am = opac_a(opac_id);
       const auto &opac_sm = opac_s(opac_id);
-      idx_range.TeamBarrier();
-      RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-        const Real rrm = std::max(pack(b, cm::rho(m), k, j, i), rhomin);
-        const Real ttm = std::max(pack_temperature(b, temperature_t(), k, j, i), tempmin);
-        const Real vfracm = pack(b, ccmat::volume_fraction(m), k, j, i);
-        for (int g = 0; g < ng; ++g) {
+      auto rhom = make_var_view(idx_range, pack, cm::rho(m));
+      auto vfracm = make_var_view(idx_range, pack, ccmat::volume_fraction(m));
+      for (int g = 0; g < ng; ++g) {
+        idx_range.TeamBarrier();
+        RiotLoop::inner(idx_range, [&](const idx_t kji) {
+          const Real rrm = std::max(rhom(kji), rhomin);
+          const Real ttm = std::max(T(kji), tempmin);
           const Real aa_am =
               calculate_a ? opac_am.AbsorptionCoefficient(rrm, ttm, g) : 0.0;
           const Real aa_sm =
@@ -201,24 +207,24 @@ struct MaterialHelpers {
           (
               [&] {
                 if constexpr (std::is_same_v<typename output_ts::tag, AlphaAbsMGTag>) {
-                  outputs.scratch(g, k, j, i) += vfracm * aa_am;
+                  outputs.scratch(g, kji) += vfracm(kji) * aa_am;
                 } else if constexpr (std::is_same_v<typename output_ts::tag,
                                                     dAlphaAbsMGdTTag>) {
                   // d(alpha_g)/dT = (alpha_g / T) * d(log alpha_g)/d(log T)
                   const Real dlogadlogT =
                       opac_am.DLogAbsorptionCoefficientDLogT(rrm, ttm, g);
                   const Real daadTm = (ttm > tempmin) ? aa_am / ttm * dlogadlogT : 0.0;
-                  outputs.scratch(g, k, j, i) += vfracm * daadTm;
+                  outputs.scratch(g, kji) += vfracm(kji) * daadTm;
                 } else if constexpr (std::is_same_v<typename output_ts::tag,
                                                     AlphaTotMGTag>) {
-                  outputs.scratch(g, k, j, i) += vfracm * (aa_am + aa_sm);
+                  outputs.scratch(g, kji) += vfracm(kji) * (aa_am + aa_sm);
                 } else {
                   PARTHENON_FAIL("Unknown type.");
                 }
               }(),
               ...);
-        }
-      });
+        });
+      }
     }
   }
 };
@@ -284,18 +290,18 @@ struct SourceHelper {
     namespace ccmat = cell_variables::cell_averaged::mat;
     namespace cm = cell_variables::material_averaged;
 
+    using idx_t = typename idx_range_t::inner_idx_t;
     const int ng = ngroup;
     idx_range.TeamBarrier();
-    RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-      const Real T = pack_temperature(b, temperature_t(), k, j, i);
-      for (int g = 0; g < ng; ++g) {
-        const Real Eg = pack_egroup(b, MultiGroupVars::Egroup(g), k, j, i);
-        const auto [B, dBdT] = bb_helper.GetBB(g, T);
-        S(g, k, j, i) = dtcl * aa(g, k, j, i) * (B - Eg);
-        dSdT(g, k, j, i) =
-            dtcl * daadT(g, k, j, i) * (B - Eg) + dtcl * aa(g, k, j, i) * dBdT;
-      }
-    });
+    auto T = make_var_view(idx_range, pack_temperature, temperature_t());
+    for (int g = 0; g < ng; ++g) {
+      auto Eg = make_var_view(idx_range, pack_egroup, MultiGroupVars::Egroup(g));
+      RiotLoop::inner(idx_range, [&](const idx_t kji) {
+        const auto [B, dBdT] = bb_helper.GetBB(g, T(kji));
+        S(g, kji) = dtcl * aa(g, kji) * (B - Eg(kji));
+        dSdT(g, kji) = dtcl * daadT(g, kji) * (B - Eg(kji)) + dtcl * aa(g, kji) * dBdT;
+      });
+    }
   }
 };
 

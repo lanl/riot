@@ -91,7 +91,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add(
       "verbose", pin->GetOrAddInteger(input_block, "verbose", 0),
       "Sets verbosity of explicit thermal radiation transport package.  0: Report no "
-      "diagnostics, 1: Only report at final subcycle, 2: Report every subcycle");
+      "diagnostics, 1: Only report at final subcycle, 2: Report every subcycle, 3: "
+      "Report every subcycle and temperature root find failures");
   params.Add("current_iter", std::numeric_limits<int>::max(), true);
   params.Add("time", 0.0, Params::Mutability::Restart);
 
@@ -668,8 +669,8 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
   const bool coupling = explicit_pkg->Param<bool>("coupling");
   if (!(coupling)) return TaskStatus::complete;
 
-  // Riot verbosity flag
-  const bool verbose = pm->packages.Get("riot")->Param<bool>("verbose");
+  // troot verbosity flag
+  const bool verbose = (explicit_pkg->Param<int>("verbose") == 3);
 
   // Resolved packages and indexing
   auto &resolved_pkgs = pm->resolved_packages;

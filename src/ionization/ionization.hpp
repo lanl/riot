@@ -287,10 +287,8 @@ ComputeElectronTemperature(const IndexRangeType &idx_range, const Pack_t &v,
     };
     auto status = regula_falsi(f, uu, Tguess, Tmin, Tmax, TOL, TOL, T);
     if (status == Status::FAIL) {
-      // TODO(JMM): Should we set it to ion temperature?
-      // PARTHENON_DEBUG_WARN("Temperature root find for electrons failed.");
-      PARTHENON_FAIL("Temperature root find for electrons failed.");
-      T = Tguess;
+      // set to ion temperature
+      T = v(b, ccbulk::temperature(), k, j, i);
     }
     pv(ccbulk::electron_temperature(), kji) = T;
   });
