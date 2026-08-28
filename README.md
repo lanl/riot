@@ -39,10 +39,10 @@ Documentation will be available soon.  Some example inputs are provided as a jum
 
 ## Build instructions
 
-More detailed buld instructions will be provided. For now, see
+For detailed build instructions, see:
 
 - [how_to_build_riot_on_ubuntu.md](how_to_build_riot_on_ubuntu.md)
-- [how_to_build_riot_on_wsl.md](how_to_build_riot_on_ubuntu.md)
+- [how_to_build_riot_on_wsl.md](how_to_build_riot_on_wsl.md)
 
 ## Notes on python
 

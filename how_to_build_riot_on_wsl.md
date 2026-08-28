@@ -1,191 +1,117 @@
-Getting Riot Locally on Windows Machine
-========================================
+# Build RIOT on Windows with WSL
 
-# Step 1 (Install WSL):
+These instructions build RIOT in Ubuntu running under Windows Subsystem for Linux (WSL). They assume Ubuntu 24.04 and Bash.
 
-in windows PowerShell type in the following command:
-```
-wsl --install
-```
+## 1. Install WSL and Ubuntu
 
-(This will likely require r-account permissions)
+Open Windows PowerShell as an administrator, list available distributions, and install Ubuntu:
 
-# Step 2 (Install Linux in WSL):
-
-```
-type wsl.exe --list --online
+```powershell
+wsl --list --online
+wsl --install Ubuntu-24.04
 ```
 
-view available Linux distributions. I went with Ubuntu 24.04, but
-other distributions might also work To install the distribution:
+Restart Windows if prompted, then launch Ubuntu and create a Linux username and password. Use the Linux terminal for the remaining steps.
 
-```
-wsl.exe --install <distro>
-```
-
-ex:
-
-```
-wsl.exe --install Ubuntu-24.04
-```
-
-will need to come up with a username and password to use sudo
-
-
-# Step 3 (Install dependencies):
-
-type these commands (and type y when prompted with y/n):
+## 2. Install system packages
 
 ```bash
-sudo apt update && sudo apt upgrade -y
-sudo apt install build-essential libhdf5-mpich-dev git cmake
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y build-essential libhdf5-mpich-dev git cmake curl
+```
+
+Install the Python development packages. Replace `3.12` with the version provided by your distribution if necessary (`python3 --version`):
+
+```bash
+sudo apt install -y \
+  python3.12-dev python3.12-venv python3-pip \
+  python3-numpy python3-numpy-dev libpython3.12-dev
+```
+
+## 3. Create a Python environment
+
+Micromamba is convenient, but another environment manager may be used. To install Micromamba:
+
+```bash
 "${SHELL}" <(curl -L micro.mamba.pm/install.sh)
 source ~/.bashrc
-
-sudo apt install \
-    python3.12-dev \
-    python3.12-venv \
-    python3-pip \
-    python3-numpy \
-    python3-numpy-dev \
-    libpython3.12-dev
 ```
 
-NOTE: use python3.## for whatever version of python you are using (check with python3 --version)
+Create and activate an environment for RIOT:
 
-NOTE: don't have to use micromamba but I do
+```bash
+micromamba create -n riot python=3.12 numpy matplotlib scipy h5py \
+  'hdf5=*=mpi*' zlib cmake cxx-compiler c-compiler pkg-config
+micromamba activate riot
+```
 
+Use the same Python version in the environment and in the development packages above.
 
-# Step 4 (get ssh key for this linux terminal):
+## 4. Clone RIOT
 
-- go to GitHub.com and sign in
-- click the profile picture circle in the top right
-- select settings
-- on the left side panel click 'SSH and GPG keys'
-- click 'New SSH key'
-- In the box it says 'Begins with 'ssh-rsa', etc.', your id # is from 'ssh-#######' and 'sk-ssh-#######@openssh.com'
+Clone the repository with its submodules:
 
-back in the Linux terminal:
 ```bash
 cd ~
-ssh-keygen -t ####### -C "moniker@lanl.gov"
-```
-make a file and/or passphrase if you want
-find the public key to copy with
-```bash
-cat ~/.ssh/id_#######.pub
-```
-
-copy the output and paste in GitHub in the box where it says 'Key', name the key and save
-
-# Step 5 (clone RIOT from re-git or GitHub):
-
-back in the linux terminal type (re-git version):
-```bash
 git clone --recursive git@github.com:lanl/riot.git
+cd riot
 ```
 
-# Step 6 (create a virtual environment):
-```bash
-micromamba create -n <whatever you want to name your environment> python=3.12 numpy matplotlib scipy h5py hdf5 "hdf5=*=mpi*" zlib cmake cxx-compiler c-compiler pkg-config
-```
+If SSH is not configured, use the repository's HTTPS URL instead. For SSH, add your public key to GitHub under **Settings > SSH and GPG keys**.
 
-NOTE: python= needs to be whatever version of python you are running
+## 5. Configure and build
 
-to activate type in
-```bash
-micromamba activate <whatever you named the environment>
-```
-once activated, you need to build riot into the environment.
-
-# Step 7 (building riot):
-
-type these commands:
 ```bash
 mkdir build
 cd build
 cmake .. \
-  -DCMAKE_PREFIX_PATH=$CONDA_PREFIX \
-  -DHDF5_ROOT=$CONDA_PREFIX \
+  -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" \
+  -DHDF5_ROOT="$CONDA_PREFIX" \
   -DHDF5_IS_PARALLEL=ON \
   -DHDF5_PREFER_PARALLEL=ON \
   -DCMAKE_BUILD_TYPE=Release
+cmake --build . --parallel 6
 ```
 
-[NOTE: the default coordinates are cartesian, if you want to use cylindrical do:
+The default coordinate system is Cartesian. For another coordinate system, use a separate build directory and add one of these options during configuration:
+
 ```bash
-cmake .. -DPARTHENON_COORDINATES=UniformCylindrical \
-  -DCMAKE_PREFIX_PATH=$CONDA_PREFIX \
-  -DHDF5_ROOT=$CONDA_PREFIX \
-  -DHDF5_IS_PARALLEL=ON \
-  -DHDF5_PREFER_PARALLEL=ON \
-  -DCMAKE_BUILD_TYPE=Release
-```
-Or if you want to do spherical
-```bash
-cmake .. -DPARTHENON_COORDINATES=UniformSpherical \
-  -DCMAKE_PREFIX_PATH=$CONDA_PREFIX \
-  -DHDF5_ROOT=$CONDA_PREFIX \
-  -DHDF5_IS_PARALLEL=ON \
-  -DHDF5_PREFER_PARALLEL=ON \
-  -DCMAKE_BUILD_TYPE=Release
+-DPARTHENON_COORDINATES=UniformCylindrical
+-DPARTHENON_COORDINATES=UniformSpherical
 ```
 
-Personally, I have different build directories for each (build_cart, build_cyl, build_sph) or you could re-make it each time you want to switch]
+If CMake reports a version compatibility problem, install a supported version through your distribution or environment manager, remove only the contents of this build directory, and rerun configuration.
 
-[NOTE: CMake version might have compatibility issues if its too new or too old (Needs to be between 3.26 and 3.50, so Ubuntu 22.04, Ubuntu 26.04, and Ubuntu will have this problem)
-if this happens, in the build directory and type:
-```bash
-rm -rf *
-cd ~
-sudo apt remove --purge cmake cmake-data
-sudo snap install cmake --channel=3.30/stable --classic
-export PATH="/snap/bin:$PATH"
-echo 'export PATH="/snap/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-then go back to the build directory and try cmake .. etc. again]
+## 6. Install and test
 
-then type in the build directory:
+Install runtime files into the active environment:
+
 ```bash
-make -j6
-make install
+cmake --install . --prefix "$CONDA_PREFIX"
 ```
 
-# Step 8 (copy stuff you need in your environment):
+Run a sample problem from the build directory:
 
-cd into `~/riot/build/src`
-type in these commands (again change the python version to be the version you're using -- NOTE: python 3.14 will be 'python3.14t'):
 ```bash
-cp ../../script/inputs/riot.py $CONDA_PREFIX/lib/python3.12/site-packages
-cp ../singularity-eos/python/singularity_eos.cpython-312-x86_64-linux-gnu.so $CONDA_PREFIX/lib/python3.12/site-packages
-```
-
-# Step 9 (see if it works):
-
-Copy a test problem and try it out.
-In riot/build/src and with your python environment activated type:
-```bash
+cd src
 cp ../../inputs/triple/triple.py .
-./riot -i $(python triple.py)
+./riot -i "$(python triple.py)"
 ```
-It should run the simulation until completion with no errors. You can also run like (with 4 just being an example #)
+
+For an MPI run, use for example:
 
 ```bash
-mpirun -np 4 ./riot -i $(python triple.py)
+mpirun -np 4 ./riot -i "$(python triple.py)"
 ```
 
-NOTE: this is a cartesian example problem, will need to modify to test cylindrical, spherical, etc.
+The `triple` example is Cartesian. Use an input appropriate to the selected coordinate system when testing other builds.
 
-# Step 10 (grabbing local files you might need):
+## 7. Access files on Windows
 
-copy a file from your computer to riot/build/src with:
+Windows drives are mounted under `/mnt`. For example:
+
 ```bash
-cp /mnt/c/Users/<your Z #>/path/to/file.py .
-```
-you will likely need materials for non-ideal gas input decks, so I would scp them from the hpc wherever you have them and then copy them to your Linux terminal:
-```bash
-cp /mnt/c/Users/<your Z #>/path/to/materials.sp5 .
+cp /mnt/c/Users/<windows-user>/path/to/file.py .
 ```
 
-If everything works, then yay.
