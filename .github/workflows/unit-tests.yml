@@ -15,7 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+
+      - name: Initialize in-tree build dependencies
+        run: |
+          git submodule update --init --recursive \
+            external/parthenon \
+            external/kokkos-kernels \
+            external/singularity-eos \
+            external/singularity-opac
 
       - uses: actions/setup-python@v5
         with:
@@ -26,6 +34,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            libcatch2-dev \
             libhdf5-mpich-dev \
             git \
             cmake
@@ -38,6 +47,7 @@ jobs:
 
           cmake -S . -B build \
             -DRIOT_ENABLE_UNIT_TESTS=ON \
+            -DRIOT_BUILD_CATCH2=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
             -DPython_ROOT_DIR="$VIRTUAL_ENV" \
             -DCMAKE_INSTALL_PREFIX="$VIRTUAL_ENV"
