@@ -57,6 +57,14 @@ The code is formatted with clang-format-20. To format the code run
 CFM=/path/to/clang/format VERBOSE=1 ./script/format.sh
 ```
 
+## Primary Contributors (alphabetical)
+- Josh Dolence (CAI-2, LANL)
+- Sam Jones (T-5, LANL)
+- Chad Meyer (XCP-4, LANL)
+- Jonah Miller (CAI-2, LANL)
+- Patrick Mullen (CAI-2, LANL)
+- Luke Roberts (CAI-2, LANL)
+
 ## 
 
 LANL's Richard P. Feynman Center for Innovation assigned Riot number O5171.
