@@ -12,7 +12,7 @@ on:
 # CMake build directory, so each run still configures a fresh build tree.
 env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
-  CCACHE_MAXSIZE: 3G
+  CCACHE_MAXSIZE: 5G
 
 permissions:
   contents: read
