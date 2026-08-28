@@ -22,8 +22,7 @@ from matplotlib.path import Path
 
 
 class LetterShape:
-    def __init__(self, letter, font="Avenir Next", size=1.0,
-                 normalize=False):
+    def __init__(self, letter, font="Avenir Next", size=1.0, normalize=False):
         """
         Create a geometric representation of a letter.
 
@@ -32,12 +31,7 @@ class LetterShape:
         """
         prop = FontProperties(family=font)
 
-        text_path = TextPath(
-            (0.0, 0.15),
-            letter,
-            size=size,
-            prop=prop
-        )
+        text_path = TextPath((0.0, 0.15), letter, size=size, prop=prop)
 
         # Convert compound glyph into separate closed contours.
         polygons = text_path.to_polygons()
@@ -50,10 +44,7 @@ class LetterShape:
             height = bbox.height
 
             polygons = [
-                np.column_stack((
-                    (p[:, 0] - xmin) / width,
-                    (p[:, 1] - ymin) / height
-                ))
+                np.column_stack(((p[:, 0] - xmin) / width, (p[:, 1] - ymin) / height))
                 for p in polygons
             ]
 
@@ -171,7 +162,7 @@ def make_input():
         matid=0,
         c_m_rho=0.001,
         c_m_pressure=1.0,
-        c_c_bulk_velocity=[2.5, 0, 0]
+        c_c_bulk_velocity=[2.5, 0, 0],
     )
 
     riot.input(
@@ -196,12 +187,14 @@ def make_input():
         amr_interface=True,
     )
 
+
 class logo:
     def __init__(self):
         self.word = LetterShape("RIOT")
 
     def mask(self, pos):
         return self.word.contains(pos[:, self.x], pos[:, self.y])
+
 
 if __name__ == "__main__":
     make_input()
