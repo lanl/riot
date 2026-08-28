@@ -11,7 +11,6 @@
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
 
-
 #include "ray_trace.hpp"
 
 namespace RayTrace {
