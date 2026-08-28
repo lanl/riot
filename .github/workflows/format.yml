@@ -1,0 +1,31 @@
+name: Formatting
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Black
+        run: python -m pip install black
+
+      - name: Run formatting sweep
+        env:
+          CFM: clang-format-20
+          VERBOSE: "1"
+        run: ./script/format.sh
+
+      - name: Fail when formatting changes are required
+        run: git diff --exit-code
