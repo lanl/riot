@@ -37,6 +37,13 @@ Documentation will be available soon.  Some example inputs are provided as a jum
 - Inline diagnostics
 - Plugin infrastructure to allow for easy extensions
 
+## Build instructions
+
+More detailed buld instructions will be provided. For now, see
+
+- [how_to_build_riot_on_ubuntu.md](how_to_build_riot_on_ubuntu.md)
+- [how_to_build_riot_on_wsl.md](how_to_build_riot_on_ubuntu.md)
+
 ## Notes on python
 
 The code builds by default with support for inline calls to Python, which requires Python be installed on the system with development components (this is typical) and that NumPy be installed.  This can be disabled at cmake configuration time via `-DRIOT_BUILD_PYTHON=OFF`.  When Python is invoked, it must be able to find not only the file(s) containing the functionality you have defined, but also any imported modules.  The recommended way of specifying search paths for these modules is by setting the environment variable `PYTHONPATH`.  Two often useful modules are `script/inputs/riot.py` and the singularity-eos python bindings that enable calls to equations of state, which are built along with riot and show up in the build directory within `singularity-eos/python` as `singularity_eos.cpython-*`.  Pointing your `PYTHONPATH` at these directories should enable their use in your own Python files.  Alternatively, after building riot, you can invoke cmake from your build directory to install into a specified location via
