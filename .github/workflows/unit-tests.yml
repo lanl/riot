@@ -34,7 +34,7 @@ jobs:
         run: |
           python -m venv riot_venv
           . riot_venv/bin/activate
-          python -m pip install numpy scipy h5py
+          python -m pip install numpy scipy h5py "pybind11[global]"
 
           cmake -S . -B build \
             -DRIOT_ENABLE_UNIT_TESTS=ON \
