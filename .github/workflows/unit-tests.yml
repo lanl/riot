@@ -8,8 +8,11 @@ on:
   push:
     branches: [main]
 
-# GitHub-hosted runners are ephemeral. Persist compiler results, but never the
-# CMake build directory, so each run still configures a fresh build tree.
+# ccache is a compiler launcher that caches object files and carefully
+# checks that the compilation should be identical, and if it is, uses
+# the cache. We use it to speedup compilation dramatically and cache
+# results of dependencies like parthenon object files. Github allows
+# for caching using workspaces, so we use that.
 env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   CCACHE_MAXSIZE: 5G
@@ -77,8 +80,7 @@ jobs:
       - name: Restore compiler cache
         uses: actions/cache@v4
         with:
-          # Cache only ccache's content-addressed compiler outputs. Source and
-          # header changes are checked by ccache before any result is reused.
+          # This is github's mechanism for pulling out stashed data via workspaces
           path: ${{ env.CCACHE_DIR }}
           key: ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-${{ steps.dependencies.outputs.hash }}
           restore-keys: |
