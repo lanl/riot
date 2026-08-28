@@ -39,6 +39,7 @@ jobs:
           cmake -S . -B build \
             -DRIOT_ENABLE_UNIT_TESTS=ON \
             -DCMAKE_BUILD_TYPE=Release \
+            -DPython_ROOT_DIR="$VIRTUAL_ENV" \
             -DCMAKE_INSTALL_PREFIX="$VIRTUAL_ENV"
 
           cmake --build build --parallel
