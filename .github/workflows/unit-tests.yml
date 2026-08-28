@@ -20,6 +20,23 @@ permissions:
 jobs:
   unit-tests:
     runs-on: ubuntu-26.04
+    strategy:
+      # Let both compiler results complete even if the other compiler fails.
+      fail-fast: false
+      matrix:
+        compiler:
+          - name: gcc
+            cc: gcc
+            cxx: g++
+          - name: clang
+            cc: clang-20
+            cxx: clang++-20
+    env:
+      # Use the selected compiler directly and through MPICH's wrappers.
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
+      MPICH_CC: ${{ matrix.compiler.cc }}
+      MPICH_CXX: ${{ matrix.compiler.cxx }}
 
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +80,9 @@ jobs:
           # Cache only ccache's content-addressed compiler outputs. Source and
           # header changes are checked by ccache before any result is reused.
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-v1-${{ runner.os }}-gcc-${{ steps.dependencies.outputs.hash }}
+          key: ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-${{ steps.dependencies.outputs.hash }}
           restore-keys: |
-            ccache-v1-${{ runner.os }}-gcc-
+            ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-
 
       - name: Build, install, and test
         run: |
@@ -77,6 +94,8 @@ jobs:
             -DRIOT_ENABLE_UNIT_TESTS=ON \
             -DRIOT_BUILD_CATCH2=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=gold \
