@@ -1,4 +1,9 @@
 # ========================================================================================
+#  AthenaXXX astrophysical plasma code
+#  Copyright(C) 2020 James M. Stone <jmstone@ias.edu> and the Athena code team
+#  Licensed under the 3-clause BSD License, see licenses/bsd_athenak.txt file for details
+# ========================================================================================
+# ========================================================================================
 #  (C) (or copyright) 2023-2026. Triad National Security, LLC. All rights reserved.
 #
 #  This program was produced under U.S. Government contract 89233218CNA000001 for Los
