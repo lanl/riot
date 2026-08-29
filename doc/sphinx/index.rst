@@ -1,7 +1,7 @@
 .. figure:: ../../riot_logo.png
    :alt: The riot logo
    :align: left
-   :scale: 1
+   :width: 800px
 
 block-adaptive, performance portable mutli-material radiation hydrodynamics
 ==================================================================================
