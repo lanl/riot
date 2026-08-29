@@ -1,3 +1,5 @@
+.. This file was made with the assistance of generative AI.
+
 .. _contributing-doc:
 
 Contributing
@@ -32,6 +34,29 @@ Several sets of tests are triggered on a pull request: a static format
 check, a docs build, and unit tests. These are run through GitHub's
 CPU infrastructure. We have a second set of tests run on a wider set
 of architectures, which we are not able to make public.
+
+Building the documentation
+--------------------------
+
+The documentation source is in ``doc/sphinx``. Create a Python virtual
+environment and install the Sphinx dependencies:
+
+.. code-block:: bash
+
+   python3 -m venv docs_venv
+   . docs_venv/bin/activate
+   python -m pip install sphinx sphinx-rtd-theme sphinx-multiversion
+
+Build the documentation for the current checkout with:
+
+.. code-block:: bash
+
+   cd doc/sphinx
+   make html
+
+Open ``doc/sphinx/_build/html/index.html`` in a browser to review the result.
+To build documentation for all configured Git branches and tags, run ``make
+multiversion`` instead.
 
 AI-assisted coding
 -------------------

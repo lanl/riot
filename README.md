@@ -44,7 +44,7 @@ jumping off point.
 
 ## Build instructions
 
-For detailed build instructions, see the [build document](doc/sphinx/src/building.rst).
+For detailed build instructions, see the [build document](https://lanl.github.io/riot/building.html).
 
 ## Notes on python
 
