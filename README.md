@@ -39,10 +39,7 @@ Documentation will be available soon.  Some example inputs are provided as a jum
 
 ## Build instructions
 
-For detailed build instructions, see:
-
-- [how_to_build_riot_on_ubuntu.md](how_to_build_riot_on_ubuntu.md)
-- [how_to_build_riot_on_wsl.md](how_to_build_riot_on_wsl.md)
+For detailed build instructions, see the [build document](doc/sphinx/src/building.rst).
 
 ## Notes on python
 
