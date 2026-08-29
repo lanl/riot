@@ -3,7 +3,7 @@
 .. _building-doc:
 
 Building ``riot``
-=============
+===================
 
 ``riot`` builds on Linux with CMake. Windows users should build it in Windows
 Subsystem for Linux (WSL); after WSL is installed, the Linux build steps are
