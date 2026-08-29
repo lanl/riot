@@ -1,10 +1,11 @@
 name: Build and Deploy docs
 
 on:
-  push:
-    branches: [ develop ]
+on:
   pull_request:
-    branches: [ develop ]
+    types: [opened, reopened, synchronize]
+  push:
+    branches: [main]
   release:
     types:
       - created
