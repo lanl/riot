@@ -36,7 +36,8 @@ usage() {
     echo
     echo "Options:"
     echo "  -h, --help    Show this help message"
-    echo "  --update-cmake Update the root CMake gold version and SHA-512 after bundling"
+    echo "  --update-cmake Update the root CMakeLists.txt and .gitlab-ci.yml gold"
+    echo "                 version and SHA-512 after bundling"
     echo "Shell variables:"
     echo "  RIOT_GOLD_VERSION sets the goldfiles version."
     echo "     default is today's date in YYYYMMDD format."
@@ -201,6 +202,44 @@ if "$update_cmake"; then
     chmod --reference="$cmake_file" "$cmake_tmp"
     mv "$cmake_tmp" "$cmake_file"
     echo "Updated $cmake_file with gold version $version and its SHA-512 hash."
+
+    # Keep .gitlab-ci.yml's GOLD_VER / GOLD_HASH mirrors in sync with the cmake
+    # defaults. CI pre-fetches the gold tarball on the frontend using these and
+    # feeds them back to cmake, so a mismatch would fail the hash check.
+    ci_file="${script_dir}/../../../../.gitlab-ci.yml"
+    if [[ ! -f "$ci_file" ]]; then
+        echo "ERROR: Could not find .gitlab-ci.yml at '$ci_file'." >&2
+        exit 1
+    fi
+
+    ci_tmp=$(mktemp "${ci_file}.tmp.XXXXXX")
+    if ! awk -v version="$version" -v hash="$gold_hash" '
+        BEGIN { version_found = 0; hash_found = 0 }
+        /^  GOLD_VER:/ {
+            print "  GOLD_VER: \"" version "\""
+            version_found = 1
+            next
+        }
+        /^  GOLD_HASH:/ {
+            print "  GOLD_HASH: \"SHA512=" hash "\""
+            hash_found = 1
+            next
+        }
+        { print }
+        END {
+            if (!version_found || !hash_found) {
+                exit 1
+            }
+        }
+    ' "$ci_file" > "$ci_tmp"; then
+        rm -f "$ci_tmp"
+        echo "ERROR: Could not find GOLD_VER / GOLD_HASH settings in '$ci_file'." >&2
+        exit 1
+    fi
+
+    chmod --reference="$ci_file" "$ci_tmp"
+    mv "$ci_tmp" "$ci_file"
+    echo "Updated $ci_file with gold version $version and its SHA-512 hash."
 fi
 
 echo "To publish your new gold file set, go to github.com/lanl/riot and"
