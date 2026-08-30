@@ -52,12 +52,18 @@ project(riot
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 
+# regression test reference data
+set(RIOT_REGRESSION_GOLD_VER 20260830 CACHE STRING "Version of gold standard to download and use")
+set(RIOT_REGRESSION_GOLD_HASH
+  "SHA512=f07281fae0845de80dd9d76e5f73e8da64b8f6e0bf282bbe003dcd20659eddc83c71be2d0802a2535c675c59e8e179facff68af6219c78db8b3fd8f63d21f67d"
+  CACHE STRING "Hash of default gold standard file to download")
+option(RIOT_REGRESSION_GOLD_SYNC "Automatically sync gold standard files." ON)
+
 # TODO(JMM): Tests? Copy what's in riot? Hack something in?
 # TODO(JMM): Pgen?
 include(CTest)
 include(CMakeDependentOption)
 option(RIOT_ENABLE_UNIT_TESTS "Enable unit tests" OFF)
-option(RIOT_ENABLE_INTEGRATION_TESTS "Enable integration tests" OFF)
 option(RIOT_ENABLE_REGRESSION_TESTS "Enable regression tests" OFF)
 option(RIOT_ENABLE_CUDA "Enable cuda for riot and all dependencies" OFF)
 option(RIOT_ENABLE_HDF5 "Enable HDF5 for riot and all dependencies" ON)
@@ -408,15 +414,16 @@ else()
   add_subdirectory(src/plugin_stubs)
 endif()
 
-# TODO(JMM): Testing?
-if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_INTEGRATION_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
+if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
   message("\nConfiguring tests")
-  if(RIOT_BUILD_CATCH2)
-    add_subdirectory(external/Catch2 Catch2)
-    list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/external/Catch2/extras)
-  else()
-    find_package(Catch2 REQUIRED)
-  endif()
-  enable_testing()
+  if (RIOT_ENABLE_UNIT_TESTS)
+    if(RIOT_BUILD_CATCH2)
+      add_subdirectory(external/Catch2 Catch2)
+      list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/external/Catch2/extras)
+    else()
+      find_package(Catch2 REQUIRED)
+    endif()
+    enable_testing()
+    endif()
   add_subdirectory(tst)
 endif()
