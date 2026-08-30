@@ -58,6 +58,9 @@ set(RIOT_REGRESSION_GOLD_HASH
   "SHA512=f07281fae0845de80dd9d76e5f73e8da64b8f6e0bf282bbe003dcd20659eddc83c71be2d0802a2535c675c59e8e179facff68af6219c78db8b3fd8f63d21f67d"
   CACHE STRING "Hash of default gold standard file to download")
 option(RIOT_REGRESSION_GOLD_SYNC "Automatically sync gold standard files." ON)
+set(RIOT_REGRESSION_GOLD_LOCAL "" CACHE STRING
+  "Path to a pre-downloaded gold standard tarball. If set, it is used instead of \
+downloading from GitHub (e.g. fetched ahead of time on a login node with internet).")
 
 # TODO(JMM): Tests? Copy what's in riot? Hack something in?
 # TODO(JMM): Pgen?
