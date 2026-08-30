@@ -288,5 +288,5 @@ instance. The GitHub actions are configured via the files located in the
 Our GitLab CI is configured via the ``.gitlab-ci.yml`` file. To
 trigger the GitLab CI runs, you need to have access to our internal
 GitLab instance, push your branch to this second Git repository, and
-create a GitLab merge request (MR). Each GitLab MR will launch a
+create a draft GitLab merge request (MR). Each GitLab MR will launch a
 pipeline with multiple jobs on various clusters.
