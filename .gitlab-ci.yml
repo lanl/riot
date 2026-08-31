@@ -323,7 +323,7 @@ regression_rocinante:
     - source venv_rocinante/bin/activate
     - export INSTALL_PREFIX=$(python -c 'import sys; print(sys.prefix)')
     - cd $CI_PROJECT_DIR/tst
-    - python3.11 run_tests.py
+    - python run_tests.py
       --log_file=log_file_cpu.txt
       --cmake=-DPLUGINS_DIR=${PLUGINS_REPO_DIR}
       --cmake=-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN
