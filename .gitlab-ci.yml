@@ -5,6 +5,10 @@ variables:
   PLUGINS_COMMIT: "8c76c857d408567a29b465236e2bd5349740dc5b"
   # Static ccache release fetched on the frontend (see pre_get_sources_script).
   CCACHE_VERSION: "4.10.2"
+  # Stable against compiler hot updates
+  CCACHE_COMPILERCHECK: content
+  # More robust for cuda/device code
+  CCACHE_DEPEND: "true"
   # Regression gold standard, pre-fetched on the frontend. These MUST mirror
   # RIOT_REGRESSION_GOLD_VER / _HASH in CMakeLists.txt (a mismatch is caught by
   # the cmake hash check rather than silently using stale gold).
@@ -98,6 +102,7 @@ setup_ccache_darwin:
     - merge_requests
   script:
     - echo "ccache provisioned at $CCACHE_BIN"
+
 setup_ccache_rocinante:
   stage: setup
   id_tokens:
@@ -265,3 +270,108 @@ unit_darwin-v100:
     - make -j32
     - ctest
     - $CCACHE_BIN -s
+
+unit_rocinante:
+  stage: regression
+  id_tokens:
+    SITE_ID_TOKEN:
+      aud: https://asc-git.lanl.gov
+  tags:
+    - rocinante
+    - batch
+  variables:
+    CLUSTER: rocinante
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    CCACHE_TAG: rocinante
+  only:
+    - main
+    - merge_requests
+  script:
+    - module purge
+    - module load cpe/23.12
+    - module load PrgEnv-intel/8.5.0
+    - module load python
+    - module load craype-x86-spr
+    - module load libfabric/1.22.0
+    - module load craype-network-ofi
+    - module load perftools-base/23.12.0
+    - module load slurm
+    - module load conduit/conduit-x86_64
+    - module load gufi/gufi-x86_64
+    - module load xpmem/2.9.7
+    - module load craype/2.7.30
+    - module load intel/2023.2.0
+    - module load cray-mpich/8.1.28
+    - module load cray-dsmml/0.2.2
+    - module load cray-libsci/23.12.5
+    - module load cray-hdf5-parallel
+    - module load cmake
+    - cd ${CI_PROJECT_DIR}
+    - python -m venv venv_rocinante
+    - source venv_rocinante/bin/activate
+    - pip install h5py numpy scipy
+    - mkdir -p build && cd build
+    - cmake -DRIOT_ENABLE_UNIT_TESTS=ON -DPLUGINS_DIR=${PLUGINS_REPO_DIR} -DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN -DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN ..
+    - make -j32
+    - ctest
+    - $CCACHE_BIN -s
+
+regression_rocinante:
+  stage: regression
+  id_tokens:
+    SITE_ID_TOKEN:
+      aud: https://asc-git.lanl.gov
+  tags:
+    - rocinante
+    - batch
+  variables:
+    CLUSTER: rocinante
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    CCACHE_TAG: rocinante
+  only:
+    - main
+    - merge_requests
+  script:
+    - module purge
+    - module load cpe/23.12
+    - module load PrgEnv-intel/8.5.0
+    - module load python
+    - module load craype-x86-spr
+    - module load libfabric/1.22.0
+    - module load craype-network-ofi
+    - module load perftools-base/23.12.0
+    - module load slurm
+    - module load conduit/conduit-x86_64
+    - module load gufi/gufi-x86_64
+    - module load xpmem/2.9.7
+    - module load craype/2.7.30
+    - module load intel/2023.2.0
+    - module load cray-mpich/8.1.28
+    - module load cray-dsmml/0.2.2
+    - module load cray-libsci/23.12.5
+    - module load cray-hdf5-parallel
+    - module load cmake
+    - cd ${CI_PROJECT_DIR}
+    - python -m venv venv_rocinante
+    - source venv_rocinante/bin/activate
+    - pip install h5py numpy scipy
+    - export INSTALL_PREFIX=$(python -c 'import sys; print(sys.prefix)')
+    - cd $CI_PROJECT_DIR/tst
+    - python3.11 run_tests.py
+      --log_file=log_file_cpu.txt
+      --cmake=-DPLUGINS_DIR=${PLUGINS_REPO_DIR}
+      --cmake=-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN
+      --cmake=-DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN
+      --cmake=-DRIOT_REGRESSION_GOLD_VER=$GOLD_VER
+      --cmake=-DRIOT_REGRESSION_GOLD_HASH=$GOLD_HASH
+      --cmake=-DRIOT_REGRESSION_GOLD_LOCAL=$GOLD_LOCAL
+      --cmake=-DRIOT_ENABLE_REGRESSION_TESTS=ON
+      --cmake=-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}
+      --save_build
+      --make_nproc=32
+    - $CCACHE_BIN -s
+  artifacts:
+    when: always
+    expire_in: 3 days
+    paths:
+      - tst/log_file_cpu.txt
