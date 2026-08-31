@@ -164,12 +164,13 @@ regression_darwin-skylake:
     - cd $CI_PROJECT_DIR/tst
     - python3.11 run_tests.py
       --log_file=log_file_cpu.txt
-      --cmake=-DPLUGIN_PATH=${PLUGINS_REPO_DIR}
+      --cmake=-DPLUGINS_DIR=${PLUGINS_REPO_DIR}
       --cmake=-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN
       --cmake=-DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN
       --cmake=-DRIOT_REGRESSION_GOLD_VER=$GOLD_VER
       --cmake=-DRIOT_REGRESSION_GOLD_HASH=$GOLD_HASH
       --cmake=-DRIOT_REGRESSION_GOLD_LOCAL=$GOLD_LOCAL
+      --cmake=-DRIOT_ENABLE_REGRESSION_TESTS=ON
       --save_build
       --make_nproc=32
     - $CCACHE_BIN -s
@@ -216,12 +217,13 @@ regression_darwin-v100:
       --cmake=-DKokkos_ARCH_VOLTA70=On
       --cmake=-DCMAKE_CXX_COMPILER=$CI_PROJECT_DIR/external/parthenon/external/Kokkos/bin/nvcc_wrapper
       --cmake=-DCMAKE_C_COMPILER=$CC
-      --cmake=-DPLUGIN_PATH=${PLUGINS_REPO_DIR}
+      --cmake=-DPLUGINS_DIR=${PLUGINS_REPO_DIR}
       --cmake=-DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN
       --cmake=-DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN
       --cmake=-DRIOT_REGRESSION_GOLD_VER=$GOLD_VER
       --cmake=-DRIOT_REGRESSION_GOLD_HASH=$GOLD_HASH
       --cmake=-DRIOT_REGRESSION_GOLD_LOCAL=$GOLD_LOCAL
+      --cmake=-DRIOT_ENABLE_REGRESSION_TESTS=ON
       --save_build
       --make_nproc=32
       --gpu
