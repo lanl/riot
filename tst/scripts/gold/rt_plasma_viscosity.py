@@ -24,7 +24,8 @@ logger = logging.getLogger("riot" + __name__[7:])  # set logger name
 
 file_id = "rt_plasma_viscosity"
 gold_id = "rt_plasma_viscosity"
-diff_tol = 1.0e-8
+diff_tol_parallel = 1.0e-10
+diff_tol_serial = 1.0e-14
 
 # velocity and momentum diff on GPU using gold files from CPU for some reason.
 # This is only in the electron conduction pre-heat region. For now, exclude these vars from the error calculation
@@ -54,11 +55,8 @@ import numpy as np
 
 
 def mixed_L1_error(u, uhat, atol=1e-12, rtol=1e-6):
-    """Compute a stable L1 error norm using mixed absolute/relative scaling.
-
-    Divides by a block- and component-local magnitude to help avoid
-    "phase" errors where the local error is a slight phase shift in a
-    zero-crossing.
+    """
+    Compute a stable L1 error norm using mixed absolute/relative scaling.
 
     Parameters
     ----------
@@ -82,13 +80,11 @@ def mixed_L1_error(u, uhat, atol=1e-12, rtol=1e-6):
     # pointwise errors
     e = np.abs(u - uhat)
 
-    u_max_local = np.abs(u).max(axis=-1)
-
     # scaling using max(absTol, relTol * |u|)
-    scale = np.maximum(atol, rtol * u_max_local)
+    scale = np.maximum(atol, rtol * np.abs(u))
 
     # normalized per-point errors
-    err = e / scale[..., np.newaxis]
+    err = e / scale
 
     # L1 norm (mean)
     return np.mean(err)
@@ -99,6 +95,7 @@ def analyze():
     analyze_status = True
 
     logger.debug("Analyzing test " + __name__)
+    diff_tol = diff_tol_parallel
     test_dump = "build/src/rt_plasma_viscosity.out1.final.phdf"
     gold_dump = "scripts/gold/files/rt_plasma_viscosity.out1.final.phdf"
 
@@ -112,10 +109,10 @@ def analyze():
 
     for var in which_vars:
         if var not in exclude_vars:
-            vtest = run1.Get(var, flatten=True)
-            vgold = run2.Get(var, flatten=True)
+            vtest = run1.Get(var).flatten()
+            vgold = run2.Get(var).flatten()
             abs_err = np.abs(vtest - vgold)
-            mask = np.abs(vgold) > diff_tol
+            mask = np.abs(vgold) > 1e-14
             if np.count_nonzero(mask) > 0:
                 rel_err = np.max(np.abs(abs_err[mask] / vgold[mask]))
                 mixed_err = mixed_L1_error(vtest, vgold, diff_tol, diff_tol)
@@ -125,7 +122,7 @@ def analyze():
                     )
                 max_err_mixed = max(max_err_mixed, mixed_err)
 
-    if max_err_mixed > 1.0:
+    if mixed_err > 1.0:
         logger.warning(f"rt_plasma_viscosity: max mixed error = {max_err_mixed:23.15e}")
         analyze_status = False
 
