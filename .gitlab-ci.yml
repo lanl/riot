@@ -24,11 +24,11 @@ default:
       # NOTE: the submodule's own project must also allowlist *riot* (this
       # pipeline's project) in its CI/CD job-token settings -- the token is always
       # riot's, regardless of how deep the submodule nesting goes.
-      # export GIT_CONFIG_COUNT=1
-      # export GIT_CONFIG_KEY_0="url.https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_INTERNAL_HOST}/.insteadOf"
-      # export GIT_CONFIG_VALUE_0="https://${CI_INTERNAL_HOST}/"
+      export GIT_CONFIG_COUNT=1
+      export GIT_CONFIG_KEY_0="url.https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_INTERNAL_HOST}/.insteadOf"
+      export GIT_CONFIG_VALUE_0="https://${CI_INTERNAL_HOST}/"
       git clone --recursive "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_INTERNAL_HOST}/${PLUGINS_REPO}" "${PLUGINS_REPO_DIR}"
-      # unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+      unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
       # git clone --recursive "git@${CI_INTERNAL_HOST}:${PLUGINS_REPO}" "${PLUGINS_REPO_DIR}"
       realpath ${PLUGINS_REPO_DIR}
       git -C "${PLUGINS_REPO_DIR}" checkout "${PLUGINS_COMMIT}"
@@ -99,23 +99,23 @@ setup_ccache_darwin:
     - merge_requests
   script:
     - echo "ccache provisioned at $CCACHE_BIN"
-# setup_ccache_rocinante:
-#   stage: setup
-#   id_tokens:
-#     SITE_ID_TOKEN:
-#       aud: https://asc-git.lanl.gov
-#   tags:
-#     - rocinante
-#     - batch
-#   variables:
-#     CLUSTER: rocinante
-#     SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
-#     CCACHE_TAG: setup
-#   only:
-#     - main
-#     - merge_requests
-#   script:
-#     - echo "ccache provisioned at $CCACHE_BIN"
+setup_ccache_rocinante:
+  stage: setup
+  id_tokens:
+    SITE_ID_TOKEN:
+      aud: https://asc-git.lanl.gov
+  tags:
+    - rocinante
+    - batch
+  variables:
+    CLUSTER: rocinante
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    CCACHE_TAG: setup
+  only:
+    - main
+    - merge_requests
+  script:
+    - echo "ccache provisioned at $CCACHE_BIN"
 
 unit_darwin-skylake:
   stage: regression
