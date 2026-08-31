@@ -297,3 +297,33 @@ trigger the GitLab CI runs, you need to have access to our internal
 GitLab instance, push your branch to this second Git repository, and
 create a draft GitLab merge request (MR). Each GitLab MR will launch a
 pipeline with multiple jobs on various clusters.
+
+Setting git to automatically push to our CI system
+````````````````````````````````````````````````````
+
+If you would like to have git automatically push to the CI system when
+you type ``git push``, you can do so. The following procedure is
+recommended:
+
+```bash
+git remote add ci <git ssh path to ci repo>
+git remote add all git@github.com:lanl/riot.git
+git remote set-url --add --push all git@github.com:lanl/riot.git
+git remote set-url --add --push all <git ssh path to ci repo>
+git config remote.pushDefault all
+```
+
+With these changes,
+```bash
+git pull
+# pulls from github
+
+git push
+# pushes to both github and the CI machine via "all"
+
+git push origin
+# pushes only to github
+
+git push ci
+# pushes only to the CI machine
+```
