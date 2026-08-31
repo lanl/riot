@@ -88,7 +88,7 @@ def mixed_L1_error(u, uhat, atol=1e-12, rtol=1e-6):
     scale = np.maximum(atol, rtol * u_max_local)
 
     # normalized per-point errors
-    err = e / scale[...,np.newaxis]
+    err = e / scale[..., np.newaxis]
 
     # L1 norm (mean)
     return np.mean(err)
@@ -112,8 +112,8 @@ def analyze():
 
     for var in which_vars:
         if var not in exclude_vars:
-            vtest = run1.Get(var, flatten = True)
-            vgold = run2.Get(var, flatten = True)
+            vtest = run1.Get(var, flatten=True)
+            vgold = run2.Get(var, flatten=True)
             abs_err = np.abs(vtest - vgold)
             mask = np.abs(vgold) > diff_tol
             if np.count_nonzero(mask) > 0:
