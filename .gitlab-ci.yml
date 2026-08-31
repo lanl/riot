@@ -291,9 +291,8 @@ unit_rocinante:
     - module load cray-hdf5-parallel
     - module load cmake
     - cd ${CI_PROJECT_DIR}
-    - python -m venv venv_rocinante
+    - python -m venv --system-site-packages venv_rocinante
     - source venv_rocinante/bin/activate
-    - pip install h5py numpy scipy
     - mkdir -p build && cd build
     - cmake -DRIOT_ENABLE_UNIT_TESTS=ON -DPLUGINS_DIR=${PLUGINS_REPO_DIR} -DCMAKE_CXX_COMPILER_LAUNCHER=$CCACHE_BIN -DCMAKE_C_COMPILER_LAUNCHER=$CCACHE_BIN ..
     - make -j32
@@ -320,9 +319,8 @@ regression_rocinante:
     - module load cray-hdf5-parallel
     - module load cmake
     - cd ${CI_PROJECT_DIR}
-    - python -m venv venv_rocinante
+    - python -m venv --system-site-packages venv_rocinante
     - source venv_rocinante/bin/activate
-    - pip install h5py numpy scipy
     - export INSTALL_PREFIX=$(python -c 'import sys; print(sys.prefix)')
     - cd $CI_PROJECT_DIR/tst
     - python3.11 run_tests.py
