@@ -161,6 +161,7 @@ regression_darwin-skylake:
     - python3.11 -m venv cpu_venv
     - source cpu_venv/bin/activate
     - pip install h5py numpy scipy
+    - export INSTALL_PREFIX=$(python -c 'import sys; print(sys.prefix)')
     - cd $CI_PROJECT_DIR/tst
     - python3.11 run_tests.py
       --log_file=log_file_cpu.txt
@@ -171,6 +172,7 @@ regression_darwin-skylake:
       --cmake=-DRIOT_REGRESSION_GOLD_HASH=$GOLD_HASH
       --cmake=-DRIOT_REGRESSION_GOLD_LOCAL=$GOLD_LOCAL
       --cmake=-DRIOT_ENABLE_REGRESSION_TESTS=ON
+      --cmake=-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}
       --save_build
       --make_nproc=32
     - $CCACHE_BIN -s
@@ -199,6 +201,7 @@ regression_darwin-v100:
     - python3.11 -m venv gpu_venv
     - source gpu_venv/bin/activate
     - pip install h5py numpy
+    - export INSTALL_PREFIX=$(python -c 'import sys; print(sys.prefix)')
     - cd $CI_PROJECT_DIR/tst
     - python3.11 run_tests.py
       hydro
@@ -224,6 +227,7 @@ regression_darwin-v100:
       --cmake=-DRIOT_REGRESSION_GOLD_HASH=$GOLD_HASH
       --cmake=-DRIOT_REGRESSION_GOLD_LOCAL=$GOLD_LOCAL
       --cmake=-DRIOT_ENABLE_REGRESSION_TESTS=ON
+      --cmake=-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}
       --save_build
       --make_nproc=32
       --gpu
