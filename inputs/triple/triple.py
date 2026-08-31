@@ -53,7 +53,7 @@ def make_input():
         nlim=-1,  # cycle limit
         tlim=5.0,  # time limit
         integrator="rk2",  # time integration algorithm
-        ncycle_out=1,  # interval for stdout summary info
+        ncycle_out=10, # interval for stdout summary info
     )
 
     riot.input(
