@@ -152,6 +152,13 @@ documentation.
      - ``ON``
      - Download and extract the selected regression-gold archive during CMake
        configuration when regression tests are enabled.
+   * - ``RIOT_REGRESSION_GOLD_LOCAL``
+     - unset
+     - Path to a pre-downloaded regression-gold archive. When set, CMake uses
+       this file instead of downloading from GitHub, after verifying it against
+       ``RIOT_REGRESSION_GOLD_HASH``. Useful on systems where the build node has
+       no internet access: fetch the archive ahead of time (for example on a
+       login node) and point this option at it.
    * - ``RIOT_ENABLE_CUDA``
      - ``OFF``
      - Enable CUDA support in ``riot`` and its in-tree dependencies.
