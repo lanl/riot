@@ -298,6 +298,10 @@ GitLab instance, push your branch to this second Git repository, and
 create a draft GitLab merge request (MR). Each GitLab MR will launch a
 pipeline with multiple jobs on various clusters.
 
+Be aware that the CI on the system runs sequentially and the number of
+concurrent jobs per user is limited. You may wish to cancel an old run
+if you no longer need the results and want your most recent run to finish.
+
 Setting git to automatically push to our CI system
 ````````````````````````````````````````````````````
 
