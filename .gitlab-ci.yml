@@ -66,7 +66,6 @@ default:
       fi
 
 before_script:
-  - module load cmake/3.26.3
   # ccache setup. CCACHE_BIN and CCACHE_DIR are consumed by the build steps below.
   - export CCACHE_BIN="$HOME/jacamar-ci/riot-ccache/${CCACHE_VERSION}-linux-$(uname -m)/ccache"
   - export CCACHE_DIR="$HOME/jacamar-ci/riot-ccache/${CCACHE_TAG}"
@@ -132,6 +131,7 @@ unit_darwin-skylake:
     - merge_requests
   script:
     - module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2
+    - module load cmake/3.26.3
     - cd ${CI_PROJECT_DIR}
     - python3.11 -m venv cpu_venv
     - source cpu_venv/bin/activate
@@ -157,6 +157,7 @@ regression_darwin-skylake:
     - merge_requests
   script:
     - module load openmpi/3.1.6-gcc_12.2.0 hdf5/1.12.2
+    - module load cmake/3.26.3
     - cd ${CI_PROJECT_DIR}
     - python3.11 -m venv cpu_venv
     - source cpu_venv/bin/activate
@@ -197,6 +198,7 @@ regression_darwin-v100:
     - merge_requests
   script:
     - module load nvhpc/25.1 cuda/12.9.1 gcc/11.2.0 hdf5/1.12.2
+    - module load cmake/3.26.3
     - cd ${CI_PROJECT_DIR}
     - python3.11 -m venv gpu_venv
     - source gpu_venv/bin/activate
@@ -253,6 +255,7 @@ unit_darwin-v100:
     - merge_requests
   script:
     - module load nvhpc/25.1 cuda/12.9.1 gcc/11.2.0 hdf5/1.12.2
+    - module load cmake/3.26.3
     - cd ${CI_PROJECT_DIR}
     - python3 -m venv gpu_venv
     - source gpu_venv/bin/activate
