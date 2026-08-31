@@ -18,7 +18,7 @@ changes. You should also add tests for bugs fixed or new features you
 add.
 
 Before a pull request will be merged, the code should be formatted. We
-use clang-format for this, pinned to version 12. You can automatically
+use clang-format for this, pinned to version 20. You can automatically
 trigger ``clang-format`` in two ways: first you can run the script
 ``scripts/format.sh``; second you can create a comment on your MR
 containing just the words ``@par-hermes format``. The former script
@@ -30,10 +30,17 @@ set to ``1`` adds useful output. For example:
 
     CFM=clang-format-20 VERBOSE=1 ./util/scripts/format.sh
 
+At least one maintainer must approve a pull request. Maintainers will,
+at their discretion, tag/assign reviewers who are experts in relevant
+parts of the code. If such an assignment is made, the relevant expert
+must approve before the pull request can be merged.
+
 Several sets of tests are triggered on a pull request: a static format
 check, a docs build, and unit tests. These are run through GitHub's
 CPU infrastructure. We have a second set of tests run on a wider set
-of architectures, which we are not able to make public.
+of architectures, which we are not able to make public. Before it can
+be merged, a maintainer must trigger the internal CI after review and
+that second CI must pass.
 
 Building the documentation
 --------------------------
