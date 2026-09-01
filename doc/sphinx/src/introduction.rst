@@ -54,6 +54,21 @@ the governing equations, its component count, and its metadata.
    WithFluxes, Sparse, Derived) rather than the complete flag set
    passed in the source.
 
+Running RIOT
+------------
+
+After building RIOT, run the executable from ``build/src``. Supply an input
+deck with ``-i`` and, optionally, select an output directory with ``-d``:
+
+.. code-block:: bash
+
+   cd build/src
+   ./riot -i input.rin -d /path/to/output/
+   mpiexec -n 4 ./riot -i input.rin -d /path/to/output/
+
+The second command runs the same problem using four MPI ranks. See
+:doc:`/src/building` for prerequisites, configuration, and installation details.
+
 .. _`sec:physics-block`:
 
 Enabling Physics: the ``<physics>`` Block
