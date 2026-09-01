@@ -73,23 +73,56 @@ Input Parameters
 
 Thermonuclear burn is enabled with the ``tn`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`). Sparse physics (Chapter :ref:`chap:sparse-physics`) is not supported with burn, so ``sparse_physics`` must be set ``false``.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<physics>`` block relevant to burn.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<physics>`` block relevant to burn. tn & bool & ``false`` & Enable thermonuclear burn.
-   | sparse_physics & bool & ``true`` & Not supported with burn; set ``false``.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - tn
+     - bool
+     - ``false``
+     - Enable thermonuclear burn.
+   * - sparse_physics
+     - bool
+     - ``true``
+     - Not supported with burn; set ``false``.
 
 The reaction network is specified in the ``<tnburn>`` block by contiguous, zero-based ``reaction``\ :math:`K` entries in NDI reaction notation. Products may be individually flagged to deposit locally or escape.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<tnburn>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<tnburn>`` block. reaction\ :math:`K` & string & — & The :math:`K`\ th reaction, e.g. ``d+t->n+a``; numbered from ``0``.
-   | deposit_locally\_\ :math:`Z` & bool & ``true`` & Deposit product with ZAID :math:`Z` locally; if ``false`` it escapes the problem.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - reaction\ :math:`K`
+     - string
+     - —
+     - The :math:`K`\ th reaction, e.g. ``d+t->n+a``; numbered from ``0``.
+   * - deposit_locally\_\ :math:`Z`
+     - bool
+     - ``true``
+     - Deposit product with ZAID :math:`Z` locally; if ``false`` it escapes the problem.
 
 The nuclear data table (isotope masses, charges, reactivities, and energetics) is selected in the ``<isotope_data>`` block:
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<isotope_data>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<isotope_data>`` block. filename & string & ``isotope_data.hdf5`` & HDF5 nuclear-data file (produced by the ``ndi2spiner`` tool).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - filename
+     - string
+     - ``isotope_data.hdf5``
+     - HDF5 nuclear-data file (produced by the ``ndi2spiner`` tool).
 
 Each burning material lists its isotopes by ZAID in its ``<material>`` block via ``isotope``\ :math:`K` and initial mass fractions ``isotope``\ :math:`K`\ ``_mfrac`` (see Chapter :ref:`chap:materials`).
 

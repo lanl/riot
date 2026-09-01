@@ -165,30 +165,102 @@ Input Parameters
 
 Ionization is enabled with the ``ionization`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`). When it is on, every material must provide an ``electron_eos`` block (Chapter :ref:`chap:materials`). The remaining controls live in the ``<ionization>`` block.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<ionization>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<ionization>`` block. fully_ionized & bool & ``false`` & Force :math:`\bar{Z} = Z_{\text{nuc}}` (fully ionized).
-   | root_tol & Real & ``1e-20`` & Root-find tolerance for the electron temperature.
-   | advect_electron_entropy & bool & ``false`` & Advect electron entropy density instead of solving the electron energy with a :math:`p\,\mathrm{d}V` source.
-   | electron_ion_coupling & bool & ``false`` & Relax :math:`T_e` and :math:`T_i` toward equilibrium.
-   | electron_ion_coupling_model & string & ``landau_spitzer`` & Coupling model: ``constant`` or ``landau_spitzer``.
-   | tau_ei & Real & ``0.0`` & Constant coupling time (used when model is ``constant``).
-   | coulomb_logarithm & string & ``brysk`` & :math:`\ln\Lambda` model: ``basic``, ``brysk``, ``lee_moore``, or ``bps``.
-   | electron_thermal_conduction & bool & ``false`` & Solve electron heat conduction.
-   | electron_conductivity_model & string & ``spitzer_volume_average_arithmetic`` & Electron conductivity model (Spitzer variants or ``constant``).
-   | electron_conductivity & Real & ``0.0`` & Constant electron conductivity (if selected).
-   | ion_thermal_conduction & bool & ``false`` & Solve ion heat conduction.
-   | ion_conductivity_model & string & ``braginskii`` & Ion conductivity model: ``braginskii`` or ``constant``.
-   | ion_conductivity & Real & ``0.0`` & Constant ion conductivity (if selected).
-   | plasma_viscosity & bool & ``false`` & Add the ion viscous stress to the momentum and energy equations.
-   | ion_viscosity_model & string & ``fokker_planck_landau`` & Viscosity model: ``fokker_planck_landau`` or ``constant``.
-   | ion_shear_viscosity & Real & ``1.0`` & Constant shear viscosity :math:`\eta` (if model is ``constant``).
-   | ion_bulk_viscosity & Real & ``0.0`` & Constant bulk viscosity :math:`\eta_b` (if model is ``constant``).
-   | timestep_control & string & ``relative`` & Conduction step control: ``explicit`` or ``relative``.
-   | T_scale_floor & Real & ``1.0`` & Temperature-scale floor for ``relative`` step control.
-   | fractional_change_scale & Real & ``0.1`` & Allowed fractional :math:`T_e` change per conduction step.
-   | zbar_floor & Real & ``1e-6`` & Floor on :math:`\bar{Z}` in microphysics evaluations.
-   | ion_number_density_floor & Real & ``1e11`` & Floor on ion number density (cm\ :math:`^{-3}`).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - fully_ionized
+     - bool
+     - ``false``
+     - Force :math:`\bar{Z} = Z_{\text{nuc}}` (fully ionized).
+   * - root_tol
+     - Real
+     - ``1e-20``
+     - Root-find tolerance for the electron temperature.
+   * - advect_electron_entropy
+     - bool
+     - ``false``
+     - Advect electron entropy density instead of solving the electron energy with a :math:`p\,\mathrm{d}V` source.
+   * - electron_ion_coupling
+     - bool
+     - ``false``
+     - Relax :math:`T_e` and :math:`T_i` toward equilibrium.
+   * - electron_ion_coupling_model
+     - string
+     - ``landau_spitzer``
+     - Coupling model: ``constant`` or ``landau_spitzer``.
+   * - tau_ei
+     - Real
+     - ``0.0``
+     - Constant coupling time (used when model is ``constant``).
+   * - coulomb_logarithm
+     - string
+     - ``brysk``
+     - :math:`\ln\Lambda` model: ``basic``, ``brysk``, ``lee_moore``, or ``bps``.
+   * - electron_thermal_conduction
+     - bool
+     - ``false``
+     - Solve electron heat conduction.
+   * - electron_conductivity_model
+     - string
+     - ``spitzer_volume_average_arithmetic``
+     - Electron conductivity model (Spitzer variants or ``constant``).
+   * - electron_conductivity
+     - Real
+     - ``0.0``
+     - Constant electron conductivity (if selected).
+   * - ion_thermal_conduction
+     - bool
+     - ``false``
+     - Solve ion heat conduction.
+   * - ion_conductivity_model
+     - string
+     - ``braginskii``
+     - Ion conductivity model: ``braginskii`` or ``constant``.
+   * - ion_conductivity
+     - Real
+     - ``0.0``
+     - Constant ion conductivity (if selected).
+   * - plasma_viscosity
+     - bool
+     - ``false``
+     - Add the ion viscous stress to the momentum and energy equations.
+   * - ion_viscosity_model
+     - string
+     - ``fokker_planck_landau``
+     - Viscosity model: ``fokker_planck_landau`` or ``constant``.
+   * - ion_shear_viscosity
+     - Real
+     - ``1.0``
+     - Constant shear viscosity :math:`\eta` (if model is ``constant``).
+   * - ion_bulk_viscosity
+     - Real
+     - ``0.0``
+     - Constant bulk viscosity :math:`\eta_b` (if model is ``constant``).
+   * - timestep_control
+     - string
+     - ``relative``
+     - Conduction step control: ``explicit`` or ``relative``.
+   * - T_scale_floor
+     - Real
+     - ``1.0``
+     - Temperature-scale floor for ``relative`` step control.
+   * - fractional_change_scale
+     - Real
+     - ``0.1``
+     - Allowed fractional :math:`T_e` change per conduction step.
+   * - zbar_floor
+     - Real
+     - ``1e-6``
+     - Floor on :math:`\bar{Z}` in microphysics evaluations.
+   * - ion_number_density_floor
+     - Real
+     - ``1e11``
+     - Floor on ion number density (cm\ :math:`^{-3}`).
 
 Registered Fields
 -----------------

@@ -106,35 +106,104 @@ Defining Materials
 
 Materials are defined by contiguous, zero-based blocks ``<material0>``, ``<material1>``, …. The number of materials is set implicitly by how many such blocks are present; they must be numbered contiguously starting from ``0``. Each block selects an EOS and, optionally, enables strength, ionization, opacity, isotopes, or multiple phases.
 
-.. container:: paramtable
+.. list-table:: Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block. label & string & — & Descriptive name for the material.
-   | eos_type & string & — & EOS model (the table below); required.
-   | eos & string & *this block* & Name of a separate block holding the EOS parameters; if absent, they are read from this material block.
-   | nphase & int & ``1`` & Number of phases for a multi-phase material.
-   | max_mat_level & int & ``0`` & Maximum AMR level to enforce within this material (:math:`-1` = finest).
-   | max_bnd_level & int & ``0`` & Maximum AMR level to enforce around its interfaces.
-   | strong & bool & ``false`` & Enable material strength (Chapter :ref:`chap:strength`).
-   | strength_model & string & — & Strength-model block (required if ``strong``).
-   | electron_eos & string & — & Electron-EOS block (required if ionization is on).
-   | opac & string & *this block* & Name of a separate block holding the opacity models (Section :ref:`sec:mat-opacity`); if absent, they are read from this material block. Multi-phase materials use ``opac0``, ``opac1``, …instead.
-   | isotope\ :math:`K` & string & — & ZAID of the :math:`K`\ th isotope (burn runs).
-   | isotope\ :math:`K`\ \_mfrac & Real & ``0.0`` & Initial mass fraction of the :math:`K`\ th isotope.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - label
+     - string
+     - —
+     - Descriptive name for the material.
+   * - eos_type
+     - string
+     - —
+     - EOS model (the table below); required.
+   * - eos
+     - string
+     - *this block*
+     - Name of a separate block holding the EOS parameters; if absent, they are read from this material block.
+   * - nphase
+     - int
+     - ``1``
+     - Number of phases for a multi-phase material.
+   * - max_mat_level
+     - int
+     - ``0``
+     - Maximum AMR level to enforce within this material (:math:`-1` = finest).
+   * - max_bnd_level
+     - int
+     - ``0``
+     - Maximum AMR level to enforce around its interfaces.
+   * - strong
+     - bool
+     - ``false``
+     - Enable material strength (Chapter :ref:`chap:strength`).
+   * - strength_model
+     - string
+     - —
+     - Strength-model block (required if ``strong``).
+   * - electron_eos
+     - string
+     - —
+     - Electron-EOS block (required if ionization is on).
+   * - opac
+     - string
+     - *this block*
+     - Name of a separate block holding the opacity models (Section :ref:`sec:mat-opacity`); if absent, they are read from this material block. Multi-phase materials use ``opac0``, ``opac1``, …instead.
+   * - isotope\ :math:`K`
+     - string
+     - —
+     - ZAID of the :math:`K`\ th isotope (burn runs).
+   * - isotope\ :math:`K`\ \_mfrac
+     - Real
+     - ``0.0``
+     - Initial mass fraction of the :math:`K`\ th isotope.
 
 Multi-Material Closure Controls
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The global ``<materials>`` block and PTE controls tune how mixed cells are closed and diagnosed. The PTE tolerances apply when the general (iterative) solver is active; where the default column reads *library* below, the parameter is left unset and takes whatever default the ``singularity-eos`` library assigns it.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<materials>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<materials>`` block. use_general_pte & bool & ``false`` & Use the iterative PTE solver even for cells of all ideal gases.
-   | track_pte_statistics & bool & ``false`` & Report PTE-solver convergence diagnostics.
-   | pte_stats_mode & string & ``averaged_light`` & Statistics mode: ``instantaneous``, ``averaged``, or ``averaged_light``.
-   | pte_max_iter_per_mat & int & *library* & Maximum PTE iterations per material.
-   | pte_rel_tolerance_p & Real & *library* & Relative pressure-residual tolerance.
-   | pte_rel_tolerance_e & Real & *library* & Relative energy-residual tolerance.
-   | pte_abs_tolerance_p & Real & *library* & Absolute pressure-residual tolerance.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - use_general_pte
+     - bool
+     - ``false``
+     - Use the iterative PTE solver even for cells of all ideal gases.
+   * - track_pte_statistics
+     - bool
+     - ``false``
+     - Report PTE-solver convergence diagnostics.
+   * - pte_stats_mode
+     - string
+     - ``averaged_light``
+     - Statistics mode: ``instantaneous``, ``averaged``, or ``averaged_light``.
+   * - pte_max_iter_per_mat
+     - int
+     - *library*
+     - Maximum PTE iterations per material.
+   * - pte_rel_tolerance_p
+     - Real
+     - *library*
+     - Relative pressure-residual tolerance.
+   * - pte_rel_tolerance_e
+     - Real
+     - *library*
+     - Relative energy-residual tolerance.
+   * - pte_abs_tolerance_p
+     - Real
+     - *library*
+     - Absolute pressure-residual tolerance.
 
 .. _`sec:mat-group-structure`:
 
@@ -151,10 +220,22 @@ For radiation runs the materials package *owns* the frequency group structure �
 
 All materials in a simulation therefore share one common group grid, checked for consistency across every table-based material.
 
-.. container:: paramtable
+.. list-table:: Group-structure parameters in the ``<materials>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Group-structure parameters in the ``<materials>`` block. group_bounds & list & *tables/grey* & Ascending frequency-group edges (Hz), length :math:`N_\nu+1`. If omitted, taken from opacity tables, or a single grey group.
-   | ngroups & int & *derived* & Number of frequency groups; if given with ``group_bounds`` it must equal its length minus one.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - group_bounds
+     - list
+     - *tables/grey*
+     - Ascending frequency-group edges (Hz), length :math:`N_\nu+1`. If omitted, taken from opacity tables, or a single grey group.
+   * - ngroups
+     - int
+     - *derived*
+     - Number of frequency groups; if given with ``group_bounds`` it must equal its length minus one.
 
 .. _`sec:mat-opacity`:
 
@@ -174,12 +255,30 @@ For radiation runs (Chapter :ref:`chap:radtransport`) each material carries an 
 
 For an analytic model (``constant``/``powerlaw``) RIOT generates the group-mean table at build time over a :math:`(\rho,T)` grid whose extent and resolution are set by the optional per-model parameters below (suffixed ``_a`` for absorption, ``_s`` for scattering); the defaults suffice when the model is density/temperature independent.
 
-.. container:: paramtable
+.. list-table:: Optional table-generation parameters in an opacity block (``_a``/``_s`` suffix).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Optional table-generation parameters in an opacity block (``_a``/``_s`` suffix). lRhoMin, lRhoMax & Real & ``-1.0``, ``1.0`` & :math:`\log_{10}` density bounds of the generated mean table.
-   | lTMin, lTMax & Real & ``-1.0``, ``1.0`` & :math:`\log_{10}` temperature bounds of the generated mean table.
-   | NRho, NT & int & ``2``, ``2`` & Number of density / temperature table entries.
-   | NNuPerGroup & int & ``64`` & Frequency samples per group used in the group-mean integration.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - lRhoMin, lRhoMax
+     - Real
+     - ``-1.0``, ``1.0``
+     - :math:`\log_{10}` density bounds of the generated mean table.
+   * - lTMin, lTMax
+     - Real
+     - ``-1.0``, ``1.0``
+     - :math:`\log_{10}` temperature bounds of the generated mean table.
+   * - NRho, NT
+     - int
+     - ``2``, ``2``
+     - Number of density / temperature table entries.
+   * - NNuPerGroup
+     - int
+     - ``64``
+     - Frequency samples per group used in the group-mean integration.
 
 The averaging weight (Rosseland vs. Planck) and the per-material evaluation inside a cell are described in Chapter :ref:`chap:singularity-opac`; the way the per-material coefficients combine into the cell coefficients used by the transport solve is given in Section :ref:`sec:rad-opacity`.
 

@@ -86,22 +86,67 @@ Input Parameters
 
 Turbulent mixing is enabled with ``mix`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The model coefficients and initial conditions live in the ``<mix>`` block. The defaults below are the standard BHR-3.1 calibration; most problems change only the initial conditions ``K0`` and ``S0``.
 
-.. container:: paramtable
+.. list-table:: Closure coefficients in the ``<mix>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Closure coefficients in the ``<mix>`` block. c_1, c_2, c_3, c_4 & Real & ``1.6``, ``1.77``, ``0.0``, ``1.1`` & Transport length-scale (:math:`S_T`) source coefficients.
-   | c_1v, c_2v, c_3v, c_4v & Real & ``1.3``, ``1.77``, ``0.0``, ``1.24`` & Dissipation length-scale (:math:`S_D`) source coefficients.
-   | c_a1, c_a3, c_ap, c_au & Real & ``2.8``, ``1.0``, ``0.1``, ``0.4`` & Mass-flux (:math:`a_i`) dissipation, divergence, buoyancy, and advection coefficients.
-   | c_b2 & Real & ``1.8`` & Density-correlation (:math:`b`) dissipation coefficient.
-   | c_r1, c_r2, c_r4 & Real & ``0.3``, ``0.6``, ``1.8`` & Reynolds-stress pressure–strain, production, and return-to-isotropy coefficients.
-   | c_mu & Real & ``0.28`` & Eddy-viscosity coefficient, :math:`\mu_t=c_\mu\rho S_T\sqrt{K}`.
-   | sigma_k, sigma_a, sigma_b, sigma_c & Real & ``1.0`` & Schmidt/Prandtl numbers for diffusion of the Reynolds stress, mass flux, density correlation, and mass/enthalpy.
-   | sigma_visc & Real & ``0.6`` & Schmidt number for :math:`S_D` diffusion.
-   | sigma_epsilon & Real & ``0.1`` & Schmidt number for :math:`S_T` diffusion.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - c_1, c_2, c_3, c_4
+     - Real
+     - ``1.6``, ``1.77``, ``0.0``, ``1.1``
+     - Transport length-scale (:math:`S_T`) source coefficients.
+   * - c_1v, c_2v, c_3v, c_4v
+     - Real
+     - ``1.3``, ``1.77``, ``0.0``, ``1.24``
+     - Dissipation length-scale (:math:`S_D`) source coefficients.
+   * - c_a1, c_a3, c_ap, c_au
+     - Real
+     - ``2.8``, ``1.0``, ``0.1``, ``0.4``
+     - Mass-flux (:math:`a_i`) dissipation, divergence, buoyancy, and advection coefficients.
+   * - c_b2
+     - Real
+     - ``1.8``
+     - Density-correlation (:math:`b`) dissipation coefficient.
+   * - c_r1, c_r2, c_r4
+     - Real
+     - ``0.3``, ``0.6``, ``1.8``
+     - Reynolds-stress pressure–strain, production, and return-to-isotropy coefficients.
+   * - c_mu
+     - Real
+     - ``0.28``
+     - Eddy-viscosity coefficient, :math:`\mu_t=c_\mu\rho S_T\sqrt{K}`.
+   * - sigma_k, sigma_a, sigma_b, sigma_c
+     - Real
+     - ``1.0``
+     - Schmidt/Prandtl numbers for diffusion of the Reynolds stress, mass flux, density correlation, and mass/enthalpy.
+   * - sigma_visc
+     - Real
+     - ``0.6``
+     - Schmidt number for :math:`S_D` diffusion.
+   * - sigma_epsilon
+     - Real
+     - ``0.1``
+     - Schmidt number for :math:`S_T` diffusion.
 
-.. container:: paramtable
+.. list-table:: Initial conditions in the ``<mix>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Initial conditions in the ``<mix>`` block. K0 & Real & ``0.01`` & Initial (and floor) turbulent kinetic energy.
-   | S0 & Real & ``0.0001`` & Initial turbulent length scale.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - K0
+     - Real
+     - ``0.01``
+     - Initial (and floor) turbulent kinetic energy.
+   * - S0
+     - Real
+     - ``0.0001``
+     - Initial turbulent length scale.
 
 ..
 

@@ -85,36 +85,117 @@ Input Parameters
 
 Lasers are enabled with ``lasers`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``ionization`` must also be enabled. Global controls live in the ``<laser>`` block; each beam is defined in its own contiguous, zero-based ``<laser0>``, ``<laser1>``, … block.
 
-.. container:: paramtable
+.. list-table:: Global parameters in the ``<laser>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Global parameters in the ``<laser>`` block. enable_deposition & bool & ``true`` & Deposit absorbed energy; ``false`` traces rays without heating.
-   | node_interp_order & int & ``2`` & Order of the cell-to-node electron-density interpolation (:math:`2` or :math:`4`).
-   | dt_safety & Real & ``0.95`` & Safety factor on the laser-limited time step.
-   | dt_edot_floor & Real & ``0.2`` & Floor on the electron-heating time-step factor.
-   | dt_tau_cutoff & Real & ``0.2`` & Optical-depth threshold below which the heating time-step limit is disabled.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - enable_deposition
+     - bool
+     - ``true``
+     - Deposit absorbed energy; ``false`` traces rays without heating.
+   * - node_interp_order
+     - int
+     - ``2``
+     - Order of the cell-to-node electron-density interpolation (:math:`2` or :math:`4`).
+   * - dt_safety
+     - Real
+     - ``0.95``
+     - Safety factor on the laser-limited time step.
+   * - dt_edot_floor
+     - Real
+     - ``0.2``
+     - Floor on the electron-heating time-step factor.
+   * - dt_tau_cutoff
+     - Real
+     - ``0.2``
+     - Optical-depth threshold below which the heating time-step limit is disabled.
 
 Each ``<laser>``\ :math:`N` block defines one beam. A beam may instead point to a separate input file with ``laser_file`` (read under the block named by ``name``, defaulting to ``laser``\ :math:`N`), which is convenient for reusing a beam definition across problems.
 
-.. container:: paramtable
+.. list-table:: Per-beam parameters in each ``<laser``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-beam parameters in each ``<laser``\ :math:`N`\ ``>`` block. laser_file & string & — & Optional separate file holding this beam’s parameters.
-   | name & string & ``laser``\ :math:`N` & Block name to read within ``laser_file``.
-   | time_ns & list & — & Times (ns) of the power history; required, :math:`\ge 2` entries.
-   | power_watts & list & — & Beam power (W) at each ``time_ns``; same length.
-   | wavelength_nm & Real & ``351.0`` & Laser wavelength (nm).
-   | lens_x & list & — & Lens center position :math:`(x,y,z)`; required.
-   | target_x & list & — & Target/focus center position :math:`(x,y,z)`; required.
-   | target_size_ratio & Real & — & Target spot size relative to the lens spot (sets convergence).
-   | phi & Real & — & Roll angle (rad) of the beam’s transverse axes about the centerline.
-   | phi_axis & string & — & Reference axis for ``phi``: ``x``, ``y``, or ``z``.
-   | distribution & string & — & Transverse power profile: ``flat`` or ``super`` (super-Gaussian).
-   | power_semi_major_axis & Real & — & Spot semi-major axis.
-   | power_semi_minor_axis & Real & — & Spot semi-minor axis.
-   | power_super_exp & Real & — & Super-Gaussian order (required when ``distribution`` ``= super``).
-   | power_sample_frac & Real & ``0.999`` & Fraction of beam power the sampled super-Gaussian spot must capture.
-   | grid_type & string & — & Ray sampling grid; ``equal_area``.
-   | nr & int & — & Number of radial rings in the sample grid.
-   | ntarget & int & — & Target total number of sample rays.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - laser_file
+     - string
+     - —
+     - Optional separate file holding this beam’s parameters.
+   * - name
+     - string
+     - ``laser``\ :math:`N`
+     - Block name to read within ``laser_file``.
+   * - time_ns
+     - list
+     - —
+     - Times (ns) of the power history; required, :math:`\ge 2` entries.
+   * - power_watts
+     - list
+     - —
+     - Beam power (W) at each ``time_ns``; same length.
+   * - wavelength_nm
+     - Real
+     - ``351.0``
+     - Laser wavelength (nm).
+   * - lens_x
+     - list
+     - —
+     - Lens center position :math:`(x,y,z)`; required.
+   * - target_x
+     - list
+     - —
+     - Target/focus center position :math:`(x,y,z)`; required.
+   * - target_size_ratio
+     - Real
+     - —
+     - Target spot size relative to the lens spot (sets convergence).
+   * - phi
+     - Real
+     - —
+     - Roll angle (rad) of the beam’s transverse axes about the centerline.
+   * - phi_axis
+     - string
+     - —
+     - Reference axis for ``phi``: ``x``, ``y``, or ``z``.
+   * - distribution
+     - string
+     - —
+     - Transverse power profile: ``flat`` or ``super`` (super-Gaussian).
+   * - power_semi_major_axis
+     - Real
+     - —
+     - Spot semi-major axis.
+   * - power_semi_minor_axis
+     - Real
+     - —
+     - Spot semi-minor axis.
+   * - power_super_exp
+     - Real
+     - —
+     - Super-Gaussian order (required when ``distribution`` ``= super``).
+   * - power_sample_frac
+     - Real
+     - ``0.999``
+     - Fraction of beam power the sampled super-Gaussian spot must capture.
+   * - grid_type
+     - string
+     - —
+     - Ray sampling grid; ``equal_area``.
+   * - nr
+     - int
+     - —
+     - Number of radial rings in the sample grid.
+   * - ntarget
+     - int
+     - —
+     - Target total number of sample rays.
 
 Registered Fields
 -----------------

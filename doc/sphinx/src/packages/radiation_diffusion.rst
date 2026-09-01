@@ -81,41 +81,131 @@ Input Parameters
 
 Radiation diffusion is enabled with ``multigroup_diffusion`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled, and ``radiation_transport`` must be off. Its controls live in the ``<diffusion>`` block.
 
-.. container:: paramtable
+.. list-table:: Principal parameters in the ``<diffusion>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Principal parameters in the ``<diffusion>`` block. boundary_condition & string & ``constant_temperature`` & Radiation boundary: ``constant_temperature``, ``zero_flux``, or ``double_shell``.
-   | boundary_T & list & ``1e5`` & Boundary temperature(s) in K; a single value applies to all six faces, or give one per face.
-   | update_temperature & bool & ``false`` & Update the matter temperature from radiation exchange within the implicit solve (enables inter-group coupling terms).
-   | nriter & int & ``3`` & Maximum outer Newton–Raphson iterations.
-   | local_nriter & int & ``0`` & Additional zone-local Newton iterations after the global solve.
-   | nr_tolerance & Real & ``1e-5`` & Convergence tolerance on the relative temperature change.
-   | print_per_nr_step & bool & ``false`` & Print Newton-iteration convergence to screen.
-   | opacity_rho_min & Real & *tiny* & Density floor used when evaluating opacities.
-   | opacity_temp_min & Real & *tiny* & Temperature floor used when evaluating opacities.
-   | a_radiation & Real & *CGS :math:`a`* & Radiation constant (defaults to the CGS value).
-   | c_light & Real & *CGS :math:`c`* & Speed of light (defaults to the CGS value).
-   | report_timings & bool & ``false`` & Report a solver timing breakdown at the end of the run.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - boundary_condition
+     - string
+     - ``constant_temperature``
+     - Radiation boundary: ``constant_temperature``, ``zero_flux``, or ``double_shell``.
+   * - boundary_T
+     - list
+     - ``1e5``
+     - Boundary temperature(s) in K; a single value applies to all six faces, or give one per face.
+   * - update_temperature
+     - bool
+     - ``false``
+     - Update the matter temperature from radiation exchange within the implicit solve (enables inter-group coupling terms).
+   * - nriter
+     - int
+     - ``3``
+     - Maximum outer Newton–Raphson iterations.
+   * - local_nriter
+     - int
+     - ``0``
+     - Additional zone-local Newton iterations after the global solve.
+   * - nr_tolerance
+     - Real
+     - ``1e-5``
+     - Convergence tolerance on the relative temperature change.
+   * - print_per_nr_step
+     - bool
+     - ``false``
+     - Print Newton-iteration convergence to screen.
+   * - opacity_rho_min
+     - Real
+     - *tiny*
+     - Density floor used when evaluating opacities.
+   * - opacity_temp_min
+     - Real
+     - *tiny*
+     - Temperature floor used when evaluating opacities.
+   * - a_radiation
+     - Real
+     - *CGS :math:`a`*
+     - Radiation constant (defaults to the CGS value).
+   * - c_light
+     - Real
+     - *CGS :math:`c`*
+     - Speed of light (defaults to the CGS value).
+   * - report_timings
+     - bool
+     - ``false``
+     - Report a solver timing breakdown at the end of the run.
 
-.. container:: paramtable
+.. list-table:: Time-step controls in the ``<diffusion>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Time-step controls in the ``<diffusion>`` block. cfl & Real & *large* & CFL number for the radiation step vote; the large default effectively lets the temperature heuristic below govern the step.
-   | temperature_fractional_change_target & Real & ``0.1`` & Target fractional temperature change per step.
-   | timestep_min_temperature & Real & ``1.0`` & Minimum zone temperature considered in the step vote.
-   | timestep_temperature_scale & Real & ``0.0`` & Additive temperature offset in the step estimate.
-   | maximum_timestep_reduction_factor & Real & ``2.0`` & Largest per-step reduction the radiation vote may impose.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - cfl
+     - Real
+     - *large*
+     - CFL number for the radiation step vote; the large default effectively lets the temperature heuristic below govern the step.
+   * - temperature_fractional_change_target
+     - Real
+     - ``0.1``
+     - Target fractional temperature change per step.
+   * - timestep_min_temperature
+     - Real
+     - ``1.0``
+     - Minimum zone temperature considered in the step vote.
+   * - timestep_temperature_scale
+     - Real
+     - ``0.0``
+     - Additive temperature offset in the step estimate.
+   * - maximum_timestep_reduction_factor
+     - Real
+     - ``2.0``
+     - Largest per-step reduction the radiation vote may impose.
 
-.. container:: paramtable
+.. list-table:: Refinement controls in the ``<diffusion>`` block (adaptive runs).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Refinement controls in the ``<diffusion>`` block (adaptive runs). amr_threshold & Real & ``0.0`` & Dimensionless threshold on :math:`|\nabla T|/T` for tagging.
-   | amr_min_temperature & Real & ``0.0`` & Minimum temperature for a cell to be tagged.
-   | amr_min_density & Real & ``0.0`` & Minimum density for a cell to be tagged.
-   | derefine_radius & Real & ``-1.0`` & Force derefinement outside this radius (:math:`\le 0` disables).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - amr_threshold
+     - Real
+     - ``0.0``
+     - Dimensionless threshold on :math:`|\nabla T|/T` for tagging.
+   * - amr_min_temperature
+     - Real
+     - ``0.0``
+     - Minimum temperature for a cell to be tagged.
+   * - amr_min_density
+     - Real
+     - ``0.0``
+     - Minimum density for a cell to be tagged.
+   * - derefine_radius
+     - Real
+     - ``-1.0``
+     - Force derefinement outside this radius (:math:`\le 0` disables).
 
 The linear solver is configured in a dedicated block; its keys are those of the Parthenon BiCGSTAB/multigrid solver.
 
-.. container:: paramtable
+.. list-table:: Linear-solver parameters (``<diffusion/linear_solver_params>``).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Linear-solver parameters (``<diffusion/linear_solver_params>``). (various) & — & — & Krylov/multigrid tolerances, iteration and V-cycle limits, parsed by Parthenon’s solver classes.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - (various)
+     - —
+     - —
+     - Krylov/multigrid tolerances, iteration and V-cycle limits, parsed by Parthenon’s solver classes.
 
 Opacities and the frequency group structure are *material* properties, set in each material’s opacity block and the ``<materials>`` block respectively; see Section :ref:`sec:mat-opacity` and Section :ref:`sec:mat-group-structure`.
 

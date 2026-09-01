@@ -38,10 +38,22 @@ Input Parameters
 
 Gravity is enabled with the ``gravity`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The acceleration is configured in the ``<gravity>`` block.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<gravity>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<gravity>`` block. gravity_dim & int & ``2`` & Axis along which gravity acts (:math:`0=x`, :math:`1=y`, :math:`2=z`).
-   | gravity_g & Real & ``-9.7998e2`` & Signed gravitational acceleration :math:`g` (cm/s\ :math:`^2`).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - gravity_dim
+     - int
+     - ``2``
+     - Axis along which gravity acts (:math:`0=x`, :math:`1=y`, :math:`2=z`).
+   * - gravity_g
+     - Real
+     - ``-9.7998e2``
+     - Signed gravitational acceleration :math:`g` (cm/s\ :math:`^2`).
 
 Example
 -------

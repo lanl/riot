@@ -43,15 +43,39 @@ Input Parameters
 
 Prescribed sources are enabled with ``prescribed_sources`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. A single global control lives in the ``<prescribed_sources>`` block, and each source is defined in its own contiguous, zero-based ``<energy_source0>``, ``<energy_source1>``, … block.
 
-.. container:: paramtable
+.. list-table:: Parameter in the ``<prescribed_sources>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameter in the ``<prescribed_sources>`` block. dt_safety & Real & ``0.9`` & Safety factor applied to the source time-step limit.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - dt_safety
+     - Real
+     - ``0.9``
+     - Safety factor applied to the source time-step limit.
 
-.. container:: paramtable
+.. list-table:: Per-source parameters in each ``<energy_source``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-source parameters in each ``<energy_source``\ :math:`N`\ ``>`` block. material & int & — & Index of the material this source drives; required.
-   | cumulative_energies & string & — & Path to an ASCII file giving the schedule; required.
-   | active & bool & ``true`` & Set ``false`` to disable this source without removing the block.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - material
+     - int
+     - —
+     - Index of the material this source drives; required.
+   * - cumulative_energies
+     - string
+     - —
+     - Path to an ASCII file giving the schedule; required.
+   * - active
+     - bool
+     - ``true``
+     - Set ``false`` to disable this source without removing the block.
 
 The Schedule File
 ~~~~~~~~~~~~~~~~~

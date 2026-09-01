@@ -51,24 +51,69 @@ When ionization is active, the electron temperature may be set independently (``
 Input Parameters
 ----------------
 
-.. container:: paramtable
+.. list-table:: Per-region parameters in each ``<region``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-region parameters in each ``<region``\ :math:`N`\ ``>`` block. mask_type & string & — & Region shape (the table below).
-   | matid & int/list & — & Material id(s) present in the region.
-   | name & string & — & Optional label (also the Python class name).
-   | c_m_rho & Real & — & Initial density (with a second state variable).
-   | c_m_pressure & Real & — & Initial pressure.
-   | c_m_temperature & Real & — & Initial temperature.
-   | c_m_sie & Real & — & Initial specific internal energy.
-   | c_c_bulk_velocity & list & ``0,0,0`` & Initial velocity vector.
-   | passive_scalars & list & — & Passive scalars tagged in this region.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - mask_type
+     - string
+     - —
+     - Region shape (the table below).
+   * - matid
+     - int/list
+     - —
+     - Material id(s) present in the region.
+   * - name
+     - string
+     - —
+     - Optional label (also the Python class name).
+   * - c_m_rho
+     - Real
+     - —
+     - Initial density (with a second state variable).
+   * - c_m_pressure
+     - Real
+     - —
+     - Initial pressure.
+   * - c_m_temperature
+     - Real
+     - —
+     - Initial temperature.
+   * - c_m_sie
+     - Real
+     - —
+     - Initial specific internal energy.
+   * - c_c_bulk_velocity
+     - list
+     - ``0,0,0``
+     - Initial velocity vector.
+   * - passive_scalars
+     - list
+     - —
+     - Passive scalars tagged in this region.
 
 Shape-specific geometry parameters (``x0``, ``radius``, etc.) are listed in the table below. The global ``<regions>`` block holds defaults and the overlap-refinement controls:
 
-.. container:: paramtable
+.. list-table:: Parameters in the global ``<regions>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the global ``<regions>`` block. nlev_min & int & ``0`` & Minimum subdivision level in cells spanning multiple regions.
-   | nlev_max & int & ``0`` & Maximum subdivision level for computing overlap volume fractions.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - nlev_min
+     - int
+     - ``0``
+     - Minimum subdivision level in cells spanning multiple regions.
+   * - nlev_max
+     - int
+     - ``0``
+     - Maximum subdivision level for computing overlap volume fractions.
 
 Example
 -------

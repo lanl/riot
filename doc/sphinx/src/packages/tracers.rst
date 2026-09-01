@@ -28,11 +28,26 @@ Input Parameters
 
 Tracers are enabled with ``tracers`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`). Each swarm is defined in its own ``<tracers/>``\ *name* block; the part of the block name after ``tracers/`` is the swarm’s name (used to select it for output).
 
-.. container:: paramtable
+.. list-table:: Per-swarm parameters in each ``<tracers/``\ *name*\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-swarm parameters in each ``<tracers/``\ *name*\ ``>`` block. x1, x2, x3 & list & — & Initial particle positions, one entry per particle; the three lists must be the same length.
-   | advect & bool & ``true`` & Advect with the flow (Lagrangian); ``false`` keeps particles fixed (Eulerian).
-   | sample_fields & list & *empty* & Field names to interpolate onto the particles (e.g. ``c.c.bulk.velocity``).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - x1, x2, x3
+     - list
+     - —
+     - Initial particle positions, one entry per particle; the three lists must be the same length.
+   * - advect
+     - bool
+     - ``true``
+     - Advect with the flow (Lagrangian); ``false`` keeps particles fixed (Eulerian).
+   * - sample_fields
+     - list
+     - *empty*
+     - Field names to interpolate onto the particles (e.g. ``c.c.bulk.velocity``).
 
 The sampled values are written to output by requesting the swarm in a ``<parthenon/output>``\ :math:`N` block (``swarms``), together with the built-in ``swarm.id``; the sample-field swarm variables can be emitted automatically.
 
