@@ -606,6 +606,8 @@ void MultiGroup<temperature>::MeshPostProblemGenerator(parthenon::Mesh *mesh,
   static const auto desc = parthenon::MakePackDescriptor<temperature, Egroup>(md);
   auto pack = desc.GetPack(md);
 
+  if (pack.GetNBlocks() == 0) return;
+
   Multiphysics::FillInteriorDerived(md);
 
   BlackBodyHelper bb_helper(md->GetMeshPointer());
