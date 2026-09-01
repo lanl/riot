@@ -230,14 +230,17 @@ TaskCollection RiotDriver::RiotStepTasks() {
         mix_flx = tl.AddTask(mix_flx_diff, Mix::ComputeAnonFluxes, mu0.get());
       }
 
-      TaskID plasma_viscosity_flx = none;
+      TaskID plasma_transport_flx = none;
       if (do_ionization) {
-        plasma_viscosity_flx = tl.AddTask(
+        TaskID plasma_viscosity_flx = tl.AddTask(
             hydro_flx | mix_flx, Ionization::ComputePlasmaViscousFluxes, mu0.get());
+        TaskID plasma_diffusion_flx = tl.AddTask(
+            hydro_flx | mix_flx | plasma_viscosity_flx, Ionization::ComputePlasmaDiffusionFluxes, mu0.get());
+        plasma_transport_flx = plasma_viscosity_flx | plasma_diffusion_flx;
       }
 
       // send flux corrections
-      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx,
+      auto send_flx = tl.AddTask(hydro_flx | plasma_transport_flx | mix_flx,
                                  parthenon::LoadAndSendFluxCorrections, mu0);
 
       // geometric sources, if curvilinear

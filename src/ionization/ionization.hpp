@@ -362,6 +362,7 @@ KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
 }
 
 TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md);
+TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md);
 void FillDerivedIonization(MeshData<Real> *md);
 void CalculatePlasmaViscosity(MeshData<Real> *md);
 
