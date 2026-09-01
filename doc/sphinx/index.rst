@@ -16,6 +16,7 @@ Documentation approved for unlimited release. LA-UR-XX-XXXX.
 
    src/building
    src/contributing
+   src/manual/index
 
 Indices and tables
 ==================
