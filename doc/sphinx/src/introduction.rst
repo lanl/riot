@@ -5,8 +5,8 @@ Introduction
 
 RIOT is a block adaptive mesh refinement (AMR) multi-material hydrodynamics code built atop the Parthenon performance-portability framework. Parthenon supplies the block-AMR infrastructure, load balancing, and communication machinery but contains no physics; RIOT supplies the hydrodynamics algorithm and the physics packages documented in this manual.
 
-Organization of this Manual
----------------------------
+Organization of the Documentation
+---------------------------------
 
 Each physics package in RIOT is documented in its own chapter. Every chapter follows the same structure:
 
@@ -34,38 +34,6 @@ The same block in the equivalent text input deck reads:
 Each package chapter also includes a *Registered Fields* table listing the Parthenon fields that package creates, the symbol each maps to in the governing equations, its component count, and its metadata.
 
    :sup:`\*`\ For readability, the metadata column of every *Registered Fields* table lists the salient flags (e.g. Independent, Conserved, WithFluxes, Sparse, Derived) rather than the complete flag set passed in the source.
-
-.. _`sec:building`:
-
-Building RIOT
--------------
-
-RIOT is built with CMake. From the top of the source tree, configure a build directory, then compile:
-
-::
-
-   cmake -Bbuild
-   cd build
-   make -j
-
-The geometry is selected at configure time through the Parthenon coordinate system. The default is 3D Cartesian; for reduced-dimension curvilinear runs pass the corresponding coordinate flag to ``cmake``:
-
-::
-
-   cmake -Bbuild -DPARTHENON_COORDINATES=UniformCylindrical   # 2D RZ cylindrical
-   cmake -Bbuild -DPARTHENON_COORDINATES=UniformSpherical     # 1D spherical
-
-The build places the executable at ``build/src/riot``.
-
-Running RIOT
-------------
-
-RIOT is launched from the directory containing the executable (``build/src/``). Outputs can be directed to an output directory with the optional ``-d`` flag:
-
-::
-
-   cd build/src/
-   mpiexec -n 1 ./riot -i input.rin -d /path/to/output/
 
 .. _`sec:physics-block`:
 
