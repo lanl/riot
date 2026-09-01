@@ -43,6 +43,7 @@ env["PYTHONPATH"] = os.pathsep.join(searchpaths)
 # string, lazy evaluation gives us the second argument.
 mpicommand = os.environ.get("RIOT_MPI_COMMAND") or "mpiexec"
 
+
 # Function for compiling Riot
 def make(cmake_args, make_nproc):
     logger = logging.getLogger("riot.make")
@@ -124,7 +125,14 @@ def mpirun(nproc, input_filename, arguments):
     os.chdir(exe_dir)
     try:
         input_filename_full = "../../" + riot_rel_path + "inputs/" + input_filename
-        run_command = [mpicommand, "-n", str(nproc), "./riot", "-i", input_filename_full]
+        run_command = [
+            mpicommand,
+            "-n",
+            str(nproc),
+            "./riot",
+            "-i",
+            input_filename_full,
+        ]
         try:
             cmd = run_command + arguments
             logging.getLogger("riot.run").debug("Executing: " + " ".join(cmd))
