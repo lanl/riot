@@ -44,10 +44,22 @@ Input Parameters
 
 Passive scalars are enabled with the ``scalars`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. Each scalar is defined in a contiguous, zero-based block ``<scalars0>``, ``<scalars1>``, …. Whether a scalar is material-tied or bulk-tied is determined by the presence of the ``matid`` parameter.
 
-.. container:: paramtable
+.. list-table:: Per-scalar parameters in each ``<scalars``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-scalar parameters in each ``<scalars``\ :math:`N`\ ``>`` block. label & string & *block* & Name of the scalar field (defaults to the block name).
-   | matid & int & — & Material ID to tie the scalar to; if omitted, the scalar is bulk-tied.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - label
+     - string
+     - *block*
+     - Name of the scalar field (defaults to the block name).
+   * - matid
+     - int
+     - —
+     - Material ID to tie the scalar to; if omitted, the scalar is bulk-tied.
 
 Registered Fields
 -----------------

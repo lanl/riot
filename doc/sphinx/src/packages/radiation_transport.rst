@@ -142,51 +142,159 @@ Radiation transport requires hydrodynamics and is incompatible with the ionizati
 
 Parameters are organized into a shared ``<radiation_transport>`` block and three nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
 
-.. container:: paramtable
+.. list-table:: Solver selection and shared parameters in the ``<radiation_transport>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Solver selection and shared parameters in the ``<radiation_transport>`` block. do_explicit & bool & ``false`` & Use the explicit sub-cycled integrator.
-   | do_jacobi & bool & ``false`` & Use the implicit Jacobi solver. Exactly one of these two must be ``true``.
-   | cfl & Real & ``0.8`` & CFL number for the transport update.
-   | coupling & bool & ``true`` & Enable the emission/absorption/scattering source.
-   | affect_fluid & bool & *=coupling* & Feed the radiation source back onto the fluid energy (requires ``coupling``).
-   | fixed_temp_rhs & bool & ``false`` & Skip the advanced-temperature solve in the source term.
-   | beta & Real & *geom.* & Weight on the local optical depth in the Rusanov flux (:math:`1.0` in Cartesian, :math:`0.0` in curvilinear geometries).
-   | taumax & Real & *large* & Cap on the optical depth used in the Rusanov flux (default :math:`\approx` ``Real`` max).
-   | troot_tol & Real & ``1e-8`` & Tolerance for the non-linear temperature root find.
-   | troot_max_iter & int & ``25`` & Maximum iterations for the temperature root find.
-   | fixed_pgen_opac & bool & ``false`` & Fix opacities to the values set in the problem generator.
-   | units_override & bool & ``false`` & Use a custom (non-CGS) unit system for testing.
-   | c, arad, kb, h & Real & ``1.0`` & Speed of light, radiation, Boltzmann, and Planck constants (only when ``units_override``).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - do_explicit
+     - bool
+     - ``false``
+     - Use the explicit sub-cycled integrator.
+   * - do_jacobi
+     - bool
+     - ``false``
+     - Use the implicit Jacobi solver. Exactly one of these two must be ``true``.
+   * - cfl
+     - Real
+     - ``0.8``
+     - CFL number for the transport update.
+   * - coupling
+     - bool
+     - ``true``
+     - Enable the emission/absorption/scattering source.
+   * - affect_fluid
+     - bool
+     - *=coupling*
+     - Feed the radiation source back onto the fluid energy (requires ``coupling``).
+   * - fixed_temp_rhs
+     - bool
+     - ``false``
+     - Skip the advanced-temperature solve in the source term.
+   * - beta
+     - Real
+     - *geom.*
+     - Weight on the local optical depth in the Rusanov flux (:math:`1.0` in Cartesian, :math:`0.0` in curvilinear geometries).
+   * - taumax
+     - Real
+     - *large*
+     - Cap on the optical depth used in the Rusanov flux (default :math:`\approx` ``Real`` max).
+   * - troot_tol
+     - Real
+     - ``1e-8``
+     - Tolerance for the non-linear temperature root find.
+   * - troot_max_iter
+     - int
+     - ``25``
+     - Maximum iterations for the temperature root find.
+   * - fixed_pgen_opac
+     - bool
+     - ``false``
+     - Fix opacities to the values set in the problem generator.
+   * - units_override
+     - bool
+     - ``false``
+     - Use a custom (non-CGS) unit system for testing.
+   * - c, arad, kb, h
+     - Real
+     - ``1.0``
+     - Speed of light, radiation, Boltzmann, and Planck constants (only when ``units_override``).
 
 The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are read only when ``coupling`` is ``true``.
 
-.. container:: paramtable
+.. list-table:: Angular-grid parameters (in the ``<radiation_transport>`` block).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Angular-grid parameters (in the ``<radiation_transport>`` block). angular_mesh & string & ``geodesic`` & Angular quadrature: ``geodesic`` or ``latlon``.
-   | nlevel & int & ``1`` & Geodesic refinement level; :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`.
-   | rotate_geo & int & ``1`` & Geodesic rotation: 0 none, 1 automatic, 2 user angles.
-   | zpole, ppole & Real & *NaN* & Manual geodesic rotation angles (used when ``rotate_geo`` ``= 2``).
-   | ntheta & int & ``8`` & Latitude bins (latlon grid).
-   | nphi & int & ``16`` & Longitude bins (latlon grid).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - angular_mesh
+     - string
+     - ``geodesic``
+     - Angular quadrature: ``geodesic`` or ``latlon``.
+   * - nlevel
+     - int
+     - ``1``
+     - Geodesic refinement level; :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`.
+   * - rotate_geo
+     - int
+     - ``1``
+     - Geodesic rotation: 0 none, 1 automatic, 2 user angles.
+   * - zpole, ppole
+     - Real
+     - *NaN*
+     - Manual geodesic rotation angles (used when ``rotate_geo`` ``= 2``).
+   * - ntheta
+     - int
+     - ``8``
+     - Latitude bins (latlon grid).
+   * - nphi
+     - int
+     - ``16``
+     - Longitude bins (latlon grid).
 
 The explicit solver adds sub-cycling controls:
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<radiation_transport/explicit>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<radiation_transport/explicit>`` block. integrator & string & ``rk2`` & Time integrator for sub-cycling: ``rk1``, ``rk2``, or ``rk3``.
-   | dt_ratio_hyperbolic & Real & ``-1.0`` & Limit the global step to ``cfl``\ :math:`\times`\ this\ :math:`\times\min(\Delta x)/c`; :math:`-1` lets radiation sub-cycle without limiting the global step.
-   | verbose & int & ``0`` & Diagnostic verbosity (0–2).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - integrator
+     - string
+     - ``rk2``
+     - Time integrator for sub-cycling: ``rk1``, ``rk2``, or ``rk3``.
+   * - dt_ratio_hyperbolic
+     - Real
+     - ``-1.0``
+     - Limit the global step to ``cfl``\ :math:`\times`\ this\ :math:`\times\min(\Delta x)/c`; :math:`-1` lets radiation sub-cycle without limiting the global step.
+   * - verbose
+     - int
+     - ``0``
+     - Diagnostic verbosity (0–2).
 
 The Jacobi solver adds iteration and timestep controls:
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<radiation_transport/jacobi>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<radiation_transport/jacobi>`` block. niter_limit & int & ``1000`` & Maximum Jacobi iterations per step.
-   | err_thr & Real & ``1e-8`` & Residual threshold for convergence.
-   | split_g1 & bool & ``true`` & Split the Jacobi coefficient into positive/negative parts for robustness.
-   | dt_ratio_hyperbolic & Real & ``1e4`` & Limit the global step to a multiple of the hyperbolic step; :math:`-1` disables this controller.
-   | dt_ratio_lag & Real & ``-1.0`` & *Experimental* step limiter accounting for lagged opacities; :math:`-1` disables it.
-   | verbose & int & ``0`` & Diagnostic verbosity (0–3; higher levels report per-iteration residuals, subcycling, and root-find failures).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - niter_limit
+     - int
+     - ``1000``
+     - Maximum Jacobi iterations per step.
+   * - err_thr
+     - Real
+     - ``1e-8``
+     - Residual threshold for convergence.
+   * - split_g1
+     - bool
+     - ``true``
+     - Split the Jacobi coefficient into positive/negative parts for robustness.
+   * - dt_ratio_hyperbolic
+     - Real
+     - ``1e4``
+     - Limit the global step to a multiple of the hyperbolic step; :math:`-1` disables this controller.
+   * - dt_ratio_lag
+     - Real
+     - ``-1.0``
+     - *Experimental* step limiter accounting for lagged opacities; :math:`-1` disables it.
+   * - verbose
+     - int
+     - ``0``
+     - Diagnostic verbosity (0–3; higher levels report per-iteration residuals, subcycling, and root-find failures).
 
 .. _`sec:rad-jacobi-subcycle`:
 
@@ -197,20 +305,44 @@ The Jacobi solver performs a single *global* implicit solve over the whole mesh 
 
 Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, or — when the stall detector is enabled — when it fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
-.. container:: paramtable
+.. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block). nreduce_limit & int & ``0`` & Maximum number of timestep reductions permitted on divergence; :math:`0` disables subcycling (a diverging solve aborts).
-   | reduce_factor & int & ``2`` & Integer factor by which the subcycle timestep is divided at each reduction (:math:`>1`).
-   | ndiverge_limit & int & ``-1`` & Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector, so only a non-finite residual fails a solve.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - nreduce_limit
+     - int
+     - ``0``
+     - Maximum number of timestep reductions permitted on divergence; :math:`0` disables subcycling (a diverging solve aborts).
+   * - reduce_factor
+     - int
+     - ``2``
+     - Integer factor by which the subcycle timestep is divided at each reduction (:math:`>1`).
+   * - ndiverge_limit
+     - int
+     - ``-1``
+     - Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector, so only a non-finite residual fails a solve.
 
 Initialization
 ~~~~~~~~~~~~~~
 
 The radiation field’s initial state is chosen in the ``<radiation_transport/init>`` block.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<radiation_transport/init>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<radiation_transport/init>`` block. initialization & string & ``thermal`` & Initial radiation field: ``thermal`` (in equilibrium with the matter, :math:`E=aT^4`), ``zero`` (empty), or ``none`` (leave the problem-generator-set intensity untouched).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - initialization
+     - string
+     - ``thermal``
+     - Initial radiation field: ``thermal`` (in equilibrium with the matter, :math:`E=aT^4`), ``zero`` (empty), or ``none`` (leave the problem-generator-set intensity untouched).
 
 .. _`sec:rad-drive-bc`:
 
@@ -219,11 +351,26 @@ Boundary Conditions
 
 By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a fixed incoming radiation temperature — by naming it in the ``<radiation_transport/drive>`` block.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<radiation_transport/drive>`` block. ix1_bc …ox3_bc & string & ``default`` & Per-face selector; set to ``drive`` to impose the drive condition on that face.
-   | trad_bc & Real & ``0.0`` & Uniform radiation temperature (K) injected by driven faces.
-   | force_upwind_flux_bc & bool & ``true`` & Zero the boundary opacity to force a purely upwind flux at a driven face; if ``false``, copy the interior opacity.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - ix1_bc …ox3_bc
+     - string
+     - ``default``
+     - Per-face selector; set to ``drive`` to impose the drive condition on that face.
+   * - trad_bc
+     - Real
+     - ``0.0``
+     - Uniform radiation temperature (K) injected by driven faces.
+   * - force_upwind_flux_bc
+     - bool
+     - ``true``
+     - Zero the boundary opacity to force a purely upwind flux at a driven face; if ``false``, copy the interior opacity.
 
 Opacities are a *material* property, not a radiation input: absorption and scattering models are selected per material in each material’s opacity block (``opac_a``, ``opac_s``), and the frequency group structure on which the transport runs is likewise owned by the materials package. Both are documented in the materials chapter — the opacity models in Section :ref:`sec:mat-opacity` and the group structure in Section :ref:`sec:mat-group-structure`.
 

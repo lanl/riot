@@ -131,18 +131,54 @@ Input Parameters
 
 All parameters below reside in the ``<hydro>`` block unless otherwise noted.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<hydro>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<hydro>`` block. recon & string & ``plm`` & Reconstruction method (the table below).
-   | vfrac_recon & string & ``=recon`` & Reconstruction method used for volume fractions.
-   | riemann & string & ``hllc`` & Riemann solver (the table below).
-   | cfl & Real & ``0.8`` & Courant–Friedrichs–Lewy number for time-step control.
-   | lm_correction & bool & ``false`` & Apply Thornber low-Mach correction (experimental).
-   | amr_interface & bool & ``true`` & Refine on material interfaces when AMR is active.
-   | vol_frac_thresh & Real & ``1e-12`` & Volume fraction below which a material is removed.
-   | mass_frac_thresh & Real & ``1e-12`` & Mass fraction below which a material is excluded from PTE.
-   | temp_floor & Real & ``1.0`` & Minimum allowed temperature (K).
-   | track_total_kinetic_energy & bool & ``false`` & Record total kinetic energy in the history file.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - recon
+     - string
+     - ``plm``
+     - Reconstruction method (the table below).
+   * - vfrac_recon
+     - string
+     - ``=recon``
+     - Reconstruction method used for volume fractions.
+   * - riemann
+     - string
+     - ``hllc``
+     - Riemann solver (the table below).
+   * - cfl
+     - Real
+     - ``0.8``
+     - Courant–Friedrichs–Lewy number for time-step control.
+   * - lm_correction
+     - bool
+     - ``false``
+     - Apply Thornber low-Mach correction (experimental).
+   * - amr_interface
+     - bool
+     - ``true``
+     - Refine on material interfaces when AMR is active.
+   * - vol_frac_thresh
+     - Real
+     - ``1e-12``
+     - Volume fraction below which a material is removed.
+   * - mass_frac_thresh
+     - Real
+     - ``1e-12``
+     - Mass fraction below which a material is excluded from PTE.
+   * - temp_floor
+     - Real
+     - ``1.0``
+     - Minimum allowed temperature (K).
+   * - track_total_kinetic_energy
+     - bool
+     - ``false``
+     - Record total kinetic energy in the history file.
 
 Whether the hydro solver runs at all, and which extra terms it evaluates, is governed by the package toggles in the ``<physics>`` block (Section :ref:`sec:physics-block`). In particular, ``hydro`` enables the solver itself; ``strength`` adds the deviatoric stress :math:`\bm{s}` and its transport (Chapter :ref:`chap:strength`); ``gravity`` adds a gravitational body force (Chapter :ref:`chap:gravity`); and ``ionization`` augments the equation-of-state closure.
 

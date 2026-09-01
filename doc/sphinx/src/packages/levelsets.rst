@@ -42,12 +42,30 @@ Input Parameters
 
 Level sets are enabled with the ``levelsets`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The remaining controls live in the ``<levelsets>`` block.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<levelsets>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<levelsets>`` block. sharp_mat & int & ``0`` & Index of the material on the :math:`\phi > 0` side of the interface.
-   | reinit_modcyc & int & ``25`` & Reinitialize every this many cycles (:math:`1` = every cycle).
-   | reinit_width & int & ``4`` & Half-width (in cells) of the band kept as a signed distance function.
-   | reinit_nstep & int & ``15`` & Number of pseudo-time steps per reinitialization (ideally :math:`>` ``reinit_width``).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - sharp_mat
+     - int
+     - ``0``
+     - Index of the material on the :math:`\phi > 0` side of the interface.
+   * - reinit_modcyc
+     - int
+     - ``25``
+     - Reinitialize every this many cycles (:math:`1` = every cycle).
+   * - reinit_width
+     - int
+     - ``4``
+     - Half-width (in cells) of the band kept as a signed distance function.
+   * - reinit_nstep
+     - int
+     - ``15``
+     - Number of pseudo-time steps per reinitialization (ideally :math:`>` ``reinit_width``).
 
 Registered Fields
 -----------------

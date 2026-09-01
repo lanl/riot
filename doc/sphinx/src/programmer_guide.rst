@@ -72,19 +72,55 @@ Input Parameters
 
 The parameters most RIOT users set are collected below. The authoritative defaults are those read in the Parthenon source; the table lists the ones a typical run touches.
 
-.. container:: paramtable
+.. list-table:: Key parameters in the ``<parthenon/mesh>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Key parameters in the ``<parthenon/mesh>`` block. nx1, nx2, nx3 & int & — & Number of cells on the base mesh in each direction (``nx2``/``nx3`` :math:`=1` reduces the dimensionality).
-   | x1min …x3max & Real & — & Physical extent of the domain in each direction.
-   | nghost & int & ``2`` & Ghost cells per side of every block.
-   | refinement & string & ``none`` & Refinement mode: ``none``, ``static``, or ``adaptive``.
-   | numlevel & int & ``1`` & Maximum number of refinement levels.
-   | pack_size & int & ``-1`` & MeshBlocks per pack (:math:`<1` packs the whole rank into one).
-   | ix1_bc …ox3_bc & string & ``outflow`` & Boundary conditions per face: ``outflow``, ``periodic``, ``reflecting``, or ``user``.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - nx1, nx2, nx3
+     - int
+     - —
+     - Number of cells on the base mesh in each direction (``nx2``/``nx3`` :math:`=1` reduces the dimensionality).
+   * - x1min …x3max
+     - Real
+     - —
+     - Physical extent of the domain in each direction.
+   * - nghost
+     - int
+     - ``2``
+     - Ghost cells per side of every block.
+   * - refinement
+     - string
+     - ``none``
+     - Refinement mode: ``none``, ``static``, or ``adaptive``.
+   * - numlevel
+     - int
+     - ``1``
+     - Maximum number of refinement levels.
+   * - pack_size
+     - int
+     - ``-1``
+     - MeshBlocks per pack (:math:`<1` packs the whole rank into one).
+   * - ix1_bc …ox3_bc
+     - string
+     - ``outflow``
+     - Boundary conditions per face: ``outflow``, ``periodic``, ``reflecting``, or ``user``.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<parthenon/meshblock>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<parthenon/meshblock>`` block. nx1, nx2, nx3 & int & *mesh size* & Logical size of one MeshBlock per direction; must evenly divide the mesh, be :math:`\geq 4`, and (for SMR/AMR) be even.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - nx1, nx2, nx3
+     - int
+     - *mesh size*
+     - Logical size of one MeshBlock per direction; must evenly divide the mesh, be :math:`\geq 4`, and (for SMR/AMR) be even.
 
 For adaptive runs, each ``<parthenon/refinement``\ :math:`N`\ ``>`` block declares one tagging criterion: ``method`` (``magnitude``, ``derivative_order_1``, or ``derivative_order_2``), the ``field`` to test, and the thresholds ``refine_tol`` (default ``0.5``) and ``derefine_tol`` (default ``0.05``), up to ``max_level``.
 

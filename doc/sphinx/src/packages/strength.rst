@@ -125,23 +125,62 @@ Input Parameters
 
 Material strength is activated in three places: globally in the ``<physics>`` block, per material in each ``<material>`` block, and in a user-named block that defines the strength model itself.
 
-.. container:: paramtable
+.. list-table:: Global toggle in the ``<physics>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Global toggle in the ``<physics>`` block. strength & bool & ``false`` & Enable the material strength package.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - strength
+     - bool
+     - ``false``
+     - Enable the material strength package.
 
-.. container:: paramtable
+.. list-table:: Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block. strong & bool & ``false`` & Flag this material as having strength.
-   | strength_model & string & — & Name of the input block defining this material’s strength model (required if ``strong`` is true).
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - strong
+     - bool
+     - ``false``
+     - Flag this material as having strength.
+   * - strength_model
+     - string
+     - —
+     - Name of the input block defining this material’s strength model (required if ``strong`` is true).
 
 The strength-model block is named by the ``strength_model`` parameter above. Its contents depend on the chosen ``modelname``.
 
-.. container:: paramtable
+.. list-table:: Parameters in a strength-model block (for ``modelname = epp``).
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in a strength-model block (for ``modelname = epp``). modelname & string & — & Model selector; use ``epp``.
-   | G0 & Real & — & Shear modulus :math:`G_0` (required for ``epp``).
-   | Y0 & Real & — & Yield strength :math:`Y_0` (required for ``epp``).
-   | rho_fail & Real & ``0.0`` & Density below which the material loses strength.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - modelname
+     - string
+     - —
+     - Model selector; use ``epp``.
+   * - G0
+     - Real
+     - —
+     - Shear modulus :math:`G_0` (required for ``epp``).
+   * - Y0
+     - Real
+     - —
+     - Yield strength :math:`Y_0` (required for ``epp``).
+   * - rho_fail
+     - Real
+     - ``0.0``
+     - Density below which the material loses strength.
 
 Registered Fields
 -----------------

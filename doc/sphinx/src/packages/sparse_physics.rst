@@ -26,10 +26,22 @@ Input Parameters
 
 Sparse physics is controlled in the ``<physics>`` block. The threshold sets the level of relative change required to keep a block active; its default value is appropriate for most problems, and it can be loosened to deactivate more aggressively or tightened to keep marginally-evolving regions active.
 
-.. container:: paramtable
+.. list-table:: Parameters in the ``<physics>`` block.
+   :header-rows: 1
+   :widths: 25 12 18 45
 
-   | Parameters in the ``<physics>`` block. sparse_physics & bool & ``true`` & Skip the physics update on blocks where the flow is not evolving.
-   | sparse_physics_threshold & Real & ``1e-12`` & Relative-change threshold :math:`\Delta` must exceed for a block to remain active.
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - sparse_physics
+     - bool
+     - ``true``
+     - Skip the physics update on blocks where the flow is not evolving.
+   * - sparse_physics_threshold
+     - Real
+     - ``1e-12``
+     - Relative-change threshold :math:`\Delta` must exceed for a block to remain active.
 
 Some packages are incompatible with sparse physics and require it to be disabled (``sparse_physics`` ``= false``); each notes this in its own chapter.
 
