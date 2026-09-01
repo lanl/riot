@@ -12,15 +12,17 @@ Governing Equations
 
 Unlike a one-equation (:math:`K`) or two-equation (:math:`K`–:math:`\varepsilon`) model, BHR-3.1 is a *second-moment* closure: it transports the full turbulent Reynolds stress tensor together with the correlations that drive variable-density mixing. The evolved turbulence moments are, per cell (all *bulk* quantities),
 
-.. container:: description
+- **Reynolds stress tensor:** six independent components, field
+  ``ccbulk::reynolds_stress``.
 
-   the turbulent Reynolds stress tensor (six independent components), field ``ccbulk::reynolds_stress``;
+- **Mass flux:** the density–velocity correlation that drives variable-density
+  mixing, field ``ccbulk::bhr_a``.
 
-   the turbulent mass flux — the density–velocity correlation that is the engine of variable-density mixing — field ``ccbulk::bhr_a``;
+- **Density–specific-volume correlation:** :math:`b=-\overline{\rho'\,(1/\rho)'}`,
+  field ``ccbulk::bhr_b``.
 
-   the density–specific-volume correlation :math:`b=-\overline{\rho'\,(1/\rho)'}`, field ``ccbulk::bhr_b``;
-
-   two turbulent length scales, a transport scale :math:`S_T` and a dissipation scale :math:`S_D`, fields ``ccbulk::bhr_ST`` and ``ccbulk::bhr_SD``.
+- **Turbulent length scales:** a transport scale :math:`S_T` and a dissipation
+  scale :math:`S_D`, fields ``ccbulk::bhr_ST`` and ``ccbulk::bhr_SD``.
 
 The turbulent kinetic energy is not evolved separately; it is the half-trace of the Reynolds stress, :math:`K=\tfrac{1}{2}(R_{xx}+R_{yy}+R_{zz})`. Each moment is carried in density-weighted conservative form (e.g. :math:`\rho R_{ij}`, ``ccbulk::rho_reynolds_stress``) and advected with the flow; the primitive form is recovered by dividing by the bulk density.
 
@@ -31,9 +33,7 @@ The closure defines an eddy viscosity from the transport length scale and the tu
 
 .. math::
 
-   \begin{equation}
      \mu_t = c_\mu\,\rho\,S_T\,\sqrt{K},
-   \end{equation}
 
 which sets the gradient-diffusion coefficient for every turbulent transport term below.
 
@@ -44,22 +44,19 @@ Let :math:`q` stand for any of the turbulence moments :math:`\{R_{ij},\,a_i,\,b,
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial \left(\rho\,q\right)}{\partial t} + \nabla\!\cdot\!\left(\rho\,q\,\bm{v}\right)
+     \frac{\partial \left(\rho\,q\right)}{\partial t} + \nabla\!\cdot\!\left(\rho\,q\,\vec{v}\right)
        = \mathcal{S}_q
          + \nabla\!\cdot\!\left(\frac{\mu_t}{\sigma_q}\,\nabla q\right),
-     \label{eq:mix-transport}
-   \end{equation}
 
-where the eddy viscosity :math:`\mu_t` is given above and :math:`\sigma_q` is a quantity-specific Schmidt/Prandtl number (``sigma_k`` for :math:`R_{ij}`, ``sigma_a`` for :math:`a_i`, ``sigma_b`` for :math:`b`, ``sigma_epsilon`` for :math:`S_T`, ``sigma_visc`` for :math:`S_D`). The diffusion term is applied direction-by-direction. What distinguishes the moments is the algebraic source :math:`\mathcal{S}_q`, which combines production, redistribution, and dissipation. Writing :math:`\bm{a}` for the mass flux, :math:`\nabla p` for the pressure gradient, and using the production term :math:`\rho\,R_{ij}\partial_j u_i` and the buoyancy term :math:`\bm{a}\!\cdot\!\nabla p`, the sources are:
+where the eddy viscosity :math:`\mu_t` is given above and :math:`\sigma_q` is a quantity-specific Schmidt/Prandtl number (``sigma_k`` for :math:`R_{ij}`, ``sigma_a`` for :math:`a_i`, ``sigma_b`` for :math:`b`, ``sigma_epsilon`` for :math:`S_T`, ``sigma_visc`` for :math:`S_D`). The diffusion term is applied direction-by-direction. What distinguishes the moments is the algebraic source :math:`\mathcal{S}_q`, which combines production, redistribution, and dissipation. Writing :math:`\vec{a}` for the mass flux, :math:`\nabla p` for the pressure gradient, and using the production term :math:`\rho\,R_{ij}\partial_j u_i` and the buoyancy term :math:`\vec{a}\!\cdot\!\nabla p`, the sources are:
 
 - **Reynolds stress :math:`R_{ij}`**: production from the mean shear and from the buoyancy correlation :math:`a_i\partial_i p`, pressure–strain redistribution toward isotropy, and a dissipation :math:`\propto \rho\sqrt{K}\,R_{ij}/S_D`. A realizability limiter prevents the pressure–strain terms from driving a diagonal component negative.
 
 - **Mass flux :math:`a_i`**: buoyant production :math:`\propto b\,\partial_i p`, a :math:`R_{ij}\partial_j\rho` term, self-advection, and dissipation :math:`\propto \rho\sqrt{K}\,a_i/S_D`.
 
-- **Density correlation :math:`b`**: production from :math:`\bm{a}\!\cdot\!\nabla\rho` and dissipation :math:`\propto \rho\,b\,\sqrt{K}/S_D`.
+- **Density correlation :math:`b`**: production from :math:`\vec{a}\!\cdot\!\nabla\rho` and dissipation :math:`\propto \rho\,b\,\sqrt{K}/S_D`.
 
-- **Length scales :math:`S_T`, :math:`S_D`**: each grows or decays with the local production-to-dissipation balance and the dilatation :math:`\nabla\!\cdot\!\bm{u}`. :math:`S_T` uses the coefficient set :math:`\{c_1,c_2,c_3,c_4\}` and :math:`S_D` the corresponding “v” set :math:`\{c_{1v},c_{2v},c_{3v},c_{4v}\}`.
+- **Length scales :math:`S_T`, :math:`S_D`**: each grows or decays with the local production-to-dissipation balance and the dilatation :math:`\nabla\!\cdot\!\vec{u}`. :math:`S_T` uses the coefficient set :math:`\{c_1,c_2,c_3,c_4\}` and :math:`S_D` the corresponding “v” set :math:`\{c_{1v},c_{2v},c_{3v},c_{4v}\}`.
 
 In each case the dissipation carries the length scale :math:`S_D` in its denominator, and the algebraic source enters :math:`\mathcal{S}_q` in the equation above alongside the gradient-diffusion term.
 
@@ -68,18 +65,24 @@ Feedback on the Mean Flow
 
 The turbulence acts back on the resolved (bulk) hydrodynamics of Chapter :ref:`chap:hydro` through additional interface fluxes, applied in three stages:
 
-.. container:: description
+#. The Reynolds stress :math:`\rho R_{ij}` is added to the bulk momentum flux, and
+   the corresponding turbulent transport of energy (:math:`\rho\,\vec{v}\!\cdot\!R`)
+   together with the pressure work of the mass flux (:math:`-p\,a_n`) is added to
+   the total-energy flux.
 
-   The Reynolds stress :math:`\rho R_{ij}` is added to the bulk momentum flux, and the corresponding turbulent transport of energy (:math:`\rho\,\bm{v}\!\cdot\!R`) together with the pressure work of the mass flux (:math:`-p\,a_n`) is added to the total-energy flux.
+#. The eddy viscosity diffuses turbulent kinetic energy and per-material enthalpy
+   into the energy flux, and deposits a per-material *diffusive mass flux* into a
+   dedicated face register.
 
-   The eddy viscosity diffuses turbulent kinetic energy and per-material enthalpy into the energy flux, and deposits a per-material *diffusive mass flux* into a dedicated face register.
-
-   That diffusive mass flux is then folded into each material’s density flux and used to advect *every* other per-material conserved quantity, so the turbulent mass diffusion transports all co-moving material quantities consistently, not just mass.
+#. That diffusive mass flux is then folded into each material’s density flux and
+   used to advect *every* other per-material conserved quantity, so the turbulent
+   mass diffusion transports all co-moving material quantities consistently, not
+   just mass.
 
 Numerical Method
 ----------------
 
-The BHR fluxes are computed after the hydrodynamic fluxes and before flux correction, in the fixed order ``ComputeStressFluxes`` :math:`\to` ``ComputeViscousFluxes`` :math:`\to` ``ComputeAnonFluxes`` (the last consumes the diffusive mass flux the second deposits). The algebraic and gradient-diffusion moment sources are accumulated by ``CalculateMixSource`` and summed into the stage update alongside the other packages’ sources. After each update the primitive moments are recovered and floored: the Reynolds-stress diagonal is kept positive, the length scales non-negative, and :math:`b` clamped to :math:`[0,\rho]`. The stable time step is the minimum of a hyperbolic limit (:math:`|\bm{a}|/\Delta x`), a parabolic diffusion limit set by :math:`\mu_t` and the smallest Schmidt number, and a homogeneous source-decay limit.
+The BHR fluxes are computed after the hydrodynamic fluxes and before flux correction, in the fixed order ``ComputeStressFluxes`` :math:`\to` ``ComputeViscousFluxes`` :math:`\to` ``ComputeAnonFluxes`` (the last consumes the diffusive mass flux the second deposits). The algebraic and gradient-diffusion moment sources are accumulated by ``CalculateMixSource`` and summed into the stage update alongside the other packages’ sources. After each update the primitive moments are recovered and floored: the Reynolds-stress diagonal is kept positive, the length scales non-negative, and :math:`b` clamped to :math:`[0,\rho]`. The stable time step is the minimum of a hyperbolic limit (:math:`|\vec{a}|/\Delta x`), a parabolic diffusion limit set by :math:`\mu_t` and the smallest Schmidt number, and a homogeneous source-decay limit.
 
 Input Parameters
 ----------------

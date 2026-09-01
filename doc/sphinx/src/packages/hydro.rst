@@ -17,27 +17,21 @@ Each material :math:`m` carries a cell-volume-averaged density :math:`\bar\rho_m
 
 .. math::
 
-   \begin{equation}
      \sum_m f_m = 1 .
-   \end{equation}
 
 The physical (material-averaged) density is :math:`\rho_m = \bar\rho_m / f_m` (``cm::rho``), and the bulk density is the sum of the cell-volume-averaged densities,
 
 .. math::
 
-   \begin{equation}
      \rho= \sum_m \bar\rho_m = \sum_m f_m\,\rho_m .
-   \end{equation}
 
 The bulk volumetric internal energy :math:`u` (internal energy per unit cell volume) is the sum over materials of the per-material internal-energy densities,
 
 .. math::
 
-   \begin{equation}
      u = \sum_m \bar\rho_m\,e_m ,
-   \end{equation}
 
-where :math:`e_m` is the specific internal energy of material :math:`m`. The bulk velocity is :math:`\bm{v}= (\rho\bm{v})/\rho`, and the bulk pressure is set by the equilibrium closure of Section :ref:`sec:hydro-pte`.
+where :math:`e_m` is the specific internal energy of material :math:`m`. The bulk velocity is :math:`\vec{v}= (\rho\vec{v})/\rho`, and the bulk pressure is set by the equilibrium closure of Section :ref:`sec:hydro-pte`.
 
 Conservation Laws
 ~~~~~~~~~~~~~~~~~
@@ -46,20 +40,18 @@ The quantities that are actually integrated in time (advected with the interface
 
 .. math::
 
-   \begin{align}
-     \frac{\partial \bar\rho_m}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_m\bm{v}\right) &= 0,
+     \frac{\partial \bar\rho_m}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_m\vec{v}\right) &= 0,
        \qquad m = 1,\dots,N_{\text{mat}}, \\[2pt]
-     \frac{\partial \left(\rho\bm{v}\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\rho\bm{v}\otimes\bm{v}+ p\,\bm{I} - \bm{s}\right)
-       &= \bm{0}, \\[2pt]
+     \frac{\partial \left(\rho\vec{v}\right)}{\partial t}
+       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\bm{I} - \bm{s}\right)
+       &= \vec{0}, \\[2pt]
      \frac{\partial E}{\partial t}
-       + \nabla\!\cdot\!\left[\left(E + p\right)\bm{v}- \bm{s}\!\cdot\!\bm{v}\right]
+       + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}- \bm{s}\!\cdot\!\vec{v}\right]
        &= 0,
-   \end{align}
 
-where :math:`\bm{v}` is the single velocity common to all materials in the cell, :math:`p` the bulk pressure, :math:`E = u + \tfrac{1}{2}\rho|\bm{v}|^2` the total energy density (the sum of the bulk volumetric internal energy :math:`u` and the kinetic energy density), and :math:`\bm{s}` the *bulk* deviatoric stress tensor. Other packages contribute source terms to the right-hand sides above when enabled — for example the gravitational body force of Chapter :ref:`chap:gravity`. Each material partial density is advected by the common Riemann velocity from the bulk solver. The deviatoric stress is present only when the material strength package is active (Chapter :ref:`chap:strength`); it is itself an aggregate of the per-material deviatoric stresses, :math:`\bm{s}=\sum_m f_m\bm{s}_m`, and for pure hydrodynamics :math:`\bm{s}=\bm{0}`, reducing the momentum/energy equations to the standard compressible Euler form. Note that there is *no* independent per-material energy equation: only the bulk total energy is transported, and the individual material energies are recovered each step from the equilibrium closure below.
+where :math:`\vec{v}` is the single velocity common to all materials in the cell, :math:`p` the bulk pressure, :math:`E = u + \tfrac{1}{2}\rho|\vec{v}|^2` the total energy density (the sum of the bulk volumetric internal energy :math:`u` and the kinetic energy density), and :math:`\bm{s}` the *bulk* deviatoric stress tensor. Other packages contribute source terms to the right-hand sides above when enabled — for example the gravitational body force of Chapter :ref:`chap:gravity`. Each material partial density is advected by the common Riemann velocity from the bulk solver. The deviatoric stress is present only when the material strength package is active (Chapter :ref:`chap:strength`); it is itself an aggregate of the per-material deviatoric stresses, :math:`\bm{s}=\sum_m f_m\bm{s}_m`, and for pure hydrodynamics :math:`\bm{s}=\vec{0}`, reducing the momentum/energy equations to the standard compressible Euler form. Note that there is *no* independent per-material energy equation: only the bulk total energy is transported, and the individual material energies are recovered each step from the equilibrium closure below.
 
-The bulk quantities appearing above (:math:`\rho`, :math:`\bm{v}`, :math:`p`, :math:`u`, :math:`\bm{s}`) are aggregated from the per-material states after each update according to the rules in Section :ref:`sec:permat-bulk`: :math:`\rho` and the volumetric internal energy :math:`u` are cell-averaged sums over materials, :math:`\bm{s}` is a volume-fraction-weighted sum, and :math:`p` (with :math:`T`) is the common equilibrium value from the PTE closure below.
+The bulk quantities appearing above (:math:`\rho`, :math:`\vec{v}`, :math:`p`, :math:`u`, :math:`\bm{s}`) are aggregated from the per-material states after each update according to the rules in Section :ref:`sec:permat-bulk`: :math:`\rho` and the volumetric internal energy :math:`u` are cell-averaged sums over materials, :math:`\bm{s}` is a volume-fraction-weighted sum, and :math:`p` (with :math:`T`) is the common equilibrium value from the PTE closure below.
 
 .. _`sec:hydro-pte`:
 
@@ -70,7 +62,6 @@ The closure that determines the volume fractions :math:`f_m` and the material st
 
 .. math::
 
-   \begin{align}
      p_m(\rho_m, T) &= p \quad \text{for all } m
        &&\text{(pressure equilibrium)}, \\
      T_m &= T \quad \text{for all } m
@@ -79,7 +70,6 @@ The closure that determines the volume fractions :math:`f_m` and the material st
        &&\text{(volume additivity)}, \\
      u &= \sum_m \bar\rho_m\,e_m(\rho_m, T)
        &&\text{(energy consistency)},
-   \end{align}
 
 where each material’s pressure :math:`p_m(\rho_m, T)` and specific internal energy :math:`e_m(\rho_m, T)` are provided by its equation of state through ``singularity-eos``. In equilibrium every material shares the same pressure :math:`p` and temperature :math:`T`, so the common :math:`p` is the bulk pressure carried by the momentum and energy equations. This root-finding problem is handled by the ``singularity-eos`` ``PTESolverRhoT`` closure; a fixed-temperature solver is used as a fallback. For ideal-gas materials the equilibrium admits a closed-form solution and is evaluated analytically.
 
@@ -190,9 +180,9 @@ The hydro package registers the bulk fields listed in the table below. The two i
 .. container:: fieldtable
 
    | Fields registered by the hydro package.tab:hydro-fields ccbulk::rho & :math:`\rho` & 1 & Cell, Intensive, Conserved, Derived, OneCopy; bulk density :math:`\rho=\sum_m\bar\rho_m`.
-   | ccbulk::momentum & :math:`\rho\bm{v}` & 3 & Cell, Independent, Intensive, Conserved, Vector, WithFluxes; bulk momentum.
-   | ccbulk::total_material_energy & :math:`E` & 1 & Cell, Independent, Intensive, Conserved, WithFluxes; bulk total energy density :math:`E=u+\tfrac{1}{2}\rho|\bm{v}|^2`.
-   | ccbulk::velocity & :math:`\bm{v}` & 3 & Cell, Intensive, Vector, Derived, OneCopy, FillGhost; bulk velocity.
+   | ccbulk::momentum & :math:`\rho\vec{v}` & 3 & Cell, Independent, Intensive, Conserved, Vector, WithFluxes; bulk momentum.
+   | ccbulk::total_material_energy & :math:`E` & 1 & Cell, Independent, Intensive, Conserved, WithFluxes; bulk total energy density :math:`E=u+\tfrac{1}{2}\rho|\vec{v}|^2`.
+   | ccbulk::velocity & :math:`\vec{v}` & 3 & Cell, Intensive, Vector, Derived, OneCopy, FillGhost; bulk velocity.
    | ccbulk::pressure & :math:`p` & 1 & Cell, Intensive, Derived, OneCopy, FillGhost; bulk pressure.
    | ccbulk::temperature & :math:`T` & 1 & Cell, Intensive, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; temperature.
    | ccbulk::internal_energy & :math:`u` & 1 & Cell, Intensive, Derived, OneCopy; bulk volumetric internal energy :math:`u=\sum_m\bar\rho_m e_m`.

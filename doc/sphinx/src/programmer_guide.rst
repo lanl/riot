@@ -32,13 +32,19 @@ Data Model: Containers and Packs
 
 Parthenon exposes its field data in three layers, and RIOT kernels operate over the outermost one:
 
-.. container:: description
+``MeshBlockData``
+  A container holding all *variables* (fields) on a single block for one
+  integration stage. Field storage lives here as ``ParArray``\ s (thin wrappers
+  over ``Kokkos::View``\ s).
 
-   — a “container” holding all *variables* (fields) on a single block for a single integration stage. Field storage lives here as ``ParArray``\ s (thin wrappers over ``Kokkos::View``\ s).
+``MeshData``
+  A lightweight aggregator pointing at the ``MeshBlockData`` of *many* blocks
+  (a *partition*, or “pack”) on the same stage.
 
-   — a lightweight aggregator pointing at the MeshBlockData of *many* blocks (a *partition*, or “pack”) on the same stage.
-
-   — the on-device view spanning a partition’s blocks, indexable inside a kernel as ``pack(b, var, k, j, i)`` (block :math:`b`, variable, cell :math:`(k,j,i)`), with fluxes via ``pack.flux(b, dir, var, k, j, i)``.
+``SparsePack``
+  The on-device view spanning a partition’s blocks, indexable inside a kernel as
+  ``pack(b, var, k, j, i)`` (block :math:`b`, variable, cell :math:`(k,j,i)`),
+  with fluxes via ``pack.flux(b, dir, var, k, j, i)``.
 
 Blocks are grouped into packs so that one kernel launch processes many blocks: launch overhead is fixed per kernel (of order microseconds on a GPU), so packing amortizes it across all the blocks in the partition. The partition size is controlled by ``pack_size`` (or, equivalently, ``packs_per_rank``). RIOT’s loop abstractions (Chapter :ref:`chap:loops`) are built on exactly this pack-of-blocks structure.
 
@@ -220,10 +226,8 @@ The two accessors RIOT calls are the group-mean absorption and scattering coeffi
 
 .. math::
 
-   \begin{align}
      \alpha_{a,m}^{(g)} &= \texttt{AbsorptionCoefficient}(\rho_m,\,T_m,\,g), \\
      \alpha_{s,m}^{(g)} &= \texttt{ScatteringCoefficient}(\rho_m,\,T_m,\,g).
-   \end{align}
 
 An optional fourth argument, ``gmode``, selects the averaging weight from the ``OpacityAveraging`` enum {``Rosseland``, ``Planck``} (default ``Rosseland``); named wrappers (``Rosseland­Group­Absorption­Coefficient``, ``Planck­Group­Absorption­Coefficient``) fix it explicitly. The mean tables were produced from the underlying monochromatic model at build time (a ``Gray`` model gives a coefficient :math:`\rho_m\kappa` independent of frequency; ``PowerLaw`` scales with :math:`\rho_m`, :math:`T_m`, and :math:`\nu`), so no continuous frequency appears in the call — the group index carries all of the spectral dependence.
 
@@ -297,15 +301,26 @@ LoopConstraint and the Inner-Access Tag
 
 ``RiotLoop::LoopConstraint`` values are compile-time hints, passed as template arguments to the index space, that let RIOT pick the most efficient way to hand cell indices to the ``inner`` lambda:
 
-.. container:: description
+Default
+  The inner body receives an opaque *memory* index — the flat offset into the
+  field’s storage. This inlines to ``var[idx]`` and vectorizes cleanly; it is the
+  fast path.
 
-   The inner body receives an opaque *memory* index — the flat offset into the field’s storage. This inlines to ``var[idx]`` and vectorizes cleanly; it is the fast path.
+``LoopConstraint::NoGhost``
+  Guarantees the loop touches no ghost zones, so a *logical-flat* index (dense
+  over the interior) can be used.
 
-   Guarantees the loop touches no ghost zones, so a *logical-flat* index (dense over the interior) can be used.
+``LoopConstraint::DifferentMemSpaces``
+  Signals that fields of different centering (for example, face- and
+  cell-centered) appear in the same kernel and cannot share one flat index; the
+  body then receives *logical coordinates* :math:`(k,j,i)`.
 
-   Signals that fields of different centering (e.g. face- and cell-centered) appear in the same kernel and cannot share one flat index; the body then receives *logical coordinates* :math:`(k,j,i)`.
-
-   Declares that the loop covers exactly one block. Unlike the two above, this does not change the index form; it changes the loop order (Section :ref:`chap:loops` below), forcing the point-wise ``boiv`` tag on *both* backends so the block’s cells parallelize across threads rather than launching a single idle team.
+``LoopConstraint::SingleBlock``
+  Declares that the loop covers exactly one block. Unlike the two above, this
+  does not change the index form; it changes the loop order
+  (Section :ref:`chap:loops` below), forcing the point-wise ``boiv`` tag on both
+  backends so the block’s cells parallelize across threads rather than launching
+  a single idle team.
 
 In all cases the body may instead be written to take explicit ``(int k, int j, int i)`` arguments; the abstraction supplies whichever form the body declares, and ``idx_range.GetKJI(kji)`` recovers coordinates from an opaque index when only a few are needed (e.g. to store a flux).
 

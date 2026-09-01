@@ -17,9 +17,7 @@ The level-set function is advected by the hydrodynamic velocity using the same f
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial \phi}{\partial t} + \nabla\!\cdot\!\left(\phi\bm{v}\right) = 0 .
-   \end{equation}
+     \frac{\partial \phi}{\partial t} + \nabla\!\cdot\!\left(\phi\vec{v}\right) = 0 .
 
 By convention :math:`\phi > 0` in the designated *sharp* material (``sharp_mat``) and :math:`\phi < 0` elsewhere, so the interface is the :math:`\phi = 0` contour.
 
@@ -30,10 +28,8 @@ Advection distorts :math:`\phi` away from a signed distance function (:math:`|\n
 
 .. math::
 
-   \begin{equation}
      \frac{\partial\phi}{\partial\tau}
        = \operatorname{sign}(\phi_0)\left(1 - |\nabla\phi|\right),
-   \end{equation}
 
 where :math:`\phi_0` is the level set at the start of reinitialization and :math:`\operatorname{sign}(\phi_0)` is a smoothed sign function. The gradient magnitude is formed with upwind differences selected by the sign of :math:`\phi_0` (forward differences where :math:`\phi_0 > 0`, backward where :math:`\phi_0 < 0`) using second-order minmod-limited reconstruction. Reinitialization is applied only within a band of half-width ``reinit_width`` cells around the interface; outside the band :math:`\phi` is held at a constant magnitude. The pseudo-time update runs for ``reinit_nstep`` steps, each propagating the correction roughly one cell.
 

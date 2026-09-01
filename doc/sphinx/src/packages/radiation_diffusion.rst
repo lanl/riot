@@ -13,18 +13,16 @@ Governing Equations
 The P1 Moment System
 ~~~~~~~~~~~~~~~~~~~~
 
-For each frequency group :math:`g` the package evolves two moments of the specific intensity: the group radiation energy density :math:`E_g` (cell-centered, field ``rmg::Egroup``) and the group radiation flux :math:`\bm{F}_g` (face-centered, field ``rmg::Fgroup``). Writing :math:`c` for the speed of light, :math:`a` for the radiation constant, and :math:`\sigma_{a,g}` for the cell group-mean absorption coefficient (aggregated from the per-material opacities exactly as in Section :ref:`sec:rad-opacity`), the moment system is
+For each frequency group :math:`g` the package evolves two moments of the specific intensity: the group radiation energy density :math:`E_g` (cell-centered, field ``rmg::Egroup``) and the group radiation flux :math:`\vec{F}_g` (face-centered, field ``rmg::Fgroup``). Writing :math:`c` for the speed of light, :math:`a` for the radiation constant, and :math:`\sigma_{a,g}` for the cell group-mean absorption coefficient (aggregated from the per-material opacities exactly as in Section :ref:`sec:rad-opacity`), the moment system is
 
 .. math::
 
-   \begin{align}
-     \frac{\partial E_g}{\partial t} + \nabla\!\cdot\!\bm{F}_g
+     \frac{\partial E_g}{\partial t} + \nabla\!\cdot\!\vec{F}_g
        &= c\,\sigma_{a,g}\left(B_g(T) - E_g\right), \\[2pt]
-     \frac{1}{c}\frac{\partial \bm{F}_g}{\partial t} + \frac{c}{3}\,\nabla E_g
-       &= -\,\sigma_{t,g}\,\bm{F}_g ,
-   \end{align}
+     \frac{1}{c}\frac{\partial \vec{F}_g}{\partial t} + \frac{c}{3}\,\nabla E_g
+       &= -\,\sigma_{t,g}\,\vec{F}_g ,
 
-where :math:`\sigma_{t,g}` is the group total (absorption plus scattering) coefficient and :math:`B_g(T)` is the group-integrated Planck function (below). The factor :math:`\tfrac{1}{3}` in the flux equation is the Eddington factor of the P1 closure — the assumption that the radiation pressure tensor is isotropic, :math:`\mathsf{P}_g = \tfrac{1}{3}E_g\,\mathsf{I}`. Retaining the time derivative of the flux keeps the system hyperbolic (a finite signal speed), so it reduces to free-streaming transport when :math:`\sigma_{t,g}` is small and to the diffusion limit :math:`\bm{F}_g \to -\tfrac{c}{3\sigma_{t,g}}\nabla E_g` when :math:`\sigma_{t,g}` is large.
+where :math:`\sigma_{t,g}` is the group total (absorption plus scattering) coefficient and :math:`B_g(T)` is the group-integrated Planck function (below). The factor :math:`\tfrac{1}{3}` in the flux equation is the Eddington factor of the P1 closure — the assumption that the radiation pressure tensor is isotropic, :math:`\mathsf{P}_g = \tfrac{1}{3}E_g\,\mathsf{I}`. Retaining the time derivative of the flux keeps the system hyperbolic (a finite signal speed), so it reduces to free-streaming transport when :math:`\sigma_{t,g}` is small and to the diffusion limit :math:`\vec{F}_g \to -\tfrac{c}{3\sigma_{t,g}}\nabla E_g` when :math:`\sigma_{t,g}` is large.
 
 Implicit Discretization
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -33,18 +31,14 @@ Both moments are advanced implicitly over the step :math:`\Delta t`. Eliminating
 
 .. math::
 
-   \begin{equation}
      E_g^{n+1} - \nabla\!\cdot\!\left(D_g\,\nabla E_g^{n+1}\right)
        = E_g^{n} + \text{(lagged flux, emission/absorption)} ,
-   \end{equation}
 
 where the effective diffusion coefficient carries the P1 flux relaxation in its denominator,
 
 .. math::
 
-   \begin{equation}
      D_g = \frac{(c\,\Delta t)^2}{3\left(1 + c\,\Delta t\,\sigma_{t,g}^{\text{face}}\right)} .
-   \end{equation}
 
 The face total opacity :math:`\sigma_{t,g}^{\text{face}}` is the harmonic mean of the two adjacent cell values. The updated flux is then reconstructed from the new energy density and the lagged flux, each attenuated by the same :math:`1/(1 + c\,\Delta t\,\sigma_{t,g}^{\text{face}})` factor. This relaxation is what limits the flux to physical values as the opacity grows; it plays the role a Levermore-style flux limiter would in a classical flux-limited-diffusion scheme.
 
@@ -55,10 +49,8 @@ The emission term drives the radiation toward a Planck spectrum at the material 
 
 .. math::
 
-   \begin{equation}
      B_g(T) = a\,T^4\left[\Phi\!\left(\frac{h\nu_g}{k_B T}\right)
                         - \Phi\!\left(\frac{h\nu_{g-1}}{k_B T}\right)\right],
-   \end{equation}
 
 where :math:`\Phi(x) = \tfrac{15}{\pi^4}\int_0^{x} y^3/(e^y-1)\,\mathrm{d}y` is the normalized cumulative Planck fraction, evaluated in closed form with polylogarithms. Energy removed from (or added to) the radiation field is exchanged with the material internal energy so that total energy is conserved; the coupled matter temperature and the group energies are found together by the non-linear iteration described below.
 
@@ -217,7 +209,7 @@ The package registers the fields in the table below under the ``rmg::`` (radiati
 .. container:: fieldtable
 
    | Principal fields registered by the radiation diffusion package.tab:raddiff-fields rmg::Egroup & :math:`E_g` & :math:`N_\nu` & Cell, Independent, FillGhost, WithFluxes, GMGRestrict, GMGProlongate, CommunicateOne, OperatorSplit; group radiation energy density.
-   | rmg::Fgroup & :math:`\bm{F}_g` & :math:`N_\nu` & Face, Independent, Flux, CellMemAligned, OperatorSplit; group radiation flux.
+   | rmg::Fgroup & :math:`\vec{F}_g` & :math:`N_\nu` & Face, Independent, Flux, CellMemAligned, OperatorSplit; group radiation flux.
    | rmg::D & :math:`D_g` & :math:`N_\nu` & Face, Independent, OneCopy, GMGRestrict, CellMemAligned, OperatorSplit; P1 diffusion coefficient.
    | rmg::diag_loc & — & :math:`N_\nu` & Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; local diagonal of the linear operator.
    | rmg::sigma, dSdT & — & :math:`N_\nu` & Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; source-linearization scratch.

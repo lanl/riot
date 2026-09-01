@@ -14,11 +14,9 @@ The full bulk Cauchy stress is decomposed into an isotropic (pressure) part and 
 
 .. math::
 
-   \begin{equation}
      \bm{\sigma} = -p\,\bm{I} + \bm{s}, \qquad \mathrm{tr}\,\bm{s} = 0 ,
-   \end{equation}
 
-where :math:`p` comes from the PTE closure (Chapter :ref:`chap:hydro`) and the bulk deviatoric stress :math:`\bm{s}` enters the bulk momentum and energy fluxes through the terms :math:`-\bm{s}` and :math:`-\bm{s}\!\cdot\!\bm{v}` (see the hydro equations in Chapter :ref:`chap:hydro`).
+where :math:`p` comes from the PTE closure (Chapter :ref:`chap:hydro`) and the bulk deviatoric stress :math:`\bm{s}` enters the bulk momentum and energy fluxes through the terms :math:`-\bm{s}` and :math:`-\bm{s}\!\cdot\!\vec{v}` (see the hydro equations in Chapter :ref:`chap:hydro`).
 
 Per-Material Hypoelastic Stress Evolution
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -27,24 +25,20 @@ For each strong material :math:`m`, the conserved per-material deviatoric stress
 
 .. math::
 
-   \begin{equation}
      \frac{\partial \left(\bar\rho_m\bm{s}_m\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\bar\rho_m\bm{s}_m\,\bm{v}\right)
+       + \nabla\!\cdot\!\left(\bar\rho_m\bm{s}_m\,\vec{v}\right)
      \;=\;
      2\bar\rho_m G_m\,\bm{e}
        + \bar\rho_m\!\left(\bm{w}\!\cdot\!\bm{s}_m
          - \bm{s}_m\!\cdot\!\bm{w}\right).
-   \end{equation}
 
 Here :math:`G_m` is the material’s shear modulus and :math:`\bar\rho_m` its cell-volume-averaged density, both per material. The strain-rate tensor :math:`\bm{e}` and spin tensor :math:`\bm{w}`, by contrast, are *bulk* quantities: they are computed once per cell from the single velocity field common to all materials in the cell. Thus every material in a cell is driven by the same velocity gradient but evolves its own stress with its own shear modulus. The strain-rate and spin tensors are the symmetric and antisymmetric parts of that velocity gradient,
 
 .. math::
 
-   \begin{align}
      e_{ij} &= \tfrac{1}{2}\!\left(\partial_j v_i + \partial_i v_j\right)
-               - \tfrac{1}{3}\,(\nabla\!\cdot\!\bm{v})\,\delta_{ij}, \\
+               - \tfrac{1}{3}\,(\nabla\!\cdot\!\vec{v})\,\delta_{ij}, \\
      w_{ij} &= \tfrac{1}{2}\!\left(\partial_j v_i - \partial_i v_j\right).
-   \end{align}
 
 Because :math:`\bm{s}_m` is symmetric and traceless, only five of its components are independent and stored (:math:`s_{xx}, s_{xy}, s_{xz}, s_{yy}, s_{yz}`); the sixth follows from :math:`s_{zz} = -s_{xx} - s_{yy}`.
 
@@ -55,20 +49,16 @@ Each material’s elastic stress is limited by its own von Mises yield criterion
 
 .. math::
 
-   \begin{equation}
      J_2 = \tfrac{1}{2}\,\bm{s}_m\!:\!\bm{s}_m
          = \tfrac{1}{2}\!\left(s_{xx}^2 + s_{yy}^2 + s_{zz}^2\right)
            + s_{xy}^2 + s_{xz}^2 + s_{yz}^2 ,
-   \end{equation}
 
 material :math:`m` yields when :math:`\bm{s}_m\!:\!\bm{s}_m` exceeds :math:`\tfrac{2}{3}Y_m^2`, where :math:`Y_m` is its yield strength. When the trial stress lies outside the yield surface, a radial-return correction scales it back onto the surface,
 
 .. math::
 
-   \begin{equation}
      \bm{s}_m \leftarrow
        \sqrt{\frac{2Y_m^2}{3\,\bm{s}_m\!:\!\bm{s}_m}}\;\bm{s}_m ,
-   \end{equation}
 
 and the material’s accumulated (equivalent) plastic strain :math:`\varepsilon_{p,m}` is incremented accordingly. The radial return and failure ramp are applied per material. The plastic work released by each material during its return is summed over materials and deposited into the *bulk* total energy, so plastic dissipation heats the cell.
 
@@ -79,10 +69,8 @@ As a material’s density falls toward its failure threshold :math:`\rho_{\text{
 
 .. math::
 
-   \begin{equation}
      \bm{s}_m \leftarrow
        \min\!\left(\frac{\rho_m}{\rho_{\text{fail},m}},\,1\right)\bm{s}_m ,
-   \end{equation}
 
 so that a fully failed (e.g. spalled or rarefied) material carries no strength and reverts to hydrodynamic behavior.
 
@@ -93,10 +81,8 @@ The hydrodynamic fluxes use a bulk deviatoric stress and bulk shear modulus form
 
 .. math::
 
-   \begin{equation}
      \bm{s} = \sum_m f_m\,\bm{s}_m, \qquad
      G = \sum_m f_m\,G_m .
-   \end{equation}
 
 In practice the per-material stresses are reconstructed to cell faces and then combined with these :math:`f_m` weights, and the resulting bulk stress is passed to the strength-aware Riemann solver. This is the sole channel by which per-material strength influences the shared momentum and energy equations.
 

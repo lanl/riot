@@ -17,10 +17,8 @@ Within material :math:`m`, for a two-body reaction :math:`r` consuming reactant 
 
 .. math::
 
-   \begin{equation}
      R_r = \frac{\bar\rho_1}{m_1}\,\frac{\bar\rho_2}{m_2}\,
            \langle\sigma v\rangle_r(T)\,\frac{f_m^2}{f_{\text{vol},m}} ,
-   \end{equation}
 
 where :math:`\bar\rho_1,\bar\rho_2` are the reactant cell-volume-averaged densities within that material, :math:`m_1,m_2` their atomic masses, :math:`\langle\sigma v\rangle_r(T)` the temperature-dependent reactivity, :math:`f_m` the phase fraction, and :math:`f_{\text{vol},m}` the material volume fraction (the :math:`1/f_{\text{vol},m}` factor converts cell-volume-averaged densities to physical, material-intrinsic number densities). The reactivity :math:`\langle\sigma v\rangle_r(T)` is tabulated against :math:`\log T` and interpolated at run time; reactions are gated on the volume fraction exceeding ``vol_frac_thresh``.
 
@@ -31,10 +29,8 @@ Each participating per-material isotope density is sourced by every reaction it 
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial \bar\rho_i}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_i\bm{v}\right)
+     \frac{\partial \bar\rho_i}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_i\vec{v}\right)
        = \sum_r \nu_{ir}\,m_i\,R_r .
-   \end{equation}
 
 Summing the isotope sources within a material gives the source on that material’s cell-volume-averaged density :math:`\bar\rho_m`, and the bulk density follows by the cell-averaged sum :math:`\rho=\sum_m\bar\rho_m`; the per-reaction net :math:`\sum_i \nu_{ir}m_i` reflects the small mass defect converted to energy.
 
@@ -45,15 +41,13 @@ The reaction energetics enter the total-energy equation as a source that removes
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial E}{\partial t} + \nabla\!\cdot\!\left[\left(E + p\right)\bm{v}\right]
+     \frac{\partial E}{\partial t} + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}\right]
        = \sum_r \left[
            -R_r\,\varepsilon^{\text{in}}_r(T)
            + \sum_p R_r\,\varepsilon^{\text{out}}_{r,p}(T)\,\mu_{r,p}
          \right],
-   \end{equation}
 
-where :math:`\varepsilon^{\text{in}}_r` is the reactant input energy, :math:`\varepsilon^{\text{out}}_{r,p}` the energy carried by product :math:`p`, and :math:`\mu_{r,p}` its multiplicity. A product may be flagged to escape the problem rather than deposit locally (see ``deposit_locally_``), in which case its mass and energy are removed. The mass sources above additionally induce momentum and kinetic-energy sources :math:`\bm{v}\,(\partial_t\rho)_{\text{TN}}` and :math:`\tfrac{1}{2}|\bm{v}|^2(\partial_t\rho)_{\text{TN}}` so that the burned mass carries the local velocity.
+where :math:`\varepsilon^{\text{in}}_r` is the reactant input energy, :math:`\varepsilon^{\text{out}}_{r,p}` the energy carried by product :math:`p`, and :math:`\mu_{r,p}` its multiplicity. A product may be flagged to escape the problem rather than deposit locally (see ``deposit_locally_``), in which case its mass and energy are removed. The mass sources above additionally induce momentum and kinetic-energy sources :math:`\vec{v}\,(\partial_t\rho)_{\text{TN}}` and :math:`\tfrac{1}{2}|\vec{v}|^2(\partial_t\rho)_{\text{TN}}` so that the burned mass carries the local velocity.
 
 Reaction Count
 ~~~~~~~~~~~~~~
@@ -62,9 +56,7 @@ A per-reaction count density :math:`Q_r` is advected as a conserved quantity sou
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial Q_r}{\partial t} + \nabla\!\cdot\!\left(Q_r\bm{v}\right) = R_r ,
-   \end{equation}
+     \frac{\partial Q_r}{\partial t} + \nabla\!\cdot\!\left(Q_r\vec{v}\right) = R_r ,
 
 providing an integrated diagnostic of the total number of reactions.
 

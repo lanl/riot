@@ -15,11 +15,9 @@ The time evolution of the frequency-dependent specific intensity :math:`I_\nu` i
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial I_\nu}{\partial t} + c\,\bm{n}\!\cdot\!\nabla I_\nu = c\left(j_\nu - \alpha_\nu I_\nu\right),
-   \end{equation}
+     \frac{\partial I_\nu}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_\nu = c\left(j_\nu - \alpha_\nu I_\nu\right),
 
-where :math:`c` is the speed of light, :math:`\bm{n}` is a unit vector defining the photon propagation direction, and :math:`j_\nu` and :math:`\alpha_\nu` are the frequency-dependent emissivity and absorptivity, respectively.
+where :math:`c` is the speed of light, :math:`\vec{n}` is a unit vector defining the photon propagation direction, and :math:`j_\nu` and :math:`\alpha_\nu` are the frequency-dependent emissivity and absorptivity, respectively.
 
 Multigroup Formulation
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -28,9 +26,7 @@ In the multigroup formalism the frequency domain is divided into :math:`N_\nu` b
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial I_f}{\partial t} + c\,\bm{n}\!\cdot\!\nabla I_f = c\left(j_f - \alpha_f I_f\right),
-   \end{equation}
+     \frac{\partial I_f}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_f = c\left(j_f - \alpha_f I_f\right),
 
 where the subscript :math:`f` denotes a quantity integrated over the group (e.g. :math:`I_f = \int_{\nu_{f-1}}^{\nu_f} I_\nu\,\mathrm{d}\nu` is the frequency-integrated specific intensity), and the group absorptivity :math:`\alpha_f` is a group-mean average.
 
@@ -38,31 +34,24 @@ Assuming a static background medium (material mass density :math:`\rho`, tempera
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial I_f}{\partial t} + c\,\bm{n}\!\cdot\!\nabla I_f
+     \frac{\partial I_f}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_f
        = c\left[\sigma_{s,f}\left(J_f - I_f\right)
                 + \sigma_{a,f}\left(\varepsilon_f - I_f\right)\right],
-     \label{eq:rad-mgrt}
-   \end{equation}
 
 where :math:`\sigma_{a,f}` and :math:`\sigma_{s,f}` are the group-mean absorption and scattering coefficients of the cell. In a multi-material cell these are aggregated from the per-material opacities as given in Section :ref:`sec:rad-opacity`; for a single material :math:`m` they reduce to :math:`\sigma_{a,f}=\rho_m\kappa_{a,f,m}` and :math:`\sigma_{s,f}=\rho_m\kappa_{s,f,m}` in terms of the specific opacities :math:`\kappa_{a,f,m}`, :math:`\kappa_{s,f,m}`. The group mean intensity over solid angle :math:`\Omega` is
 
 .. math::
 
-   \begin{equation}
      J_f = \frac{1}{4\pi}\int I_f\,\mathrm{d}\Omega ,
-   \end{equation}
 
 and is related to the group radiation energy density by :math:`E_f = \tfrac{4\pi}{c} J_f = \tfrac{1}{c}\int I_f\,\mathrm{d}\Omega`. The emission coefficient :math:`\varepsilon_f` is proportional to the integral of the Planck function :math:`B(\nu,T)` over the group band,
 
 .. math::
 
-   \begin{align}
      \varepsilon_f &= \frac{c}{4\pi}\int_{\nu_{f-1}}^{\nu_f} B(\nu,T)\,\mathrm{d}\nu,
        \qquad\text{where}\\
      B(\nu,T) &= \frac{8\pi h\nu^3}{c^3}\,
                  \frac{1}{\exp\!\left(h\nu/[kT]\right) - 1}.
-   \end{align}
 
 For a single group with :math:`[\nu_0,\nu_{N_\nu}) \to [0,\infty)` (i.e. “grey”), :math:`\varepsilon_f` reduces to :math:`\varepsilon_{\text{grey}} = c\,a\,T^4/[4\pi]`, where :math:`a` is the radiation constant. The band integrals are evaluated in closed form using polylogarithms.
 
@@ -75,11 +64,9 @@ For efficiency the transported field ``ccrad::intensity`` stores a scaled intens
 
 .. math::
 
-   \begin{equation}
      E_f = \sum_{a} w_a\,I_{f,a},
-   \end{equation}
 
-where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the angular quadrature weights :math:`w_a` are normalized to :math:`\sum_a w_a = 1`. The streaming term is discretized with a Rusanov flux weighted by the local optical depth (controlled by ``beta`` and ``taumax``), so the scheme transitions smoothly between the optically thin (transport) and optically thick (diffusion) limits. In reduced-dimension curvilinear geometries (1D spherical, 2D cylindrical) an additional angular-flux divergence term (``ccrad::divfa``) accounts for the rotation of :math:`\bm{n}` along curved streaming paths; it is compiled in only for those coordinate systems.
+where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the angular quadrature weights :math:`w_a` are normalized to :math:`\sum_a w_a = 1`. The streaming term is discretized with a Rusanov flux weighted by the local optical depth (controlled by ``beta`` and ``taumax``), so the scheme transitions smoothly between the optically thin (transport) and optically thick (diffusion) limits. In reduced-dimension curvilinear geometries (1D spherical, 2D cylindrical) an additional angular-flux divergence term (``ccrad::divfa``) accounts for the rotation of :math:`\vec{n}` along curved streaming paths; it is compiled in only for those coordinate systems.
 
 Angular Discretization
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -95,11 +82,9 @@ The cell absorption and scattering coefficients that appear in the equation abov
 
 .. math::
 
-   \begin{equation}
      \sigma_{a,f} = \sum_m f_m\,\rho_m\,\kappa_{a,f,m}
                   = \sum_m f_m\,\sigma_{a,f,m}, \qquad
      \sigma_{s,f} = \sum_m f_m\,\sigma_{s,f,m},
-   \end{equation}
 
 where each material’s coefficient :math:`\sigma_{a,f,m} = \rho_m\,\kappa_{a,f,m}` is evaluated from its own opacity model at the material-averaged density :math:`\rho_m` and the (shared) cell temperature. This follows the volume-fraction aggregation of Section :ref:`sec:permat-bulk`, so a mixed cell presents a single set of group coefficients to the transport solve.
 
@@ -110,10 +95,8 @@ When coupling is enabled (``coupling``), energy exchanged with the radiation fie
 
 .. math::
 
-   \begin{equation}
      \frac{\partial E_{\text{mat}}}{\partial t} = -\,\frac{\partial E_{\text{rad}}}{\partial t}, \qquad
      E_{\text{rad}} = \sum_f E_f .
-   \end{equation}
 
 The exchange is treated implicitly: an advanced material temperature :math:`T^{n+1}` is found by a non-linear root solve (tolerance ``troot_tol``, iteration cap ``troot_max_iter``) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with ``affect_fluid`` (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with ``fixed_temp_rhs``.
 
