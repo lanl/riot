@@ -6,10 +6,8 @@
 block-adaptive, performance portable mutli-material radiation hydrodynamics
 ==================================================================================
 
-Performance portable equations of state and mixed cell closures.
-
-.. figure:: src/packages/_images/cover.png
-   :alt: RIOT User Manual cover
+.. figure:: src/figures/cover.png
+   :alt: A double-shell ICF target simulated with riot
    :width: 70%
    :align: center
 
