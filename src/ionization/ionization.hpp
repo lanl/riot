@@ -32,6 +32,24 @@
 namespace Ionization {
 using namespace parthenon::package::prelude;
 
+// NN plus one cell in each negative direction:
+//
+//   {(-1,0,0), (0,-1,0), (0,0,-1), (0,0,0)}
+//
+// Halo offsets must be sorted lexicographically in (dk, dj, di).
+struct diffusion_halo_t {
+  static constexpr int npoints = 4;
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int dk(const int n) { return n == 0 ? -1 : 0; }
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int dj(const int n) { return n == 1 ? -1 : 0; }
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int di(const int n) { return n == 2 ? -1 : 0; }
+};
+
 ElectronThermalConductivityModel
 ElectronConductivityModelEnumFromString(const std::string &model);
 IonThermalConductivityModel IonConductivityModelEnumFromString(const std::string &model);

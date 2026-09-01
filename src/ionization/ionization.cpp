@@ -1675,24 +1675,35 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
       ionization_params.Get<Real>("ion_diffusion_coefficient");
 
   // using lt = RiotUtils::LoopType<>;
+  using TE = parthenon::TopologicalElement;
   using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
-  const int nhalo = 1;
-  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md,
-                                     parthenon::TopologicalElement::CC);
+  const int nhalo = 0;
+  // Use the NN logical range so one loop covers all three face orientations.
+  // This deliberately computes an extra transverse face layer for each orientation.
+  auto idx_space =
+      rt::GetIndexSpace(IndexDomain::interior,
+                        nhalo, nblocks, md,
+                        TE::NN);
 
   // add scratch for diffusion coefficient and max diffusion coefficient
-  idx_space.template AddPerPointScratch<Real>(2);
+  idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(2);
+
+  // The offset type follows the inner-loop indexing model.
+  const auto di = idx_space.GetDelta(X1DIR);
+  const auto dj = idx_space.GetDelta(X2DIR);
+  const auto dk = idx_space.GetDelta(X3DIR);
 
   // X1 fluxes
   // RiotLoop::outer(
   //     idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
   auto max_diffusion_rate = RiotLoop::outer_reduce(
       idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
-        auto d = RiotLoop::GetPerPointScratch<Real>(idx_range);
-        auto ratemax = RiotLoop::GetPerPointScratch<Real>(idx_range);
+        const auto halo_range = AddHalo<diffusion_halo_t>(idx_range);
+        auto d = RiotLoop::GetPerPointScratch<Real>(halo_range);
+        auto ratemax = RiotLoop::GetPerPointScratch<Real>(halo_range);
 
         // zero ratemax
-        RiotLoop::inner(idx_range, [&](const auto kji) { ratemax(kji) = 0.; });
+        RiotLoop::inner(halo_range, [&](const auto kji) { ratemax(kji) = 0.; });
 
         auto &coords = v.GetCoordinates(b);
 
@@ -1705,7 +1716,7 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
         int offset_iso = 0;
         for (int m = 0; m < nmat; ++m) {
           // zero d
-          RiotLoop::inner(idx_range, [&](const auto kji) { d(kji) = 0.; });
+          RiotLoop::inner(halo_range, [&](const auto kji) { d(kji) = 0.; });
           idx_range.TeamBarrier();
 
           int global_mat_id = v(b, ccmat::rho(m)).sparse_id;
@@ -1715,15 +1726,16 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           if (niso > 0) {
             for (int iso = 0; iso < niso; iso++) {
               const int iso_idx = offset_iso + iso;
-              RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-                d(k, j, i) += diffusion_coefficient * v(b, cm::iso(iso_idx), k, j, i);
-                ratemax(k, j, i) = std::max(ratemax(k, j, i), d(k, j, i));
+              RiotLoop::inner(halo_range, [&](const auto kji) {
+                const auto [k, j, i] = idx_range.GetKJI(kji);
+                d(kji) += diffusion_coefficient * v(b, cm::iso(iso_idx), k, j, i);
+                ratemax(kji) = std::max(ratemax(kji), d(kji));
               });
             }
           } else { // no isotopic information
-            RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-              d(k, j, i) = diffusion_coefficient;
-              ratemax(k, j, i) = std::max(ratemax(k, j, i), d(k, j, i));
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              d(kji) = diffusion_coefficient;
+              ratemax(kji) = std::max(ratemax(kji), d(kji));
             });
           }
           idx_range.TeamBarrier();
@@ -1733,14 +1745,17 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
             const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
             const Real &rhomm = v(b, ccmat::rho(m), k, j, i - 1);
             const Real &rhomp = v(b, ccmat::rho(m), k, j, i);
+            const Real &fvm = v(b, ccmat::volume_fraction(m), k, j, i - 1);
+            const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
             const Real &Emm = v(b, ccmat::internal_energy(m), k, j, i - 1);
             const Real &Emp = v(b, ccmat::internal_energy(m), k, j, i);
             const Real &Pm = v(b, ccbulk::pressure(m), k, j, i - 1);
             const Real &Pp = v(b, ccbulk::pressure(m), k, j, i);
             const Real J = -0.5 * (d(k, j, i - 1) + d(k, j, i)) * (rhomp - rhomm) * dxinv;
             const Real face_rhom = 0.5 * (rhomm + rhomp);
-            const Real face_specific_enthalpy =
-                0.5 * (rhomm * Emm + rhomp * Emp + Pm + Pp) / (face_rhom + 1e-20);
+            Real face_specific_enthalpy =
+                0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
+              face_specific_enthalpy *= (face_rhom > 1e-10);
 
             Real &frhomx = v.flux(b, X1DIR, ccmat::rho(m), k, j, i);
             Real &fEx = v.flux(b, X1DIR, ccbulk::total_material_energy(), k, j, i);
@@ -1749,10 +1764,13 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           });
 
           if (ndim > 1) {
+            // X2 fluxes
             RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
               const Real dyinv = 1.0 / (coords.Dxc(X2DIR, k, j, i) + 1e-20);
               const Real &rhomm = v(b, ccmat::rho(m), k, j - 1, i);
               const Real &rhomp = v(b, ccmat::rho(m), k, j, i);
+              const Real &fvm = v(b, ccmat::volume_fraction(m), k, j - 1, i);
+              const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
               const Real &Emm = v(b, ccmat::internal_energy(m), k, j - 1, i);
               const Real &Emp = v(b, ccmat::internal_energy(m), k, j, i);
               const Real &Pm = v(b, ccbulk::pressure(m), k, j - 1, i);
@@ -1760,8 +1778,9 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
               const Real J =
                   -0.5 * (d(k, j - 1, i) + d(k, j, i)) * (rhomp - rhomm) * dyinv;
               const Real face_rhom = 0.5 * (rhomm + rhomp);
-              const Real face_specific_enthalpy =
-                  0.5 * (rhomm * Emm + rhomp * Emp + Pm + Pp) / (face_rhom + 1e-20);
+              Real face_specific_enthalpy =
+                  0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
+              face_specific_enthalpy *= (face_rhom > 1e-10);
 
               Real &frhomy = v.flux(b, X2DIR, ccmat::rho(m), k, j, i);
               Real &fEy = v.flux(b, X2DIR, ccbulk::total_material_energy(), k, j, i);
@@ -1771,19 +1790,22 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           }
 
           if (ndim > 2) {
+            // X3 fluxes
             RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
               const Real dzinv = 1.0 / (coords.Dxc(X3DIR, k, j, i) + 1e-20);
-              const Real &rhomm = v.flux(b, X1DIR, ccmat::rho(m), k, j - 1, i);
+              const Real &rhomm = v.flux(b, X1DIR, ccmat::rho(m), k - 1, j, i);
               const Real &rhomp = v.flux(b, X1DIR, ccmat::rho(m), k, j, i);
-              const Real &Emm = v.flux(b, X1DIR, ccmat::internal_energy(m), k, j - 1, i);
+              const Real &fvm = v(b, ccmat::volume_fraction(m), k - 1, j, i);
+              const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
+              const Real &Emm = v.flux(b, X1DIR, ccmat::internal_energy(m), k - 1, j, i);
               const Real &Emp = v.flux(b, X1DIR, ccmat::internal_energy(m), k, j, i);
-              const Real &Pm = v.flux(b, X1DIR, ccbulk::pressure(m), k, j - 1, i);
+              const Real &Pm = v.flux(b, X1DIR, ccbulk::pressure(m), k - 1, j, i);
               const Real &Pp = v.flux(b, X1DIR, ccbulk::pressure(m), k, j, i);
               const Real J =
-                  -0.5 * (d(k, j - 1, i) + d(k, j, i)) * (rhomp - rhomm) * dzinv;
+                  -0.5 * (d(k - 1, j, i) + d(k, j, i)) * (rhomp - rhomm) * dzinv;
               const Real face_rhom = 0.5 * (rhomm + rhomp);
               const Real face_specific_enthalpy =
-                  0.5 * (rhomm * Emm + rhomp * Emp + Pm + Pp) / (face_rhom + 1e-20);
+                  0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
 
               Real &frhomz = v.flux(b, X3DIR, ccmat::rho(m), k, j, i);
               Real &fEz = v.flux(b, X3DIR, ccbulk::total_material_energy(), k, j, i);
@@ -1795,6 +1817,7 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           offset_iso += niso;
         } // materials
 
+        // reduction on rate for setting stable time step limit
         RiotLoop::inner_reduce(idx_range, [&](const auto kji, Real &max_rate) {
           const auto [k, j, i] = idx_range.GetKJI(kji);
           Real rate = 0.0;
