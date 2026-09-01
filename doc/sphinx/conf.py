@@ -47,6 +47,10 @@ extensions = [
     "sphinx_multiversion",
 ]
 
+# Namespace auto-generated labels by source
+# document so those titles remain linkable without collisions.
+autosectionlabel_prefix_document = True
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 

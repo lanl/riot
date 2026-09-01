@@ -309,25 +309,26 @@ If you would like to have git automatically push to the CI system when
 you type ``git push``, you can do so. The following procedure is
 recommended:
 
-```bash
-git remote add ci <git ssh path to ci repo>
-git remote add all git@github.com:lanl/riot.git
-git remote set-url --add --push all git@github.com:lanl/riot.git
-git remote set-url --add --push all <git ssh path to ci repo>
-git config remote.pushDefault all
-```
+.. code-block:: bash
+
+   git remote add ci <git ssh path to ci repo>
+   git remote add all git@github.com:lanl/riot.git
+   git remote set-url --add --push all git@github.com:lanl/riot.git
+   git remote set-url --add --push all <git ssh path to ci repo>
+   git config remote.pushDefault all
 
 With these changes,
-```bash
-git pull
-# pulls from github
 
-git push
-# pushes to both github and the CI machine via "all"
+.. code-block:: bash
 
-git push origin
-# pushes only to github
+   git pull
+   # pulls from github
 
-git push ci
-# pushes only to the CI machine
-```
+   git push
+   # pushes to both github and the CI machine via "all"
+
+   git push origin
+   # pushes only to github
+
+   git push ci
+   # pushes only to the CI machine
