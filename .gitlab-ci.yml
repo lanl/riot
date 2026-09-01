@@ -1,4 +1,5 @@
 variables:
+  GIT_STRATEGY: clone
   GIT_SUBMODULE_STRATEGY: recursive
   PLUGINS_REPO: "rpm/riot_plugins.git"
   PLUGINS_REPO_DIR: "${CI_PROJECT_DIR}/../riot_plugins"
