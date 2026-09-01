@@ -311,6 +311,7 @@ regression_rocinante:
     CLUSTER: rocinante
     SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
     CCACHE_TAG: rocinante
+    RIOT_MPI_COMMAND: srun
   only:
     - main
     - merge_requests
