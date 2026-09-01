@@ -17,10 +17,8 @@ A material-tied scalar is a mass fraction :math:`c` carried by a particular mate
 
 .. math::
 
-   \begin{equation}
      \frac{\partial \left(\bar\rho_m c\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\bar\rho_m c\,\bm{v}\right) = 0 ,
-   \end{equation}
+       + \nabla\!\cdot\!\left(\bar\rho_m c\,\vec{v}\right) = 0 ,
 
 and the primitive mass fraction is recovered as :math:`c = C/\bar\rho_m`. Because it is tied to a material, the scalar is a sparse field that is allocated and deallocated together with that material.
 
@@ -31,9 +29,7 @@ A bulk-tied scalar :math:`\psi` is not associated with any mass; it is a dense f
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial \psi}{\partial t} + \nabla\!\cdot\!\left(\psi\,\bm{v}\right) = 0 .
-   \end{equation}
+     \frac{\partial \psi}{\partial t} + \nabla\!\cdot\!\left(\psi\,\vec{v}\right) = 0 .
 
 No primitive/conserved distinction is required for a bulk-tied scalar.
 

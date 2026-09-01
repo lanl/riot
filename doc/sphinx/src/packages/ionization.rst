@@ -19,19 +19,15 @@ Ionization is a *per-material* property closed on a shared electron temperature.
 
 .. math::
 
-   \begin{equation}
-     E = u_i + u_e + \tfrac{1}{2}\rho|\bm{v}|^2, \qquad
+     E = u_i + u_e + \tfrac{1}{2}\rho|\vec{v}|^2, \qquad
      p = p_i + p_e .
-   \end{equation}
 
 Here :math:`u_i`, :math:`u_e` are the bulk ion and electron internal-energy densities and :math:`p_i`, :math:`p_e` the corresponding bulk pressures. Following the aggregation rules of Section :ref:`sec:permat-bulk`, the bulk electron energy is a cell-averaged sum of per-material electron energy densities while the bulk electron pressure is a volume-fraction-weighted sum,
 
 .. math::
 
-   \begin{equation}
      u_e = \sum_m \bar\rho_m\,e_{e,m}(\rho_m, T_e), \qquad
      p_e = \sum_m f_m\,p_{e,m}(\rho_m, T_e),
-   \end{equation}
 
 with each material’s electron specific energy :math:`e_{e,m}` and pressure :math:`p_{e,m}` supplied by its own electron equation of state.
 
@@ -39,9 +35,7 @@ Crucially, the electron temperature :math:`T_e` is a *single bulk* quantity shar
 
 .. math::
 
-   \begin{equation}
      u_e = \sum_m \bar\rho_m\,e_{e,m}(\rho_m, T_e),
-   \end{equation}
 
 which is the electron-side analogue of the PTE temperature equilibrium.
 
@@ -52,17 +46,13 @@ By default the electron internal energy is advected with the flow and does :math
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial u_e}{\partial t} + \nabla\!\cdot\!\left(u_e\bm{v}\right) = -\,p_e\,\nabla\!\cdot\!\bm{v} .
-   \end{equation}
+     \frac{\partial u_e}{\partial t} + \nabla\!\cdot\!\left(u_e\vec{v}\right) = -\,p_e\,\nabla\!\cdot\!\vec{v} .
 
 Alternatively the package can instead advance a conserved electron *entropy* density :math:`s_e` (which assumes an ideal electron gas and avoids the volumetric work source),
 
 .. math::
 
-   \begin{equation}
-     \frac{\partial s_e}{\partial t} + \nabla\!\cdot\!\left(s_e\bm{v}\right) = 0 ,
-   \end{equation}
+     \frac{\partial s_e}{\partial t} + \nabla\!\cdot\!\left(s_e\vec{v}\right) = 0 ,
 
 converting between :math:`s_e` and :math:`u_e` as needed. The choice is controlled by ``advect_electron_entropy``.
 
@@ -73,19 +63,15 @@ When ``electron_ion_coupling`` is enabled, the (bulk) electron and ion temperatu
 
 .. math::
 
-   \begin{align}
      \rho c_{v,i}\,\frac{\partial T_i}{\partial t} &= \frac{T_e - T_i}{\tau_{ei}}, \\
      \rho c_{v,e}\,\frac{\partial T_e}{\partial t} &= \frac{T_i - T_e}{\tau_{ei}} ,
-   \end{align}
 
 integrated with a first-order exponential (analytic) update so the equilibrium :math:`T_e = T_i` is recovered stably for any step size. In a mixed cell the heat capacities :math:`\rho c_{v,i}`, :math:`\rho c_{v,e}` and the coupling rate are formed as volume-fraction-weighted sums over the per-material contributions (evaluated at :math:`T_e`, :math:`T_i` and each material’s :math:`\rho_m`, :math:`\bar{Z}_m`), so a single bulk relaxation represents the whole cell. The coupling time may be a user-supplied constant (``tau_ei``) or the Landau–Spitzer form (Blancard et al., *High Energy Density Phys.* **9**, 247, 2013),
 
 .. math::
 
-   \begin{equation}
      \tau_{ei} = \frac{3\,m_e m_i}{8\sqrt{2\pi}\,n_i \bar{Z}^2 e^4}\,
                  \frac{\left(k_B T_e/m_e + k_B T_i/m_i\right)^{3/2}}{\ln\Lambda} ,
-   \end{equation}
 
 with the Coulomb logarithm :math:`\ln\Lambda` selected by ``coulomb_logarithm``.
 
@@ -96,9 +82,7 @@ The mean ionization state is computed *per material*: for each material :math:`m
 
 .. math::
 
-   \begin{equation}
      \bar{Z}_m = Z_{\text{nuc},m}\,f(x_m), \qquad x_m = \alpha\,Q_m^{\beta}.
-   \end{equation}
 
 The per-material ionization states set the free-electron number density :math:`n_e = \sum_m \bar\rho_m\,\bar{Z}_m/m_{\text{nuc},m}`. Setting ``fully_ionized`` forces :math:`\bar{Z}_m = Z_{\text{nuc},m}`.
 
@@ -109,19 +93,15 @@ Optionally, electron and/or ion heat conduction are solved as implicit diffusion
 
 .. math::
 
-   \begin{equation}
      \rho c_v\,\frac{\partial T}{\partial t} = \nabla\!\cdot\!\left(\kappa\,\nabla T\right) ,
-   \end{equation}
 
 using a BiCGSTAB linear solve. In a mixed cell the effective conductivity is a volume-fraction average (arithmetic or harmonic, selectable) of the per-material conductivities :math:`\kappa_m`, each evaluated at the shared bulk temperature with that material’s :math:`\rho_m` and :math:`\bar{Z}_m`. The per-material electron conductivity :math:`\kappa_{e,m}` defaults to the Spitzer–Härm form (Molvig, Simakov & Vold, *Phys. Plasmas* **21**, 092709, 2014),
 
 .. math::
 
-   \begin{equation}
      \kappa_{e,m} = \frac{\alpha(\bar{Z}_m)}{\bar{Z}_m}\,\frac{8}{\pi^{3/2}}\,
                 \frac{k_B^{7/2}}{e^4\sqrt{m_e}}\,\frac{T_e^{5/2}}{\ln\Lambda},
      \qquad \alpha(\bar{Z}_m) = \frac{1}{1 + 3.3/\bar{Z}_m},
-   \end{equation}
 
 and the per-material ion conductivity :math:`\kappa_{i,m}` to the Braginskii form. Either may instead be set to a constant.
 
@@ -132,31 +112,25 @@ Optionally (``plasma_viscosity``), an ion viscous stress :math:`\bm{\sigma}_{\te
 
 .. math::
 
-   \begin{align}
-     \frac{\partial \left(\rho\bm{v}\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\rho\bm{v}\otimes\bm{v}+ p\,\bm{I}\right)
+     \frac{\partial \left(\rho\vec{v}\right)}{\partial t}
+       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\bm{I}\right)
        &= \nabla\!\cdot\!\bm{\sigma}_{\text{visc}}, \\[2pt]
      \frac{\partial E}{\partial t}
-       + \nabla\!\cdot\!\left[\left(E + p\right)\bm{v}\right]
-       &= \nabla\!\cdot\!\left(\bm{\sigma}_{\text{visc}}\!\cdot\!\bm{v}\right),
-   \end{align}
+       + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}\right]
+       &= \nabla\!\cdot\!\left(\bm{\sigma}_{\text{visc}}\!\cdot\!\vec{v}\right),
 
 so momentum diffuses and the associated viscous dissipation heats the fluid. The stress is Newtonian in the (bulk) strain rate :math:`\bm{e}` (Chapter :ref:`chap:strength`),
 
 .. math::
 
-   \begin{equation}
      \bm{\sigma}_{\text{visc}} = 2\eta\,\bm{e}
-       + \left(\eta_b - \tfrac{2}{3}\eta\right)(\nabla\!\cdot\!\bm{v})\,\bm{I},
-   \end{equation}
+       + \left(\eta_b - \tfrac{2}{3}\eta\right)(\nabla\!\cdot\!\vec{v})\,\bm{I},
 
 with :math:`\eta` the shear viscosity and :math:`\eta_b` the bulk viscosity. The shear viscosity is set by ``ion_viscosity_model``: either a user-supplied constant (``ion_shear_viscosity``, ``ion_bulk_viscosity``), or the Fokker–Planck–Landau plasma model (Arnault, *High Energy Density Phys.* **9**, 711, 2013; Vold et al., *Phys. Plasmas* **24**, 042702, 2017),
 
 .. math::
 
-   \begin{equation}
      \eta = \sum_i \frac{\alpha_{ij}\,n_i\,k_B T_i}{\sum_j \nu_{ij}},
-   \end{equation}
 
 where the ion–ion momentum-exchange rates :math:`\nu_{ij}` are summed over the ion species in the cell, :math:`n_i` is the ion number density, and :math:`T_i` the ion temperature. This is a bulk (whole-cell) transport coefficient built from the per-material ion states, in the same spirit as the conductivities above.
 

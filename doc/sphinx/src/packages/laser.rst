@@ -22,18 +22,14 @@ Each ray follows the geometric-optics trajectory of a medium with refractive ind
 
 .. math::
 
-   \begin{equation}
      n_c(\lambda) = \frac{\pi\,m_e\,c^2}{\lambda^2 q_e^2}.
-   \end{equation}
 
 The ray bends toward lower density under an acceleration proportional to the electron-density gradient,
 
 .. math::
 
-   \begin{equation}
-     \frac{\mathrm{d}\bm{v}}{\mathrm{d}s}
+     \frac{\mathrm{d}\vec{v}}{\mathrm{d}s}
        = -\,\frac{\lambda^2 q_e^2}{2\pi\,m_e}\,\nabla n_e ,
-   \end{equation}
 
 and travels at the local group speed :math:`c\,\sqrt{1 - n_e/n_c}`. The trajectory is integrated cell by cell with a velocity–Verlet push that steps exactly to each cell face. A ray that reaches the critical density (:math:`n_e \ge n_c`) deposits its remaining energy locally; there is no explicit specular reflection — the density gradient alone turns rays back.
 
@@ -44,27 +40,21 @@ Along its path a ray is absorbed by electron–ion collisions. The absorption co
 
 .. math::
 
-   \begin{equation}
      \kappa \;\propto\; \frac{n_e^2\,\bar{Z}\,\ln\Lambda}{n_c\,T_e^{3/2}\,
                              \sqrt{1 - n_e/n_c}} ,
-   \end{equation}
 
 where :math:`\bar Z` is the mean ionization state, :math:`T_e` the electron temperature, and :math:`\ln\Lambda` the Coulomb logarithm (fixed at :math:`7`). Over a path length :math:`\Delta s` through a cell the optical depth is :math:`\tau = \kappa\,\Delta s` and the ray loses the fraction
 
 .. math::
 
-   \begin{equation}
      \Delta\mathcal{E} = \mathcal{E}\left(1 - e^{-\tau}\right)
-   \end{equation}
 
 of its energy (linearized to :math:`\mathcal{E}\,\tau` for small :math:`\tau`). That energy is deposited into the cell: it is accumulated as a deposition *rate* (``ccbulk::laser_deposition``) and, at the end of the step, integrated into the electron internal energy :math:`u_e` and the bulk total energy :math:`E`,
 
 .. math::
 
-   \begin{equation}
      u_e \mathrel{+}= \Delta t\,\dot{q}_{\text{laser}}, \qquad
      E   \mathrel{+}= \Delta t\,\dot{q}_{\text{laser}} .
-   \end{equation}
 
 Setting ``enable_deposition`` ``= false`` traces the rays but suppresses the energy deposition (useful for visualizing beam paths).
 

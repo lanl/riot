@@ -12,18 +12,14 @@ Each source is specified by a monotonically increasing schedule :math:`\mathcal{
 
 .. math::
 
-   \begin{equation}
      \Delta E_m = \max\!\left(\mathcal{E}_m(t+\Delta t) - \mathcal{E}_m(t),\ 0\right).
-   \end{equation}
 
 This total is converted to a *specific* energy increment by dividing by the material’s current total mass :math:`M_m` (summed over the whole domain, Section :ref:`sec:presrc-method`), and deposited uniformly by mass: a cell holding a partial density :math:`\bar\rho_m` of the material receives
 
 .. math::
 
-   \begin{equation}
      \Delta\!\left(\text{bulk energy density}\right)
        = \bar\rho_m\,\frac{\Delta E_m}{M_m}.
-   \end{equation}
 
 The increment therefore adds the same specific energy :math:`\Delta E_m/M_m` everywhere the material is present, so the source heats the material uniformly per unit mass rather than per unit volume. The energy is added to the bulk total energy (``ccbulk::total_material_energy``); the per-material internal energies, temperature, and pressure are then recovered through the equation-of-state and PTE closure of Chapter :ref:`chap:materials`.
 

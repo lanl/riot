@@ -12,10 +12,8 @@ The mechanism is built around a special sparse sentinel field, the cell delta :m
 
 .. math::
 
-   \begin{equation}
      \Delta = \sum_{u} \frac{\left|u^{\,\text{new}} - u^{\,\text{old}}\right|}
                            {\left|u^{\,\text{new}}\right| + 1} .
-   \end{equation}
 
 Where the solution is genuinely evolving, :math:`\Delta` is appreciable; where the flow is quiescent, :math:`\Delta` is nearly zero.
 

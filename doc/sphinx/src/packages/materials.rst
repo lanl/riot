@@ -12,20 +12,17 @@ The materials package does not itself advance a transport equation; it supplies 
 
 .. math::
 
-   \begin{equation}
-     p_m = p_m(\rho_m, T), \qquad e_m = e_m(\rho_m, T),
-   \end{equation}
+   p_m & = p_m(\rho_m, T) \\
+   e_m & = e_m(\rho_m, T)
 
 supplied through the ``singularity-eos`` library. These relations close the per-material system and, together with the Amagat volume-additive constraint and the PTE conditions of Chapter :ref:`chap:hydro`, determine the equilibrium state of a mixed cell:
 
 .. math::
 
-   \begin{gather}
-     p_m(\rho_m,T) = p, \qquad
-     T_m = T, \qquad
-     \sum_m f_m = 1, \notag \\
-     u = \sum_m \bar\rho_m\,e_m(\rho_m,T),
-   \end{gather}
+   p_m(\rho_m,T) & = p \\
+   T_m & = T \\
+   \sum_m f_m & = 1 \\
+   u & = \sum_m \bar\rho_m\,e_m(\rho_m,T)
 
 for all materials :math:`m`, where :math:`u` is the bulk volumetric internal energy (internal energy per unit cell volume). For a cell containing a single material the EOS is evaluated directly; for a mixed cell the closure is solved by ``singularity-eos``. A mixed cell whose materials are all ideal gases admits a closed-form solution and bypasses the iterative solver unless ``use_general_pte`` is set.
 
@@ -36,13 +33,23 @@ Per-Material and Bulk Quantities
 
 The multi-material design of RIOT rests on a consistent distinction between three kinds of field, identified throughout the source (and this manual) by their namespace prefix. This section defines that distinction and the aggregation rules once; every subsequent chapter refers back to it. The prefixes are abbreviations of the fully-qualified namespaces in ``src/variables.hpp``:
 
-.. container:: description
+``ccbulk::`` (``cell_variables::cell_averaged::bulk``)
+  Cell-averaged *bulk* quantities: a single value per cell that describes the
+  cell as a whole. The materials in a cell share one common velocity
+  ``ccbulk::velocity``; the other bulk fields are aggregates that every material
+  contributes to. For example, the bulk density ``ccbulk::rho`` is the sum of the
+  per-material ``ccmat::rho``, and the bulk momentum ``ccbulk::momentum`` is that
+  bulk density times the common velocity. RIOT evolves the bulk momentum and
+  total energy (``ccbulk::total_material_energy``) directly.
 
-   (``cell_variables::cell_averaged::bulk``) — cell-averaged *bulk* quantities: a single value per cell that describes the cell as a whole. The materials in a cell share one common velocity ``ccbulk::velocity``; the other bulk fields are aggregates that every material contributes to. For example, the bulk density ``ccbulk::rho`` is the sum of the per-material ``ccmat::rho``, and the bulk momentum ``ccbulk::momentum`` is that bulk density times the common velocity. RIOT evolves the bulk momentum and total energy (``ccbulk::total_material_energy``) directly.
+``ccmat::`` (``cell_variables::cell_averaged::mat``)
+  Cell-averaged *per-material* quantities. These are averaged over the whole
+  cell volume, so a material that only partly fills a cell contributes in
+  proportion to its volume fraction.
 
-   (``cell_variables::cell_averaged::mat``) — cell-averaged *per-material* quantities. These are averaged over the whole cell volume, so a material that only partly fills a cell contributes in proportion to its volume fraction.
-
-   (``cell_variables::material_averaged``) — *material-averaged* per-material quantities, i.e. the intrinsic (physical) value a material carries within the sub-volume it actually occupies.
+``cm::`` (``cell_variables::material_averaged``)
+  *Material-averaged* per-material quantities: the intrinsic (physical) value a
+  material carries within the sub-volume it actually occupies.
 
 The distinction between ``ccmat::`` and ``cm::`` is fundamental. Consider a cell of volume :math:`V` and a material :math:`m` within it that has mass :math:`M_m` and occupies volume :math:`V_m`. Its *volume fraction* is :math:`f_m = V_m/V` (field ``ccmat::volume_fraction``), with :math:`\sum_m f_m = 1`. Then:
 
@@ -54,30 +61,27 @@ The two are related through the volume fraction,
 
 .. math::
 
-   \begin{equation}
-     \bar\rho_m = \rho_m\,\frac{V_m}{V} = f_m\,\rho_m ,
-     \label{eq:ccmat-cm-rho}
-   \end{equation}
+   \bar\rho_m = \rho_m\,\frac{V_m}{V} = f_m\,\rho_m
 
 so ``ccmat::rho`` is always :math:`\le` ``cm::rho``, with equality only when the material fills the cell (:math:`f_m = 1`). The material-averaged pressure, temperature, specific internal energy, bulk modulus, and so on (:math:`p_m`, :math:`T_m`, :math:`e_m`, :math:`B_m`, …) are likewise ``cm::`` quantities, evaluated from the equation of state at the physical density :math:`\rho_m`.
 
-RIOT integrates conservation laws for the cell-volume-averaged material densities :math:`\bar\rho_m` (``ccmat::rho``, one per material) together with the bulk momentum and total energy (``ccbulk::``); a single velocity :math:`\bm{v}` is common to all materials in a cell. After each update, the bulk quantities are reconstructed from the per-material states. The aggregation rules actually used (in ``multiphysics/fill_shared_derived.cpp``) fall into two kinds:
+RIOT integrates conservation laws for the cell-volume-averaged material densities :math:`\bar\rho_m` (``ccmat::rho``, one per material) together with the bulk momentum and total energy (``ccbulk::``); a single velocity :math:`\vec{v}` is common to all materials in a cell. After each update, the bulk quantities are reconstructed from the per-material states. The aggregation rules actually used (in ``multiphysics/fill_shared_derived.cpp``) fall into two kinds:
 
-.. container:: description
+- **Direct sums.** Because ``ccmat::`` densities are already per-unit-cell-volume,
+  the bulk density and bulk volumetric internal energy :math:`u` (internal energy
+  per unit cell volume) are direct sums over materials:
 
-   Because ``ccmat::`` densities are already per-unit-cell-volume, the bulk density and the bulk volumetric internal energy :math:`u` (internal energy per unit cell volume) are direct sums over materials:
+  .. math::
 
-   .. math::
+     \rho & = \sum_m \bar\rho_m \\
+     u & = \sum_m \bar\rho_m\,e_m
 
-      \begin{equation}
-            \rho= \sum_m \bar\rho_m, \qquad
-            u = \sum_m \bar\rho_m\,e_m .
-          
-      \end{equation}
+- **Equilibrium closure.** The bulk pressure :math:`p` and temperature :math:`T`
+  are *not* averages: they are the common values returned by the
+  pressure–temperature-equilibrium (PTE) solve, :math:`p_m(\rho_m,T)=p` and
+  :math:`T_m=T` for all :math:`m` (Chapter :ref:`chap:hydro`).
 
-   The bulk pressure :math:`p` and temperature :math:`T` are *not* averages: they are the common values returned by the pressure–temperature-equilibrium (PTE) solve, :math:`p_m(\rho_m,T)=p` and :math:`T_m=T` for all :math:`m` (Chapter :ref:`chap:hydro`).
-
-The bulk velocity follows from the conserved momentum, :math:`\bm{v}= (\rho\bm{v})/\rho`.
+The bulk velocity follows from the conserved momentum, :math:`\vec{v}= (\rho\vec{v})/\rho`.
 
 This pattern — *per-material fields evolved or closed independently, then aggregated to a bulk field that feeds the hydrodynamics* — recurs in the strength, ionization, and burn packages, and each of those chapters states its own aggregation explicitly.
 
@@ -86,15 +90,29 @@ Equation-of-State Models
 
 Each material selects an EOS through the ``eos_type`` parameter. The available models and the parameters each requires are listed in the table below. All EOS blocks additionally accept ``mean_atomic_mass`` (default ``2.0``) and ``mean_atomic_number`` (default ``1.0``).
 
-.. code-block:: text
+.. list-table:: Equation-of-state models.
+   :header-rows: 1
+   :widths: 27 19 54
 
-   @P0.27 L0.19 L0.40@ **eos_type & Model & Required parameters
-   IdealGas & Ideal gas (:math:`\gamma`-law) & ``Gamma``, ``Cv``
-   Gruneisen & Mie–Grüneisen & ``C0``, ``s1``, ``s2``, ``s3``, ``G0``, ``b``, ``rho0``, ``T0``, ``P0``, ``Cv``
-   SpinerEOSDependsRhoT & Tabular (SESAME), :math:`(\rho,T)` independent & ``filename``, ``sesame_id`` or ``sesame_name``
-   SpinerEOSDependsRhoSie & Tabular (SESAME), :math:`(\rho,e)` independent & ``filename``, ``sesame_id`` or ``sesame_name``
-   IdealElectrons & Ideal electron gas (ionization) & —
-   **
+   * - ``eos_type``
+     - Model
+     - Required parameters
+   * - ``IdealGas``
+     - Ideal gas (:math:`\gamma`-law)
+     - ``Gamma``, ``Cv``
+   * - ``Gruneisen``
+     - Mie–Grüneisen
+     - ``C0``, ``s1``, ``s2``, ``s3``, ``G0``, ``b``, ``rho0``, ``T0``,
+       ``P0``, ``Cv``
+   * - ``SpinerEOSDependsRhoT``
+     - Tabular (SESAME), :math:`(\rho,T)` independent
+     - ``filename``, ``sesame_id``, or ``sesame_name``
+   * - ``SpinerEOSDependsRhoSie``
+     - Tabular (SESAME), :math:`(\rho,e)` independent
+     - ``filename``, ``sesame_id``, or ``sesame_name``
+   * - ``IdealElectrons``
+     - Ideal electron gas (ionization)
+     - —
 
 The analytic models (``IdealGas``, ``Gruneisen``) are provided directly by ``singularity-eos``. The tabular ``Spiner`` models read an HDF5 (SESAME/SP5) table selected either by numeric ``sesame_id`` (which takes precedence) or by ``sesame_name``, and accept the optional flags ``reproducibility_mode`` (default ``false``) and ``use_subtable`` (default ``false``).
 
