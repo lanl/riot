@@ -1,0 +1,106 @@
+# This file was made with the assistance of generative AI.
+name: Par Hermes format
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  format:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.body == '@par-hermes format' &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Get pull request head branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" --jq '.head.repo.full_name')"
+
+          if [[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]]; then
+            echo "same_repository=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "same_repository=true" >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${ISSUE_NUMBER}" --jq '.head.ref' \
+            | { read -r head_ref; echo "head_ref=${head_ref}" >> "$GITHUB_OUTPUT"; }
+
+      - name: Explain fork limitation
+        if: steps.pr.outputs.same_repository != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body 'Formatting is only applied automatically to branches in this repository. Please run `CFM=clang-format-20 ./script/format.sh` locally and push the result.'
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.same_repository == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head_ref }}
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        if: steps.pr.outputs.same_repository == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install Black
+        if: steps.pr.outputs.same_repository == 'true'
+        run: python -m pip install black
+
+      - name: Run formatting sweep
+        id: formatting
+        if: steps.pr.outputs.same_repository == 'true'
+        env:
+          CFM: clang-format-20
+          VERBOSE: "1"
+        run: |
+          ./script/format.sh
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit formatting changes
+        if: steps.formatting.outputs.changed == 'true'
+        env:
+          PR_HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          git config user.name 'par-hermes[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add --all
+          git commit -m 'Apply formatting'
+          git push origin "HEAD:${PR_HEAD_REF}"
+
+      - name: Report formatting changes
+        if: steps.formatting.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body 'Applied the formatting sweep in a new commit.'
+
+      - name: Report no changes
+        if: steps.pr.outputs.same_repository == 'true' && steps.formatting.outputs.changed == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          gh pr comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body 'The branch is already formatted.'
