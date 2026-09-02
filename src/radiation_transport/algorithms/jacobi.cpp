@@ -101,7 +101,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   }
   params.Add("niter_min",
              pin->GetOrAddInteger(
-                 input_block, "niter_min", niter_min_default,
+                 input_block, "niter_min", do_angular_fluxes * niter_min_default,
                  "Minimum #iter the Jacobi solver must take before it is permitted to "
                  "exit on the residual threshold (even if err_thr is already met)."));
   const int nreduce_limit = pin->GetOrAddInteger(

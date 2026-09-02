@@ -36,7 +36,7 @@ using namespace parthenon;
 // NOTE(@pdmullen): The geodesic grid infrastructure is taken from the AthenaK
 // implementation and ported to the Parthenon framework by @pdmullen (see copyrights
 // info above)
-GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
+GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole, bool fv_fix)
     : nlevel(nlev), rotate_geo(rotate), num_neighbors("num_neighbors", 1),
       ind_neighbors("ind_neighbors", 1, 1),
       ind_neighbors_edges("ind_neighbors_edges", 1, 1), weights("weights", 1),
@@ -286,6 +286,9 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
       cpos_h(n, 0) = x;
       cpos_h(n, 1) = y;
       cpos_h(n, 2) = z;
+      cart_pos_unit_h(n, 0) = x;
+      cart_pos_unit_h(n, 1) = y;
+      cart_pos_unit_h(n, 2) = z;
     }
 
     // set angular geometric flux coefficients along edges of angle faces
@@ -328,8 +331,10 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
       }
     }
 
-    ApplyFiniteVolumeCorrections(cart_pos_h, cart_pos_unit_h, weights_h, arc_weights_h,
-                                 gflux_h, num_neighbors_h, ind_neighbors_h);
+    if (fv_fix) {
+      ApplyFiniteVolumeCorrections(cart_pos_h, weights_h, arc_weights_h, gflux_h,
+                                   num_neighbors_h, ind_neighbors_h);
+    }
 
     // deep copy
     Kokkos::deep_copy(num_neighbors, num_neighbors_h);
@@ -388,25 +393,12 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
 //! Each <n_i> is obtained (divergence theorem) as (1/w_a) sum_b [edge integral of the
 //! flux field G_i with div_Omega G_i = n_i], summed over the cell's great-circle edges
 //! between circumcenters.
-
-//! For the "curvature direction" in a curvilinear build, we overwrite <n_curv> with the
-//! discrete angular-flux divergence coefficient built from the same gflux/arc array, so
-//! that the spatial curvature term cancels the angular divergence exactly for a uniform
-//! isotropic field.
 void GeodesicGrid::ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
-                                                ParArrayHost<Real> &cart_pos_unit_h,
                                                 ParArrayHost<Real> &weights_h,
                                                 ParArrayHost<Real> &arc_weights_h,
                                                 ParArrayHost<Real> &gflux_h,
                                                 ParArrayHost<int> &num_neighbors_h,
                                                 ParArrayHost<int> &ind_neighbors_h) {
-  // cart_pos_unit always holds the centroid unit cosines
-  for (int n = 0; n < nangles; ++n) {
-    for (int d = 0; d < 3; ++d) {
-      cart_pos_unit_h(n, d) = cart_pos_h(n, d);
-    }
-  }
-
   // Solid-angle-averaged cosine for every transported component, via exact edge
   // integrals of the flux fields G_i (div_Omega G_i = n_i).
   auto &anorm = amesh_normals;
@@ -438,9 +430,10 @@ void GeodesicGrid::ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
     }
   }
 
-  // For the curvature direction, use g_a from the same gflux/arc arrays the divfa
-  // operator consumes (identical to <n_curv> above up to round-off, but guaranteed
-  // consistent with divfa under the shared-edge symmetrization).
+  // Consistency check: the curvature-direction cosine already stored in cart_pos_h is the
+  // solid-angle average <n_curv>.  Confirm it agrees to round-off with g_a built from the
+  // exact symmetrized edge arrays the divfa operator uses (both equal the same
+  // divergence-theorem integral); this validates the edge gflux/arc_weights construction.
   if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
                 parthenon::IsCoord<parthenon::UniformSpherical>()) {
     constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
@@ -449,7 +442,9 @@ void GeodesicGrid::ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
       Real ga = 0.0;
       for (int nb = 0; nb < num_neighbors_h(n); ++nb)
         ga += gflux_h(n, nb) * arc_weights_h(n, nb);
-      cart_pos_h(n, curv_comp) = ga / (weights_h(n) * kappa);
+      const Real ga_curv = ga / (weights_h(n) * kappa);
+      PARTHENON_REQUIRE(std::abs(ga_curv - cart_pos_h(n, curv_comp)) < 1.0e-12,
+                        "Geodesic g_a disagrees with solid-angle average <n_curv>.");
     }
   }
 }
