@@ -116,7 +116,7 @@ riot.input(
     do_jacobi=False,  # enable implicit Jacobi solver
     do_explicit=True,  # enable explicit transport
     nlevel=2,  # level of geodesic mesh
-    fv_fix=False, # Use centroid unit normals
+    fv_fix=False, # use centroid unit normals
     coupling=False,  # flag to enable radiation source term
     affect_fluid=False,  # feedback on the fluid
     fixed_pgen_opac=True,  # do not update opacities set in pgen
