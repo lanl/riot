@@ -32,25 +32,32 @@ using namespace parthenon;
 //----------------------------------------------------------------------------------------
 // NOTE(@pdmullen): The latlon grid infrastructure closesly resembes the AthenaK
 // geodesic grid implementation (see copyrights info above).
-
 LatLonGrid::LatLonGrid(int ntheta, int nphi)
     : ntheta_(ntheta), nphi_(nphi), num_neighbors("num_neighbors", 1),
       ind_neighbors("ind_neighbors", 1, 1),
       ind_neighbors_edges("ind_neighbors_edges", 1, 1), weights("weights", 1),
       arc_weights("arc_weights", 1, 1), cart_pos("cart_pos", 1, 1),
-      cart_pos_mid("cart_pos_mid", 1, 1, 1), gflux("gflux", 1, 1) {
+      cart_pos_unit("cart_pos_unit", 1, 1), cart_pos_mid("cart_pos_mid", 1, 1, 1),
+      gflux("gflux", 1, 1) {
 
   nangles = ntheta * nphi;
 
+  // Host Arrays
   ParArrayHost<Real> theta_v("theta_v", ntheta);
   ParArrayHost<Real> theta_f("theta_f", ntheta + 1);
   ParArrayHost<Real> costheta_v("costheta_v", ntheta);
   ParArrayHost<Real> costheta_f("costheta_f", ntheta + 1);
   ParArrayHost<Real> phi_v("phi_v", nphi);
   ParArrayHost<Real> phi_f("phi_f", nphi + 1);
-
-  ComputeThetaLevels(theta_v, theta_f, costheta_v, costheta_f);
-  ComputePhiAngles(phi_v, phi_f);
+  ParArrayHost<int> num_neighbors_h("num_neighbors_h", nangles);
+  ParArrayHost<int> ind_neighbors_h("ind_neighbors_h", nangles, 4);
+  ParArrayHost<int> ind_neighbors_edges_h("ind_neighbors_edges_h", nangles, 4);
+  ParArrayHost<Real> weights_h("weights_h", nangles);
+  ParArrayHost<Real> arc_weights_h("arc_weights_h", nangles, 4);
+  ParArrayHost<Real> cart_pos_h("cart_pos_h", nangles, 3);
+  ParArrayHost<Real> cart_pos_unit_h("cart_pos_unit_h", nangles, 3);
+  ParArrayHost<Real> cart_pos_mid_h("cart_pos_mid_h", nangles, 4, 3);
+  ParArrayHost<Real> gflux_h("gflux_h", nangles, 4);
 
   num_neighbors.Resize(nangles);
   ind_neighbors.Resize(nangles, 4);
@@ -58,18 +65,99 @@ LatLonGrid::LatLonGrid(int ntheta, int nphi)
   weights.Resize(nangles);
   arc_weights.Resize(nangles, 4);
   cart_pos.Resize(nangles, 3);
+  cart_pos_unit.Resize(nangles, 3);
   cart_pos_mid.Resize(nangles, 4, 3);
   gflux.Resize(nangles, 4);
 
-  ComputeCartesianDirections(theta_v, phi_v);
-  ComputeWeights(costheta_f, phi_f);
-  ComputeNeighborConnectivity();
-  ComputeArcLengths(theta_f, phi_f, theta_v, phi_v);
-  ComputeUnitFluxes(theta_v, phi_v, theta_f, phi_f);
+  ComputeThetaLevels(theta_v, theta_f, costheta_v, costheta_f);
+  ComputePhiAngles(phi_v, phi_f);
+  ComputeCartesianDirections(theta_v, phi_v, cart_pos_h);
+  ComputeWeights(costheta_f, phi_f, weights_h);
+  ComputeNeighborConnectivity(num_neighbors_h, ind_neighbors_h, ind_neighbors_edges_h);
+  ComputeArcLengths(theta_f, phi_f, theta_v, phi_v, arc_weights_h, cart_pos_mid_h,
+                    ind_neighbors_h, ind_neighbors_edges_h, num_neighbors_h);
+  ComputeUnitFluxes(theta_v, phi_v, theta_f, phi_f, gflux_h, cart_pos_mid_h,
+                    ind_neighbors_h, ind_neighbors_edges_h, num_neighbors_h);
+  ApplyFiniteVolumeCorrections(theta_f, phi_f, cart_pos_h, cart_pos_unit_h, weights_h,
+                               arc_weights_h, gflux_h, num_neighbors_h, ind_neighbors_h);
+
+  // deep copy
+  Kokkos::deep_copy(num_neighbors, num_neighbors_h);
+  Kokkos::deep_copy(ind_neighbors, ind_neighbors_h);
+  Kokkos::deep_copy(ind_neighbors_edges, ind_neighbors_edges_h);
+  Kokkos::deep_copy(weights, weights_h);
+  Kokkos::deep_copy(arc_weights, arc_weights_h);
+  Kokkos::deep_copy(cart_pos, cart_pos_h);
+  Kokkos::deep_copy(cart_pos_unit, cart_pos_unit_h);
+  Kokkos::deep_copy(cart_pos_mid, cart_pos_mid_h);
+  Kokkos::deep_copy(gflux, gflux_h);
 }
 
 //----------------------------------------------------------------------------------------
 LatLonGrid::~LatLonGrid() {}
+
+//----------------------------------------------------------------------------------------
+//! \fn void LatLonGrid::ApplyFiniteVolumeCorrections
+//! \brief Replace the cell-centered normal directions with their exact solid-angle
+//! averages <n_i> = (1/dOmega) int n_i dOmega for the finite-volume transport speeds;
+//! cart_pos_unit retains the true centroid unit vectors (if needed).
+//!
+//! For a lat-lon cell [theta_lo,theta_hi] x [phi_lo,phi_hi] the averages are closed-form:
+//!   <n_x> = [int sin^2 theta dtheta][sin phi_hi - sin phi_lo] / (dcos theta * dphi)
+//!   <n_y> = [int sin^2 theta dtheta][cos phi_lo - cos phi_hi] / (dcos theta * dphi)
+//!   <n_z> = 1/2 (cos theta_lo + cos theta_hi)
+//! with int sin^2 theta dtheta = [theta/2 - sin(2 theta)/4].
+//!
+//! For the "curvature direction" in a curvilinear build, we overwrite <n_curv> with the
+//! discrete angular-flux divergence coefficient built from the same gflux/arc array, so
+//! that the spatial curvature term cancels the angular divergence exactly for a uniform
+//! isotropic field.
+void LatLonGrid::ApplyFiniteVolumeCorrections(
+    ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
+    ParArrayHost<Real> &cart_pos_h, ParArrayHost<Real> &cart_pos_unit_h,
+    ParArrayHost<Real> &weights_h, ParArrayHost<Real> &arc_weights_h,
+    ParArrayHost<Real> &gflux_h, ParArrayHost<int> &num_neighbors_h,
+    ParArrayHost<int> &ind_neighbors_h) {
+  // cart_pos_unit always holds the untouched true (centroid) unit cosines
+  for (int n = 0; n < nangles; ++n) {
+    for (int d = 0; d < 3; ++d) {
+      cart_pos_unit_h(n, d) = cart_pos_h(n, d);
+    }
+  }
+
+  // Solid-angle-averaged cosines for every transported component.
+  for (int it = 0; it < ntheta_; ++it) {
+    const Real th_lo = theta_f(it), th_hi = theta_f(it + 1);
+    const Real i2 =
+        0.5 * (th_hi - th_lo) - 0.25 * (std::sin(2.0 * th_hi) - std::sin(2.0 * th_lo));
+    const Real dcos = std::cos(th_lo) - std::cos(th_hi);
+    const Real navg_z = 0.5 * (std::cos(th_lo) + std::cos(th_hi));
+    for (int ip = 0; ip < nphi_; ++ip) {
+      const int n = it * nphi_ + ip;
+      const Real ph_lo = phi_f(ip), ph_hi = phi_f(ip + 1);
+      const Real dphi = ph_hi - ph_lo;
+      const Real navg_x = i2 * (std::sin(ph_hi) - std::sin(ph_lo)) / (dcos * dphi);
+      const Real navg_y = i2 * (std::cos(ph_lo) - std::cos(ph_hi)) / (dcos * dphi);
+      cart_pos_h(n, 0) = navg_x;
+      cart_pos_h(n, 1) = navg_y;
+      cart_pos_h(n, 2) = navg_z;
+    }
+  }
+
+  // Curvature-direction component from the discrete angular-flux divergence
+  // coefficient g_a (matches the divfa operator exactly under edge symmetrization)
+  if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                parthenon::IsCoord<parthenon::UniformSpherical>()) {
+    constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
+    constexpr Real kappa = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2.0 : 1.0;
+    for (int n = 0; n < nangles; ++n) {
+      Real ga = 0.0;
+      for (int nb = 0; nb < num_neighbors_h(n); ++nb)
+        ga += gflux_h(n, nb) * arc_weights_h(n, nb);
+      cart_pos_h(n, curv_comp) = ga / (weights_h(n) * kappa);
+    }
+  }
+}
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputeThetaLevels(ParArrayHost<Real> &theta_v,
@@ -101,8 +189,8 @@ void LatLonGrid::ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> 
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputeCartesianDirections(ParArrayHost<Real> &theta_v,
-                                            ParArrayHost<Real> &phi_v) {
-  auto cart_pos_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos);
+                                            ParArrayHost<Real> &phi_v,
+                                            ParArrayHost<Real> &cart_pos_h) {
   for (int it = 0; it < ntheta_; ++it) {
     for (int ip = 0; ip < nphi_; ++ip) {
       const int idx = it * nphi_ + ip;
@@ -112,14 +200,11 @@ void LatLonGrid::ComputeCartesianDirections(ParArrayHost<Real> &theta_v,
       cart_pos_h(idx, 2) = std::cos(theta_v(it));
     }
   }
-  Kokkos::deep_copy(cart_pos, cart_pos_h);
 }
 
 //----------------------------------------------------------------------------------------
-void LatLonGrid::ComputeWeights(ParArrayHost<Real> &costheta_f,
-                                ParArrayHost<Real> &phi_f) {
-  auto weights_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), weights);
-
+void LatLonGrid::ComputeWeights(ParArrayHost<Real> &costheta_f, ParArrayHost<Real> &phi_f,
+                                ParArrayHost<Real> &weights_h) {
   for (int it = 0; it < ntheta_; ++it) {
     for (int ip = 0; ip < nphi_; ++ip) {
       const int idx = it * nphi_ + ip;
@@ -128,22 +213,12 @@ void LatLonGrid::ComputeWeights(ParArrayHost<Real> &costheta_f,
       weights_h(idx) = omega / (4.0 * M_PI);
     }
   }
-
-  Real wsum = 0.0;
-  for (int i = 0; i < nangles; ++i) {
-    wsum += weights_h(i);
-  }
-
-  Kokkos::deep_copy(weights, weights_h);
 }
 
 //----------------------------------------------------------------------------------------
-void LatLonGrid::ComputeNeighborConnectivity() {
-  auto num_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), num_neighbors);
-  auto ind_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors);
-  auto ind_neighbors_edges_h =
-      Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors_edges);
-
+void LatLonGrid::ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
+                                             ParArrayHost<int> &ind_neighbors_h,
+                                             ParArrayHost<int> &ind_neighbors_edges_h) {
   for (int i = 0; i < nangles; ++i) {
     num_neighbors_h(i) = 0;
     for (int nb = 0; nb < 4; ++nb) {
@@ -189,26 +264,16 @@ void LatLonGrid::ComputeNeighborConnectivity() {
       }
     }
   }
-
-  Kokkos::deep_copy(num_neighbors, num_neighbors_h);
-  Kokkos::deep_copy(ind_neighbors, ind_neighbors_h);
-  Kokkos::deep_copy(ind_neighbors_edges, ind_neighbors_edges_h);
 }
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
-                                   ParArrayHost<Real> &theta_v,
-                                   ParArrayHost<Real> &phi_v) {
-  auto arc_weights_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), arc_weights);
-  auto cart_pos_mid_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos_mid);
-  auto cart_pos_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos);
-  auto ind_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors);
-  auto num_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), num_neighbors);
-
-  Kokkos::deep_copy(cart_pos_h, cart_pos);
-  Kokkos::deep_copy(ind_neighbors_h, ind_neighbors);
-  Kokkos::deep_copy(num_neighbors_h, num_neighbors);
-
+                                   ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v,
+                                   ParArrayHost<Real> &arc_weights_h,
+                                   ParArrayHost<Real> &cart_pos_mid_h,
+                                   ParArrayHost<int> &ind_neighbors_h,
+                                   ParArrayHost<int> &ind_neighbors_edges_h,
+                                   ParArrayHost<int> &num_neighbors_h) {
   for (int i = 0; i < nangles; ++i)
     for (int nb = 0; nb < 4; ++nb)
       arc_weights_h(i, nb) = 0.0;
@@ -244,10 +309,6 @@ void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Rea
     }
   }
 
-  auto ind_neighbors_edges_h =
-      Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors_edges);
-  Kokkos::deep_copy(ind_neighbors_edges_h, ind_neighbors_edges);
-
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
       const Real tarc = arc_weights_h(n, nb);
@@ -258,26 +319,16 @@ void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Rea
       arc_weights_h(ind_neighbors_h(n, nb), ind_neighbors_edges_h(n, nb)) = arc_avg;
     }
   }
-
-  Kokkos::deep_copy(arc_weights, arc_weights_h);
-  Kokkos::deep_copy(cart_pos_mid, cart_pos_mid_h);
 }
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v,
-                                   ParArrayHost<Real> &theta_f,
-                                   ParArrayHost<Real> &phi_f) {
-  auto gflux_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), gflux);
-  auto cart_pos_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos);
-  auto cart_pos_mid_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos_mid);
-  auto ind_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors);
-  auto num_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), num_neighbors);
-
-  Kokkos::deep_copy(cart_pos_h, cart_pos);
-  Kokkos::deep_copy(cart_pos_mid_h, cart_pos_mid);
-  Kokkos::deep_copy(ind_neighbors_h, ind_neighbors);
-  Kokkos::deep_copy(num_neighbors_h, num_neighbors);
-
+                                   ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
+                                   ParArrayHost<Real> &gflux_h,
+                                   ParArrayHost<Real> &cart_pos_mid_h,
+                                   ParArrayHost<int> &ind_neighbors_h,
+                                   ParArrayHost<int> &ind_neighbors_edges_h,
+                                   ParArrayHost<int> &num_neighbors_h) {
   for (int i = 0; i < nangles; ++i)
     for (int nb = 0; nb < 4; ++nb)
       gflux_h(i, nb) = 0.0;
@@ -302,7 +353,13 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
         }
 
         if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-          gflux_h(idx, nb) = ym * (SQR(xm) + SQR(ym)) * unit_psi;
+          const Real sinth = std::sqrt(SQR(xm) + SQR(ym));
+          const Real sin_phi = (sinth > 0.0) ? ym / sinth : 0.0;
+          const Real th_lo = theta_f(it), th_hi = theta_f(it + 1);
+          const Real i2 = 0.5 * (th_hi - th_lo) -
+                          0.25 * (std::sin(2.0 * th_hi) - std::sin(2.0 * th_lo));
+          const Real dcos = std::cos(th_lo) - std::cos(th_hi);
+          gflux_h(idx, nb) = (dcos != 0.0) ? unit_psi * sin_phi * i2 / dcos : 0.0;
         } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
           const Real isz = 1.0 / std::sqrt(1.0 - SQR(zm));
           gflux_h(idx, nb) = isz * (SQR(xm) + SQR(ym)) * unit_zeta;
@@ -310,10 +367,6 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
       }
     }
   }
-
-  auto ind_neighbors_edges_h =
-      Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors_edges);
-  Kokkos::deep_copy(ind_neighbors_edges_h, ind_neighbors_edges);
 
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
@@ -325,6 +378,4 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
           std::copysign(gflx_avg, ngflx);
     }
   }
-
-  Kokkos::deep_copy(gflux, gflux_h);
 }

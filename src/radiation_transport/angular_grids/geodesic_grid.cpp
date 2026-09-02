@@ -36,13 +36,12 @@ using namespace parthenon;
 // NOTE(@pdmullen): The geodesic grid infrastructure is taken from the AthenaK
 // implementation and ported to the Parthenon framework by @pdmullen (see copyrights
 // info above)
-
 GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
     : nlevel(nlev), rotate_geo(rotate), num_neighbors("num_neighbors", 1),
       ind_neighbors("ind_neighbors", 1, 1),
       ind_neighbors_edges("ind_neighbors_edges", 1, 1), weights("weights", 1),
       arc_weights("arc_weights", 1, 1), cart_pos("cart_pos", 1, 1),
-      cart_pos_mid("cart_pos_mid", 1, 1, 1), gflux("gflux", 1, 1),
+      cart_pos_unit("cart_pos_unit", 1, 1), gflux("gflux", 1, 1),
       amesh_normals("amesh_normals", 1, 1, 1, 1), ameshp_normals("ameshp_normals", 1, 1),
       amesh_indices("amesh_indices", 1, 1, 1), ameshp_indices("ameshp_indices", 1) {
   if (nlevel > 0) { // construct geodesic mesh
@@ -60,19 +59,18 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
     weights.Resize(nangles);
     arc_weights.Resize(nangles, 6);
     cart_pos.Resize(nangles, 3);
-    cart_pos_mid.Resize(nangles, 6, 3);
+    cart_pos_unit.Resize(nangles, 3);
     gflux.Resize(nangles, 6);
 
-    // create mirror views
-    auto num_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), num_neighbors);
-    auto ind_neighbors_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors);
-    auto ind_neighbors_edges_h =
-        Kokkos::create_mirror_view(Kokkos::HostSpace(), ind_neighbors_edges);
-    auto weights_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), weights);
-    auto arc_weights_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), arc_weights);
-    auto cart_pos_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos);
-    auto cart_pos_mid_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos_mid);
-    auto gflux_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), gflux);
+    // Host Arrays
+    ParArrayHost<int> num_neighbors_h("num_neighbors_h", nangles);
+    ParArrayHost<int> ind_neighbors_h("ind_neighbors_h", nangles, 6);
+    ParArrayHost<int> ind_neighbors_edges_h("ind_neighbors_edges_h", nangles, 6);
+    ParArrayHost<Real> weights_h("weights_h", nangles);
+    ParArrayHost<Real> arc_weights_h("arc_weights_h", nangles, 6);
+    ParArrayHost<Real> cart_pos_h("cart_pos_h", nangles, 3);
+    ParArrayHost<Real> cart_pos_unit_h("cart_pos_unit_h", nangles, 3);
+    ParArrayHost<Real> gflux_h("gflux_h", nangles, 6);
 
     // construction parameters
     Real sin_a = 2.0 / std::sqrt(5.0);
@@ -282,48 +280,40 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
 
     // set grid positions
     auto &cpos_h = cart_pos_h;
-    auto &cposm_h = cart_pos_mid_h;
     for (int n = 0; n < nangles; ++n) {
       Real x, y, z;
       GridCartPosition(anorm, apnorm, n, nlevel, x, y, z);
       cpos_h(n, 0) = x;
       cpos_h(n, 1) = y;
       cpos_h(n, 2) = z;
-      int nn = numn_h(n);
-      for (int nb = 0; nb < nn; ++nb) {
-        Real xm, ym, zm;
-        GridCartPositionMid(anorm, apnorm, n, indn_h(n, nb), nlevel, xm, ym, zm);
-        cposm_h(n, nb, 0) = xm;
-        cposm_h(n, nb, 1) = ym;
-        cposm_h(n, nb, 2) = zm;
-      }
-      if (nn == 5) {
-        cposm_h(n, 5, 0) = std::numeric_limits<Real>::quiet_NaN();
-        cposm_h(n, 5, 1) = std::numeric_limits<Real>::quiet_NaN();
-        cposm_h(n, 5, 2) = std::numeric_limits<Real>::quiet_NaN();
-      }
     }
 
-    // set angular unit vectors along edges of angle faces
+    // set angular geometric flux coefficients along edges of angle faces
+    constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
     auto &gflx_h = gflux_h;
     for (int n = 0; n < nangles; ++n) {
-      Real x, y, z;
-      GridCartPosition(anorm, apnorm, n, nlevel, x, y, z);
-      Real zetav = std::acos(z);
-      Real psiv = std::atan2(y, x);
-      for (int nb = 0; nb < numn_h(n); ++nb) {
-        Real xm, ym, zm;
-        GridCartPositionMid(anorm, apnorm, n, indn_h(n, nb), nlevel, xm, ym, zm);
-        Real zetaf = std::acos(zm);
-        Real psif = std::atan2(ym, xm);
-        Real unit_zeta, unit_psi;
-        UnitFluxDir(zetav, psiv, zetaf, psif, unit_zeta, unit_psi);
-        if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) { // (2D RZ)
-          gflx_h(n, nb) = ym * (SQR(xm) + SQR(ym)) * unit_psi;
-        } else { // UniformSpherical (1D)
-          const Real isz = 1.0 / std::sqrt(1.0 - SQR(zm));
-          gflx_h(n, nb) = isz * (SQR(xm) + SQR(ym)) * unit_zeta;
-        }
+      Real center[3];
+      GridCartPosition(anorm, apnorm, n, nlevel, center[0], center[1], center[2]);
+      const int nn = numn_h(n);
+      for (int nb = 0; nb < nn; ++nb) {
+        // Circumcenters bounding edge nb: shared with neighbors (nb-1) and (nb+1).
+        Real pm[3], pl[3], pp[3];
+        GridCartPosition(anorm, apnorm, indn_h(n, nb), nlevel, pm[0], pm[1], pm[2]);
+        GridCartPosition(anorm, apnorm, indn_h(n, (nb + nn - 1) % nn), nlevel, pl[0],
+                         pl[1], pl[2]);
+        GridCartPosition(anorm, apnorm, indn_h(n, (nb + 1) % nn), nlevel, pp[0], pp[1],
+                         pp[2]);
+        Real v1[3], v2[3];
+        CircumcenterNormalized(center[0], pl[0], pm[0], center[1], pl[1], pm[1],
+                               center[2], pl[2], pm[2], v1[0], v1[1], v1[2]);
+        CircumcenterNormalized(center[0], pm[0], pp[0], center[1], pm[1], pp[1],
+                               center[2], pm[2], pp[2], v2[0], v2[1], v2[2]);
+        // gflux = (edge line integral of G_curv) / arclength, so that gflux * arc_weight
+        // (arc_weight = arclength/4pi) reproduces the edge integral / 4pi.
+        const Real oint = GfluxEdgeIntegral(v1, v2, center, curv_comp);
+        const Real arclen = std::acos(
+            std::max(-1.0, std::min(1.0, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2])));
+        gflx_h(n, nb) = (arclen > 1.0e-14) ? oint / arclen : 0.0;
       }
     }
 
@@ -338,13 +328,16 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
       }
     }
 
+    ApplyFiniteVolumeCorrections(cart_pos_h, cart_pos_unit_h, weights_h, arc_weights_h,
+                                 gflux_h, num_neighbors_h, ind_neighbors_h);
+
     // deep copy
     Kokkos::deep_copy(num_neighbors, num_neighbors_h);
     Kokkos::deep_copy(ind_neighbors, ind_neighbors_h);
     Kokkos::deep_copy(weights, weights_h);
     Kokkos::deep_copy(arc_weights, arc_weights_h);
     Kokkos::deep_copy(cart_pos, cart_pos_h);
-    Kokkos::deep_copy(cart_pos_mid, cart_pos_mid_h);
+    Kokkos::deep_copy(cart_pos_unit, cart_pos_unit_h);
     Kokkos::deep_copy(gflux, gflux_h);
 
   } else if (nlevel == 0) { // one angle per octant
@@ -354,10 +347,12 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
     // reallocate geodesic mesh arrays
     weights.Resize(nangles);
     cart_pos.Resize(nangles, 3);
+    cart_pos_unit.Resize(nangles, 3);
 
-    // create mirror views
-    auto weights_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), weights);
-    auto cart_pos_h = Kokkos::create_mirror_view(Kokkos::HostSpace(), cart_pos);
+    // host working arrays (host-first; single deep-copy batch at the end)
+    ParArrayHost<Real> weights_h("weights_h", nangles);
+    ParArrayHost<Real> cart_pos_h("cart_pos_h", nangles, 3);
+    ParArrayHost<Real> cart_pos_unit_h("cart_pos_unit_h", nangles, 3);
 
     // set solid angles and cartesian positions
     Real zetav[2] = {M_PI / 4.0, 3.0 * M_PI / 4.0};
@@ -368,12 +363,16 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
         cart_pos_h(n, 0) = std::sin(zetav[z]) * std::cos(psiv[p]) * std::sqrt(4.0 / 3.0);
         cart_pos_h(n, 1) = std::sin(zetav[z]) * std::sin(psiv[p]) * std::sqrt(4.0 / 3.0);
         cart_pos_h(n, 2) = std::cos(zetav[z]) * std::sqrt(2.0 / 3.0);
+        cart_pos_unit_h(n, 0) = cart_pos_h(n, 0);
+        cart_pos_unit_h(n, 1) = cart_pos_h(n, 1);
+        cart_pos_unit_h(n, 2) = cart_pos_h(n, 2);
       }
     }
 
-    // deep copy
+    // deep copy (single batch to device)
     Kokkos::deep_copy(weights, weights_h);
     Kokkos::deep_copy(cart_pos, cart_pos_h);
+    Kokkos::deep_copy(cart_pos_unit, cart_pos_unit_h);
 
   } else { // invalid nlevel
     PARTHENON_THROW("nlevel must be >= 0");
@@ -381,14 +380,87 @@ GeodesicGrid::GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole)
 }
 
 //----------------------------------------------------------------------------------------
-//! \brief GeodesicGrid destructor
+//! \fn void GeodesicGrid::ApplyFiniteVolumeCorrections
+//! \brief Replace the cell-centered normal directions with their exact solid-angle
+//! averages <n_i> = (1/dOmega) int n_i dOmega for the finite-volume transport speeds;
+//! cart_pos_unit retains the true centroid unit vectors (if needed).
+//!
+//! Each <n_i> is obtained (divergence theorem) as (1/w_a) sum_b [edge integral of the
+//! flux field G_i with div_Omega G_i = n_i], summed over the cell's great-circle edges
+//! between circumcenters.
 
+//! For the "curvature direction" in a curvilinear build, we overwrite <n_curv> with the
+//! discrete angular-flux divergence coefficient built from the same gflux/arc array, so
+//! that the spatial curvature term cancels the angular divergence exactly for a uniform
+//! isotropic field.
+void GeodesicGrid::ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
+                                                ParArrayHost<Real> &cart_pos_unit_h,
+                                                ParArrayHost<Real> &weights_h,
+                                                ParArrayHost<Real> &arc_weights_h,
+                                                ParArrayHost<Real> &gflux_h,
+                                                ParArrayHost<int> &num_neighbors_h,
+                                                ParArrayHost<int> &ind_neighbors_h) {
+  // cart_pos_unit always holds the centroid unit cosines
+  for (int n = 0; n < nangles; ++n) {
+    for (int d = 0; d < 3; ++d) {
+      cart_pos_unit_h(n, d) = cart_pos_h(n, d);
+    }
+  }
+
+  // Solid-angle-averaged cosine for every transported component, via exact edge
+  // integrals of the flux fields G_i (div_Omega G_i = n_i).
+  auto &anorm = amesh_normals;
+  auto &apnorm = ameshp_normals;
+  for (int n = 0; n < nangles; ++n) {
+    Real center[3];
+    GridCartPosition(anorm, apnorm, n, nlevel, center[0], center[1], center[2]);
+    const int nn = num_neighbors_h(n);
+    Real navg[3] = {0.0, 0.0, 0.0};
+    for (int nb = 0; nb < nn; ++nb) {
+      Real pm[3], pl[3], pp[3];
+      GridCartPosition(anorm, apnorm, ind_neighbors_h(n, nb), nlevel, pm[0], pm[1],
+                       pm[2]);
+      GridCartPosition(anorm, apnorm, ind_neighbors_h(n, (nb + nn - 1) % nn), nlevel,
+                       pl[0], pl[1], pl[2]);
+      GridCartPosition(anorm, apnorm, ind_neighbors_h(n, (nb + 1) % nn), nlevel, pp[0],
+                       pp[1], pp[2]);
+      Real v1[3], v2[3];
+      CircumcenterNormalized(center[0], pl[0], pm[0], center[1], pl[1], pm[1], center[2],
+                             pl[2], pm[2], v1[0], v1[1], v1[2]);
+      CircumcenterNormalized(center[0], pm[0], pp[0], center[1], pm[1], pp[1], center[2],
+                             pm[2], pp[2], v2[0], v2[1], v2[2]);
+      for (int d = 0; d < 3; ++d) {
+        navg[d] += GfluxEdgeIntegral(v1, v2, center, d);
+      }
+    }
+    for (int d = 0; d < 3; ++d) {
+      cart_pos_h(n, d) = navg[d] / (4.0 * M_PI * weights_h(n));
+    }
+  }
+
+  // For the curvature direction, use g_a from the same gflux/arc arrays the divfa
+  // operator consumes (identical to <n_curv> above up to round-off, but guaranteed
+  // consistent with divfa under the shared-edge symmetrization).
+  if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                parthenon::IsCoord<parthenon::UniformSpherical>()) {
+    constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
+    constexpr Real kappa = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2.0 : 1.0;
+    for (int n = 0; n < nangles; ++n) {
+      Real ga = 0.0;
+      for (int nb = 0; nb < num_neighbors_h(n); ++nb)
+        ga += gflux_h(n, nb) * arc_weights_h(n, nb);
+      cart_pos_h(n, curv_comp) = ga / (weights_h(n) * kappa);
+    }
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief GeodesicGrid destructor
 GeodesicGrid::~GeodesicGrid() {}
 
 //----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::GridCartPosition
 //! \brief find position at face center
-
 void GeodesicGrid::GridCartPosition(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                                     int n, int nlev, Real &x, Real &y, Real &z) {
   int ibl0 = (n / (2 * nlev * nlev));
@@ -407,29 +479,8 @@ void GeodesicGrid::GridCartPosition(ParArrayHost<Real> anorm, ParArrayHost<Real>
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn void GeodesicGrid::GridCartPositionMid
-//! \brief find mid position between two face centers
-
-void GeodesicGrid::GridCartPositionMid(ParArrayHost<Real> anorm,
-                                       ParArrayHost<Real> apnorm, int n, int nb, int nlev,
-                                       Real &x, Real &y, Real &z) {
-  Real x1, y1, z1, x2, y2, z2;
-  GridCartPosition(anorm, apnorm, n, nlev, x1, y1, z1);
-  GridCartPosition(anorm, apnorm, nb, nlev, x2, y2, z2);
-  Real xm = 0.5 * (x1 + x2);
-  Real ym = 0.5 * (y1 + y2);
-  Real zm = 0.5 * (z1 + z2);
-  Real norm = std::sqrt(SQR(xm) + SQR(ym) + SQR(zm));
-  x = xm / norm;
-  y = ym / norm;
-  z = zm / norm;
-  return;
-}
-
-//----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::Neighbors
 //! \brief retrieve number of neighbors and indexing of neighbors
-
 void GeodesicGrid::Neighbors(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                              ParArrayHost<int> aind, int n, int nlev, int &num_nghbr,
                              int neighbors[6]) {
@@ -469,7 +520,6 @@ void GeodesicGrid::Neighbors(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm
 //----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::CircumcenterNormalized
 //! \brief find circumcenter of face
-
 void GeodesicGrid::CircumcenterNormalized(Real x1, Real x2, Real x3, Real y1, Real y2,
                                           Real y3, Real z1, Real z2, Real z3, Real &x,
                                           Real &y, Real &z) {
@@ -497,9 +547,91 @@ void GeodesicGrid::CircumcenterNormalized(Real x1, Real x2, Real x3, Real y1, Re
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn Real GeodesicGrid::GfluxEdgeIntegral
+//! \brief Line integral of a closed-form flux field G_comp along the great-circle edge
+//! from circumcenter v1 to v2, with the outward (in-surface) normal relative to the cell
+//! center.
+Real GeodesicGrid::GfluxEdgeIntegral(const Real v1[3], const Real v2[3],
+                                     const Real center[3], int comp) {
+  // 16-point Gauss-Legendre nodes/weights on [-1, 1]
+  constexpr int NQ = 16;
+  constexpr Real gx[NQ] = {
+      -0.9894009349916499, -0.9445750230732326, -0.8656312023878318, -0.7554044083550030,
+      -0.6178762444026438, -0.4580167776572274, -0.2816035507792589, -0.0950125098376374,
+      0.0950125098376374,  0.2816035507792589,  0.4580167776572274,  0.6178762444026438,
+      0.7554044083550030,  0.8656312023878318,  0.9445750230732326,  0.9894009349916499};
+  constexpr Real gw[NQ] = {
+      0.0271524594117541, 0.0622535239386479, 0.0951585116824928, 0.1246289712555339,
+      0.1495959888165767, 0.1691565193950025, 0.1826034150449236, 0.1894506104550685,
+      0.1894506104550685, 0.1826034150449236, 0.1691565193950025, 0.1495959888165767,
+      0.1246289712555339, 0.0951585116824928, 0.0622535239386479, 0.0271524594117541};
+
+  const Real dot =
+      std::max(-1.0, std::min(1.0, v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]));
+  const Real ang = std::acos(dot);
+  if (ang < 1.0e-14) return 0.0;
+  const Real sin_ang = std::sin(ang);
+
+  Real total = 0.0;
+  for (int q = 0; q < NQ; ++q) {
+    const Real t = 0.5 * (gx[q] + 1.0); // map to [0, 1]
+    const Real w = 0.5 * gw[q];
+    const Real s1 = std::sin((1.0 - t) * ang) / sin_ang;
+    const Real s2 = std::sin(t * ang) / sin_ang;
+    Real p[3] = {s1 * v1[0] + s2 * v2[0], s1 * v1[1] + s2 * v2[1],
+                 s1 * v1[2] + s2 * v2[2]};
+    const Real pn = std::sqrt(SQR(p[0]) + SQR(p[1]) + SQR(p[2]));
+    p[0] /= pn;
+    p[1] /= pn;
+    p[2] /= pn;
+    // Arc tangent dP/dt (before projection), then project to sphere tangent plane.
+    const Real d1 = -std::cos((1.0 - t) * ang) * ang / sin_ang;
+    const Real d2 = std::cos(t * ang) * ang / sin_ang;
+    Real dp[3] = {d1 * v1[0] + d2 * v2[0], d1 * v1[1] + d2 * v2[1],
+                  d1 * v1[2] + d2 * v2[2]};
+    const Real dpp = dp[0] * p[0] + dp[1] * p[1] + dp[2] * p[2];
+    Real tang[3] = {dp[0] - dpp * p[0], dp[1] - dpp * p[1], dp[2] - dpp * p[2]};
+    const Real tn = std::sqrt(SQR(tang[0]) + SQR(tang[1]) + SQR(tang[2]));
+    if (tn < 1.0e-14) continue;
+    tang[0] /= tn;
+    tang[1] /= tn;
+    tang[2] /= tn;
+    // In-surface edge normal m = tang x p, oriented outward (away from center).
+    Real m[3] = {tang[1] * p[2] - tang[2] * p[1], tang[2] * p[0] - tang[0] * p[2],
+                 tang[0] * p[1] - tang[1] * p[0]};
+    // Outward: opposite the in-plane projection of center at p.
+    const Real cp = center[0] * p[0] + center[1] * p[1] + center[2] * p[2];
+    const Real inw[3] = {center[0] - cp * p[0], center[1] - cp * p[1],
+                         center[2] - cp * p[2]};
+    if (m[0] * inw[0] + m[1] * inw[1] + m[2] * inw[2] > 0.0) {
+      m[0] = -m[0];
+      m[1] = -m[1];
+      m[2] = -m[2];
+    }
+    // Flux field G_comp at p, with div_Omega G_comp = n_comp.
+    Real G[3];
+    if (comp == 0) { // <n_x>
+      G[0] = -SQR(p[1]);
+      G[1] = p[0] * p[1];
+      G[2] = 0.0;
+    } else if (comp == 1) { // <n_y>
+      G[0] = p[0] * p[1];
+      G[1] = -SQR(p[0]);
+      G[2] = 0.0;
+    } else { // <n_z>
+      G[0] = 0.5 * p[0] * p[2];
+      G[1] = 0.5 * p[1] * p[2];
+      G[2] = -0.5 * (SQR(p[0]) + SQR(p[1]));
+    }
+    total += (G[0] * m[0] + G[1] * m[1] + G[2] * m[2]) * tn * w;
+  }
+
+  return total;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::SolidAngleAndArcLengths
 //! \brief retrieve solid angles and arc lengths
-
 void GeodesicGrid::SolidAngleAndArcLengths(ParArrayHost<Real> anorm,
                                            ParArrayHost<Real> apnorm,
                                            ParArrayHost<int> aind, int n, int nlev,
@@ -541,7 +673,6 @@ void GeodesicGrid::SolidAngleAndArcLengths(ParArrayHost<Real> anorm,
 //----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::ArcLength
 //! \brief find arc length between two face centers
-
 Real GeodesicGrid::ArcLength(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm, int n1,
                              int n2, int nlev) {
   Real x1, y1, z1, x2, y2, z2;
@@ -553,7 +684,6 @@ Real GeodesicGrid::ArcLength(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm
 //----------------------------------------------------------------------------------------
 //! \fn void GeodesicGrid::OptimalAngles
 //! \brief find anorm optimal angle by which to rotate the geodesic mesh
-
 void GeodesicGrid::OptimalAngles(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                                  int nlev, Real ang[2]) {
   int nzeta = 200;
@@ -601,7 +731,6 @@ void GeodesicGrid::OptimalAngles(ParArrayHost<Real> anorm, ParArrayHost<Real> ap
 //! \fn void GeodesicGrid::RotateGrid
 //! \brief rotate the geodesic grid such that the north pole angle center is assigned
 //  to angular coordinate znew, pnew
-
 void GeodesicGrid::RotateGrid(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                               int nlev, Real znew, Real pnew) {
   Real kx = -std::sin(pnew);
@@ -651,46 +780,5 @@ void GeodesicGrid::RotateGrid(ParArrayHost<Real> anorm, ParArrayHost<Real> apnor
       anorm(bl, 0, 2 * nlev + 1, i) = anorm(bl, 0, 2 * nlev, i);
     }
   }
-  return;
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn void GeodesicGrid::RotateGrid
-//! \brief find components of unit vectors along edges
-
-void GeodesicGrid::UnitFluxDir(Real zetav, Real psiv, Real zetaf, Real psif, Real &dzeta,
-                               Real &dpsi) {
-  if (std::abs(psif - psiv) < 1.0e-10 ||
-      std::abs(std::abs(std::cos(zetaf)) - 1.0) < 1.0e-10 ||
-      std::abs(std::abs(std::cos(zetav)) - 1.0) < 1.0e-10) {
-    dzeta = std::copysign(1.0, zetaf - zetav);
-    dpsi = 0.0;
-  } else {
-    Real a_par, p_par;
-    GreatCircleParam(zetav, zetaf, psiv, psif, a_par, p_par);
-    Real zeta_deriv =
-        (a_par * std::sin(psif - p_par) /
-         (1.0 + SQR(a_par) * std::cos(psif - p_par) * std::cos(psif - p_par)));
-    Real denom = 1.0 / sqrt(SQR(zeta_deriv) + SQR(std::sin(zetaf)));
-    Real signfactor = std::copysign(1.0, psif - psiv) *
-                      std::copysign(1.0, M_PI - std::abs(psif - psiv));
-    dzeta = signfactor * zeta_deriv * denom;
-    dpsi = signfactor * denom;
-  }
-  return;
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn void GeodesicGrid::GreatCircleParam
-//! \brief find parameters describing the great circle connecting two angular coordinates
-
-void GeodesicGrid::GreatCircleParam(Real zeta1, Real zeta2, Real psi1, Real psi2,
-                                    Real &apar, Real &psi0) {
-  Real atilde = (std::sin(psi2) / std::tan(zeta1) - std::sin(psi1) / std::tan(zeta2)) /
-                std::sin(psi2 - psi1);
-  Real btilde =
-      (cos(psi2) / std::tan(zeta1) - cos(psi1) / std::tan(zeta2)) / std::sin(psi1 - psi2);
-  psi0 = std::atan2(btilde, atilde);
-  apar = std::sqrt(SQR(atilde) + SQR(btilde));
   return;
 }

@@ -40,20 +40,41 @@ class LatLonGrid {
   ParArrayND<Real> weights;
   ParArrayND<Real> arc_weights;
   ParArrayND<Real> cart_pos;
+  ParArrayND<Real> cart_pos_unit;
   ParArrayND<Real> cart_pos_mid;
   ParArrayND<Real> gflux;
+
+  void ApplyFiniteVolumeCorrections(
+      ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
+      ParArrayHost<Real> &cart_pos_h, ParArrayHost<Real> &cart_pos_unit_h,
+      ParArrayHost<Real> &weights_h, ParArrayHost<Real> &arc_weights_h,
+      ParArrayHost<Real> &gflux_h, ParArrayHost<int> &num_neighbors_h,
+      ParArrayHost<int> &ind_neighbors_h);
 
  private:
   void ComputeThetaLevels(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &theta_f,
                           ParArrayHost<Real> &costheta_v, ParArrayHost<Real> &costheta_f);
   void ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> &phi_f);
-  void ComputeCartesianDirections(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v);
-  void ComputeWeights(ParArrayHost<Real> &costheta_f, ParArrayHost<Real> &phi_f);
-  void ComputeNeighborConnectivity();
+  void ComputeCartesianDirections(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v,
+                                  ParArrayHost<Real> &cart_pos_h);
+  void ComputeWeights(ParArrayHost<Real> &costheta_f, ParArrayHost<Real> &phi_f,
+                      ParArrayHost<Real> &weights_h);
+  void ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
+                                   ParArrayHost<int> &ind_neighbors_h,
+                                   ParArrayHost<int> &ind_neighbors_edges_h);
   void ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
-                         ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v);
+                         ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v,
+                         ParArrayHost<Real> &arc_weights_h,
+                         ParArrayHost<Real> &cart_pos_mid_h,
+                         ParArrayHost<int> &ind_neighbors_h,
+                         ParArrayHost<int> &ind_neighbors_edges_h,
+                         ParArrayHost<int> &num_neighbors_h);
   void ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &phi_v,
-                         ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f);
+                         ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
+                         ParArrayHost<Real> &gflux_h, ParArrayHost<Real> &cart_pos_mid_h,
+                         ParArrayHost<int> &ind_neighbors_h,
+                         ParArrayHost<int> &ind_neighbors_edges_h,
+                         ParArrayHost<int> &num_neighbors_h);
 };
 
 #endif // RADIATION_TRANSPORT_ANGULAR_GRIDS_LATLON_GRID_HPP_

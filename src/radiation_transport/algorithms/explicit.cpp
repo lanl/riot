@@ -196,7 +196,7 @@ Real EstimateTimestep(MeshData<Real> *md, const Real dt_ratio_hyperbolic) {
     // Extraction of angular grid quantities
     const auto agrid = GetAngularGridArrays(explicit_pkg);
     const auto &gflx = agrid.gflux;
-    const auto &cp = agrid.cart_pos;
+    const auto &cp = agrid.cart_pos_unit;
     const auto &numn = agrid.num_neighbors;
     const auto &indn = agrid.ind_neighbors;
 
