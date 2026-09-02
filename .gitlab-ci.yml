@@ -263,7 +263,7 @@ unit_darwin-v100:
     - module load nvhpc/25.1 cuda/12.9.1 gcc/11.2.0 hdf5/1.12.2
     - module load cmake/3.26.3
     - cd ${CI_PROJECT_DIR}
-    - python3 -m venv gpu_venv
+    - python3.11 -m venv gpu_venv
     - source gpu_venv/bin/activate
     - pip install h5py numpy
     - mkdir -p build && cd build
