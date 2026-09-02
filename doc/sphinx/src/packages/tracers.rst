@@ -29,6 +29,7 @@ Input Parameters
 Tracers are enabled with ``tracers`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`). Each swarm is defined in its own ``<tracers/>``\ *name* block; the part of the block name after ``tracers/`` is the swarm’s name (used to select it for output).
 
 .. list-table:: Per-swarm parameters in each ``<tracers/``\ *name*\ ``>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

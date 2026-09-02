@@ -83,16 +83,23 @@ RIOT integrates conservation laws for the cell-volume-averaged material densitie
 
 The bulk velocity follows from the conserved momentum, :math:`\vec{v}= (\rho\vec{v})/\rho`.
 
-This pattern — *per-material fields evolved or closed independently, then aggregated to a bulk field that feeds the hydrodynamics* — recurs in the strength, ionization, and burn packages, and each of those chapters states its own aggregation explicitly.
+This pattern — *per-material fields evolved or closed independently,
+then aggregated to a bulk field that feeds the hydrodynamics* — recurs
+in the strength, ionization, and burn packages, and each of those
+chapters states its own aggregation explicitly.
 
 Equation-of-State Models
 ------------------------
 
-Each material selects an EOS through the ``eos_type`` parameter. The available models and the parameters each requires are listed in the table below. All EOS blocks additionally accept ``mean_atomic_mass`` (default ``2.0``) and ``mean_atomic_number`` (default ``1.0``).
+Each material selects an EOS through the ``eos_type`` parameter. The
+available models and the parameters each requires are listed in the
+table below. All EOS blocks additionally accept ``mean_atomic_mass``
+(default ``2.0``) and ``mean_atomic_number`` (default ``1.0``).
 
 .. list-table:: Equation-of-state models.
+   :class: wraptable
    :header-rows: 1
-   :widths: 27 19 54
+   :widths: 40 50 40
 
    * - ``eos_type``
      - Model
@@ -114,7 +121,12 @@ Each material selects an EOS through the ``eos_type`` parameter. The available m
      - Ideal electron gas (ionization)
      - —
 
-The analytic models (``IdealGas``, ``Gruneisen``) are provided directly by ``singularity-eos``. The tabular ``Spiner`` models read an HDF5 (SESAME/SP5) table selected either by numeric ``sesame_id`` (which takes precedence) or by ``sesame_name``, and accept the optional flags ``reproducibility_mode`` (default ``false``) and ``use_subtable`` (default ``false``).
+The analytic models (``IdealGas``, ``Gruneisen``) are provided
+directly by ``singularity-eos``. The tabular ``Spiner`` models read an
+HDF5 (SESAME/SP5) table selected either by numeric ``sesame_id``
+(which takes precedence) or by ``sesame_name``, and accept the
+optional flags ``reproducibility_mode`` (default ``false``) and
+``use_subtable`` (default ``false``).
 
 Input Parameters
 ----------------
@@ -122,9 +134,15 @@ Input Parameters
 Defining Materials
 ~~~~~~~~~~~~~~~~~~
 
-Materials are defined by contiguous, zero-based blocks ``<material0>``, ``<material1>``, …. The number of materials is set implicitly by how many such blocks are present; they must be numbered contiguously starting from ``0``. Each block selects an EOS and, optionally, enables strength, ionization, opacity, isotopes, or multiple phases.
+Materials are defined by contiguous, zero-based blocks
+``<material0>``, ``<material1>``, …. The number of materials is set
+implicitly by how many such blocks are present; they must be numbered
+contiguously starting from ``0``. Each block selects an EOS and,
+optionally, enables strength, ionization, opacity, isotopes, or
+multiple phases.
 
 .. list-table:: Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -184,9 +202,14 @@ Materials are defined by contiguous, zero-based blocks ``<material0>``, ``<mater
 Multi-Material Closure Controls
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The global ``<materials>`` block and PTE controls tune how mixed cells are closed and diagnosed. The PTE tolerances apply when the general (iterative) solver is active; where the default column reads *library* below, the parameter is left unset and takes whatever default the ``singularity-eos`` library assigns it.
+The global ``<materials>`` block and PTE controls tune how mixed cells
+are closed and diagnosed. The PTE tolerances apply when the general
+(iterative) solver is active; where the default column reads *library*
+below, the parameter is left unset and takes whatever default the
+``singularity-eos`` library assigns it.
 
 .. list-table:: Parameters in the ``<materials>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -228,7 +251,15 @@ The global ``<materials>`` block and PTE controls tune how mixed cells are close
 Frequency Group Structure
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For radiation runs the materials package *owns* the frequency group structure — the number of groups :math:`N_\nu` and the :math:`N_\nu+1` group boundaries (in Hz) — and supplies it to the radiation packages (Chapter :ref:`chap:radtransport`). It lives here, rather than in the radiation package, because the opacities are a material property (Section :ref:`sec:mat-opacity`) and the transport must use exactly the group grid on which the opacities are tabulated. The structure is resolved at initialization from the first of the following that applies:
+For radiation runs the materials package *owns* the frequency group
+structure — the number of groups :math:`N_\nu` and the :math:`N_\nu+1`
+group boundaries (in Hz) — and supplies it to the radiation packages
+(Chapter :ref:`chap:radtransport`). It lives here, rather than in the
+radiation package, because the opacities are a material property
+(Section :ref:`sec:mat-opacity`) and the transport must use exactly
+the group grid on which the opacities are tabulated. The structure is
+resolved at initialization from the first of the following that
+applies:
 
 #. **Explicit input.** If ``group_bounds`` is given in the ``<materials>`` block (a list of :math:`N_\nu+1` ascending frequency edges in Hz), it sets the structure directly. An optional ``ngroups`` may be given but must equal ``len(group_bounds)`` :math:`-\,1`.
 
@@ -236,9 +267,11 @@ For radiation runs the materials package *owns* the frequency group structure �
 
 #. **Grey default.** If neither is present — as in any non-radiating run — the structure defaults to a single group spanning :math:`[0,\infty)`.
 
-All materials in a simulation therefore share one common group grid, checked for consistency across every table-based material.
+All materials in a simulation therefore share one common group grid,
+checked for consistency across every table-based material.
 
 .. list-table:: Group-structure parameters in the ``<materials>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -260,20 +293,49 @@ All materials in a simulation therefore share one common group grid, checked for
 Opacity Models
 ~~~~~~~~~~~~~~
 
-For radiation runs (Chapter :ref:`chap:radtransport`) each material carries an *absorption* and a *scattering* opacity model, selected in its opacity block. By default this is the material block itself; the ``opac`` parameter (or ``opac``\ :math:`N` per phase, Section :ref:`sec:permat-bulk`) may redirect to a separately-named block so several materials can share one definition. The model is chosen with ``opac_a`` (absorption) and ``opac_s`` (scattering); both default to ``none``. RIOT builds a *multigroup group-mean* opacity table for every material — either by integrating the chosen analytic model over each frequency group (Section :ref:`sec:mat-group-structure`) or by reading a pre-tabulated SP5 (HDF5) file — so a grey run is simply the single-group case of the same machinery. All opacity input is interpreted in CGS.
+For radiation runs (Chapter :ref:`chap:radtransport`) each material
+carries an *absorption* and a *scattering* opacity model, selected in
+its opacity block. By default this is the material block itself; the
+``opac`` parameter (or ``opac``\ :math:`N` per phase,
+Section :ref:`sec:permat-bulk`) may redirect to a separately-named
+block so several materials can share one definition. The model is
+chosen with ``opac_a`` (absorption) and ``opac_s`` (scattering); both
+default to ``none``. RIOT builds a *multigroup group-mean* opacity
+table for every material — either by integrating the chosen analytic
+model over each frequency group
+(Section :ref:`sec:mat-group-structure`) or by reading a pre-tabulated
+SP5 (HDF5) file — so a grey run is simply the single-group case of the
+same machinery. All opacity input is interpreted in CGS.
 
-.. code-block:: text
+.. list-table::
+   :class: wraptable
+   :header-rows: 1
+   :widths: 16 14 56
 
-   @P0.16 P0.14 L0.56@ **Option & Applies to & Model and parameters
-   none & abs., scat. & No opacity (zero coefficient). Default.
-   constant & abs., scat. & Grey (frequency-independent) :math:`\kappa`: ``kappa_a`` (absorption) or ``kappa_s`` (scattering).
-   powerlaw & abs. only & Power-law :math:`\kappa = \kappa_0\,\rho^{a}\,T^{b}\,(\nu/\nu_{\text{ref}})^{c}`: ``kappa0_a``, ``kappa_Rhopower_a`` (:math:`a`), ``kappa_Tpower_a`` (:math:`b`), ``kappa_Nupower_a`` (:math:`c`), ``kappa_Nuref_a`` (:math:`\nu_{\text{ref}}`).
-   table & abs., scat. & Pre-tabulated group-mean opacity read from an SP5 (HDF5) file: ``opac_a_filename`` / ``opac_s_filename``. The file also carries the group structure, from which the run’s group grid can be inferred (Section \ \ **\ :ref:`sec:mat-group-structure`\ **\ \ ).
-   **
+   * - Option
+     - Applies to
+     - Model and parameters
+   * - none
+     - abs., scat.
+     - No opacity (zero coefficient). Default.
+   * - constant
+     - abs., scat.
+     - Grey (frequency-independent) :math:`\kappa`: ``kappa_a`` (absorption) or ``kappa_s`` (scattering).
+   * - powerlaw
+     - abs. only
+     - Power-law :math:`\kappa = \kappa_0\,\rho^{a}\,T^{b}\,(\nu/\nu_{\text{ref}})^{c}`: ``kappa0_a``, ``kappa_Rhopower_a`` (:math:`a`), ``kappa_Tpower_a`` (:math:`b`), ``kappa_Nupower_a`` (:math:`c`), ``kappa_Nuref_a`` (:math:`\nu_{\text{ref}}`).
+   * - table
+     - abs., scat.
+     - Pre-tabulated group-mean opacity read from an SP5 (HDF5) file: ``opac_a_filename`` / ``opac_s_filename``. The file also carries the group structure, from which the run’s group grid can be inferred (Section :ref:`sec:mat-group-structure`).
 
-For an analytic model (``constant``/``powerlaw``) RIOT generates the group-mean table at build time over a :math:`(\rho,T)` grid whose extent and resolution are set by the optional per-model parameters below (suffixed ``_a`` for absorption, ``_s`` for scattering); the defaults suffice when the model is density/temperature independent.
+For an analytic model (``constant``/``powerlaw``) RIOT generates the
+group-mean table at build time over a :math:`(\rho,T)` grid whose
+extent and resolution are set by the optional per-model parameters
+below (suffixed ``_a`` for absorption, ``_s`` for scattering); the
+defaults suffice when the model is density/temperature independent.
 
 .. list-table:: Optional table-generation parameters in an opacity block (``_a``/``_s`` suffix).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -298,23 +360,67 @@ For an analytic model (``constant``/``powerlaw``) RIOT generates the group-mean 
      - ``64``
      - Frequency samples per group used in the group-mean integration.
 
-The averaging weight (Rosseland vs. Planck) and the per-material evaluation inside a cell are described in Chapter :ref:`chap:singularity-opac`; the way the per-material coefficients combine into the cell coefficients used by the transport solve is given in Section :ref:`sec:rad-opacity`.
+The averaging weight (Rosseland vs. Planck) and the per-material
+evaluation inside a cell are described in
+Chapter :ref:`chap:singularity-opac`; the way the per-material
+coefficients combine into the cell coefficients used by the transport
+solve is given in Section :ref:`sec:rad-opacity`.
 
 Registered Fields
 -----------------
 
-The materials package registers the per-material fields listed in the table below. These are *sparse*: they are allocated only in cells where the material is present, controlled by ``ccmat::rho``. Recall (Section :ref:`sec:permat-bulk`) that ``ccmat::`` denotes a cell-volume-averaged per-material quantity while ``cm::`` denotes a material-averaged (physical) quantity, related by the volume fraction as in the equation above. Additional per-material fields are registered here when strength, ionization, or burn are active, and are documented in those chapters.
+The materials package registers the per-material fields listed in the
+table below. These are *sparse*: they are allocated only in cells
+where the material is present, controlled by ``ccmat::rho``. Recall
+(Section :ref:`sec:permat-bulk`) that ``ccmat::`` denotes a
+cell-volume-averaged per-material quantity while ``cm::`` denotes a
+material-averaged (physical) quantity, related by the volume fraction
+as in the equation above. Additional per-material fields are
+registered here when strength, ionization, or burn are active, and are
+documented in those chapters.
 
-.. container:: fieldtable
+.. list-table:: Core per-material fields registered by the materials package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:materials-fields
 
-   | Core per-material fields registered by the materials package.tab:materials-fields ccmat::rho & :math:`\bar\rho_m` & 1 & Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; cell-volume-averaged material density, :math:`M_m/V`.
-   | ccmat::volume_fraction & :math:`f_m` & 1 & Cell, Intensive, Sparse, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; volume fraction :math:`V_m/V`.
-   | ccmat::internal_energy & :math:`\bar\rho_m e_m` & 1 & Cell, Intensive, Sparse, Derived, OneCopy; cell-volume-averaged internal-energy density.
-   | cm::rho & :math:`\rho_m` & 1 & Cell, Intensive, Sparse, Derived, OneCopy; physical (material-averaged) density :math:`M_m/V_m = \bar\rho_m/f_m`.
-   | cm::sie & :math:`e_m` & 1 & Cell, Intensive, Sparse, Derived, OneCopy; specific internal energy.
-   | cm::temperature & :math:`T_m` & 1 & Cell, Sparse, Derived, OneCopy; material temperature.
-   | cm::pressure & :math:`p_m` & 1 & Cell, Sparse, Derived, OneCopy; material pressure.
-   | cm::bulk_modulus & :math:`B_m` & 1 & Cell, Sparse, Derived, OneCopy; material bulk modulus.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccmat::rho
+     - :math:`\bar\rho_m`
+     - 1
+     - Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; cell-volume-averaged material density, :math:`M_m/V`.
+   * - ccmat::volume_fraction
+     - :math:`f_m`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; volume fraction :math:`V_m/V`.
+   * - ccmat::internal_energy
+     - :math:`\bar\rho_m e_m`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; cell-volume-averaged internal-energy density.
+   * - cm::rho
+     - :math:`\rho_m`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; physical (material-averaged) density :math:`M_m/V_m = \bar\rho_m/f_m`.
+   * - cm::sie
+     - :math:`e_m`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; specific internal energy.
+   * - cm::temperature
+     - :math:`T_m`
+     - 1
+     - Cell, Sparse, Derived, OneCopy; material temperature.
+   * - cm::pressure
+     - :math:`p_m`
+     - 1
+     - Cell, Sparse, Derived, OneCopy; material pressure.
+   * - cm::bulk_modulus
+     - :math:`B_m`
+     - 1
+     - Cell, Sparse, Derived, OneCopy; material bulk modulus.
 
 Example
 -------

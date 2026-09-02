@@ -81,6 +81,7 @@ parameters live in its own block, documented in the corresponding
 chapter.
 
 .. list-table:: Package toggles in the ``<physics>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -169,6 +170,7 @@ memory; when ``false``, once-allocated fields persist for the rest of
 the run.
 
 .. list-table:: Sparsity parameter in the ``<materials>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

@@ -3,14 +3,27 @@
 Turbulent Mixing (BHR)
 ======================
 
-The ``mix`` package models unresolved, subgrid turbulent mixing with the Besnard–Harlow–Rauenzahn (BHR) second-moment RANS closure — specifically the “BHR-3.1” variant. It is intended for variable-density mixing driven by Rayleigh–Taylor, Richtmyer–Meshkov, and Kelvin–Helmholtz instabilities, where the mixing layer is not resolved on the mesh. The package transports a set of turbulence moments, feeds their Reynolds stress and turbulent mass flux back onto the mean flow, and diffuses mass and energy across the mixing layer.
+The ``mix`` package models unresolved, subgrid turbulent mixing with
+the Besnard–Harlow–Rauenzahn (BHR) second-moment RANS closure —
+specifically the “BHR-3.1” variant. It is intended for
+variable-density mixing driven by Rayleigh–Taylor, Richtmyer–Meshkov,
+and Kelvin–Helmholtz instabilities, where the mixing layer is not
+resolved on the mesh. The package transports a set of turbulence
+moments, feeds their Reynolds stress and turbulent mass flux back onto
+the mean flow, and diffuses mass and energy across the mixing layer.
 
-   **Cartesian only.** The BHR source terms and fluxes assume Cartesian gradients and divergences (no metric or curvature terms); the package aborts at initialization under cylindrical or spherical coordinates. It requires hydrodynamics.
+.. warning:: 
+
+   **Cartesian only:** The BHR source terms and fluxes assume Cartesian gradients and divergences (no metric or curvature  terms); the package aborts at initialization under cylindrical or spherical coordinates. It requires hydrodynamics.
 
 Governing Equations
 -------------------
 
-Unlike a one-equation (:math:`K`) or two-equation (:math:`K`–:math:`\varepsilon`) model, BHR-3.1 is a *second-moment* closure: it transports the full turbulent Reynolds stress tensor together with the correlations that drive variable-density mixing. The evolved turbulence moments are, per cell (all *bulk* quantities),
+Unlike a one-equation (:math:`K`) or two-equation
+(:math:`K`–:math:`\varepsilon`) model, BHR-3.1 is a *second-moment*
+closure: it transports the full turbulent Reynolds stress tensor
+together with the correlations that drive variable-density mixing. The
+evolved turbulence moments are, per cell (all *bulk* quantities),
 
 - **Reynolds stress tensor:** six independent components, field
   ``ccbulk::reynolds_stress``.
@@ -24,23 +37,39 @@ Unlike a one-equation (:math:`K`) or two-equation (:math:`K`–:math:`\varepsilo
 - **Turbulent length scales:** a transport scale :math:`S_T` and a dissipation
   scale :math:`S_D`, fields ``ccbulk::bhr_ST`` and ``ccbulk::bhr_SD``.
 
-The turbulent kinetic energy is not evolved separately; it is the half-trace of the Reynolds stress, :math:`K=\tfrac{1}{2}(R_{xx}+R_{yy}+R_{zz})`. Each moment is carried in density-weighted conservative form (e.g. :math:`\rho R_{ij}`, ``ccbulk::rho_reynolds_stress``) and advected with the flow; the primitive form is recovered by dividing by the bulk density.
+The turbulent kinetic energy is not evolved separately; it is the
+half-trace of the Reynolds stress,
+
+.. math::
+
+   K=\tfrac{1}{2}(R_{xx}+R_{yy}+R_{zz}).
+
+Each moment is carried in density-weighted conservative form
+(e.g. :math:`\rho R_{ij}`, ``ccbulk::rho_reynolds_stress``) and
+advected with the flow; the primitive form is recovered by dividing by
+the bulk density.
 
 Turbulent Viscosity
 ~~~~~~~~~~~~~~~~~~~
 
-The closure defines an eddy viscosity from the transport length scale and the turbulent kinetic energy,
+The closure defines an eddy viscosity from the transport length scale
+and the turbulent kinetic energy,
 
 .. math::
 
      \mu_t = c_\mu\,\rho\,S_T\,\sqrt{K},
 
-which sets the gradient-diffusion coefficient for every turbulent transport term below.
+which sets the gradient-diffusion coefficient for every turbulent
+transport term below.
 
 Transport Equations
 ~~~~~~~~~~~~~~~~~~~
 
-Let :math:`q` stand for any of the turbulence moments :math:`\{R_{ij},\,a_i,\,b,\,S_T,\,S_D\}`. Each is transported in density-weighted conservative form: the conserved quantity :math:`\rho q` is advected with the mean flow and evolved by an algebraic source :math:`\mathcal{S}_q` and a turbulent gradient-diffusion term,
+Let :math:`q` stand for any of the turbulence moments
+:math:`\{R_{ij},\,a_i,\,b,\,S_T,\,S_D\}`. Each is transported in
+density-weighted conservative form: the conserved quantity :math:`\rho
+q` is advected with the mean flow and evolved by an algebraic source
+:math:`\mathcal{S}_q` and a turbulent gradient-diffusion term,
 
 .. math::
 
@@ -48,7 +77,17 @@ Let :math:`q` stand for any of the turbulence moments :math:`\{R_{ij},\,a_i,\,b,
        = \mathcal{S}_q
          + \nabla\!\cdot\!\left(\frac{\mu_t}{\sigma_q}\,\nabla q\right),
 
-where the eddy viscosity :math:`\mu_t` is given above and :math:`\sigma_q` is a quantity-specific Schmidt/Prandtl number (``sigma_k`` for :math:`R_{ij}`, ``sigma_a`` for :math:`a_i`, ``sigma_b`` for :math:`b`, ``sigma_epsilon`` for :math:`S_T`, ``sigma_visc`` for :math:`S_D`). The diffusion term is applied direction-by-direction. What distinguishes the moments is the algebraic source :math:`\mathcal{S}_q`, which combines production, redistribution, and dissipation. Writing :math:`\vec{a}` for the mass flux, :math:`\nabla p` for the pressure gradient, and using the production term :math:`\rho\,R_{ij}\partial_j u_i` and the buoyancy term :math:`\vec{a}\!\cdot\!\nabla p`, the sources are:
+where the eddy viscosity :math:`\mu_t` is given above and
+:math:`\sigma_q` is a quantity-specific Schmidt/Prandtl number
+(``sigma_k`` for :math:`R_{ij}`, ``sigma_a`` for :math:`a_i`,
+``sigma_b`` for :math:`b`, ``sigma_epsilon`` for :math:`S_T`,
+``sigma_visc`` for :math:`S_D`). The diffusion term is applied
+direction-by-direction. What distinguishes the moments is the
+algebraic source :math:`\mathcal{S}_q`, which combines production,
+redistribution, and dissipation. Writing :math:`\vec{a}` for the mass
+flux, :math:`\nabla p` for the pressure gradient, and using the
+production term :math:`\rho\,R_{ij}\partial_j u_i` and the buoyancy
+term :math:`\vec{a}\!\cdot\!\nabla p`, the sources are:
 
 - **Reynolds stress :math:`R_{ij}`**: production from the mean shear and from the buoyancy correlation :math:`a_i\partial_i p`, pressure–strain redistribution toward isotropy, and a dissipation :math:`\propto \rho\sqrt{K}\,R_{ij}/S_D`. A realizability limiter prevents the pressure–strain terms from driving a diagonal component negative.
 
@@ -58,12 +97,16 @@ where the eddy viscosity :math:`\mu_t` is given above and :math:`\sigma_q` is a 
 
 - **Length scales :math:`S_T`, :math:`S_D`**: each grows or decays with the local production-to-dissipation balance and the dilatation :math:`\nabla\!\cdot\!\vec{u}`. :math:`S_T` uses the coefficient set :math:`\{c_1,c_2,c_3,c_4\}` and :math:`S_D` the corresponding “v” set :math:`\{c_{1v},c_{2v},c_{3v},c_{4v}\}`.
 
-In each case the dissipation carries the length scale :math:`S_D` in its denominator, and the algebraic source enters :math:`\mathcal{S}_q` in the equation above alongside the gradient-diffusion term.
+In each case the dissipation carries the length scale :math:`S_D` in
+its denominator, and the algebraic source enters :math:`\mathcal{S}_q`
+in the equation above alongside the gradient-diffusion term.
 
 Feedback on the Mean Flow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The turbulence acts back on the resolved (bulk) hydrodynamics of Chapter :ref:`chap:hydro` through additional interface fluxes, applied in three stages:
+The turbulence acts back on the resolved (bulk) hydrodynamics of
+Chapter :ref:`chap:hydro` through additional interface fluxes, applied
+in three stages:
 
 #. The Reynolds stress :math:`\rho R_{ij}` is added to the bulk momentum flux, and
    the corresponding turbulent transport of energy (:math:`\rho\,\vec{v}\!\cdot\!R`)
@@ -82,14 +125,32 @@ The turbulence acts back on the resolved (bulk) hydrodynamics of Chapter :ref:`
 Numerical Method
 ----------------
 
-The BHR fluxes are computed after the hydrodynamic fluxes and before flux correction, in the fixed order ``ComputeStressFluxes`` :math:`\to` ``ComputeViscousFluxes`` :math:`\to` ``ComputeAnonFluxes`` (the last consumes the diffusive mass flux the second deposits). The algebraic and gradient-diffusion moment sources are accumulated by ``CalculateMixSource`` and summed into the stage update alongside the other packages’ sources. After each update the primitive moments are recovered and floored: the Reynolds-stress diagonal is kept positive, the length scales non-negative, and :math:`b` clamped to :math:`[0,\rho]`. The stable time step is the minimum of a hyperbolic limit (:math:`|\vec{a}|/\Delta x`), a parabolic diffusion limit set by :math:`\mu_t` and the smallest Schmidt number, and a homogeneous source-decay limit.
+The BHR fluxes are computed after the hydrodynamic fluxes and before
+flux correction, in the fixed order ``ComputeStressFluxes``
+:math:`\to` ``ComputeViscousFluxes`` :math:`\to` ``ComputeAnonFluxes``
+(the last consumes the diffusive mass flux the second deposits). The
+algebraic and gradient-diffusion moment sources are accumulated by
+``CalculateMixSource`` and summed into the stage update alongside the
+other packages’ sources. After each update the primitive moments are
+recovered and floored: the Reynolds-stress diagonal is kept positive,
+the length scales non-negative, and :math:`b` clamped to
+:math:`[0,\rho]`. The stable time step is the minimum of a hyperbolic
+limit (:math:`|\vec{a}|/\Delta x`), a parabolic diffusion limit set by
+:math:`\mu_t` and the smallest Schmidt number, and a homogeneous
+source-decay limit.
 
 Input Parameters
 ----------------
 
-Turbulent mixing is enabled with ``mix`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The model coefficients and initial conditions live in the ``<mix>`` block. The defaults below are the standard BHR-3.1 calibration; most problems change only the initial conditions ``K0`` and ``S0``.
+Turbulent mixing is enabled with ``mix`` ``= true`` in the
+``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must
+also be enabled. The model coefficients and initial conditions live in
+the ``<mix>`` block. The defaults below are the standard BHR-3.1
+calibration; most problems change only the initial conditions ``K0``
+and ``S0``.
 
 .. list-table:: Closure coefficients in the ``<mix>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -135,6 +196,7 @@ Turbulent mixing is enabled with ``mix`` ``= true`` in the ``<physics>`` block 
      - Schmidt number for :math:`S_T` diffusion.
 
 .. list-table:: Initial conditions in the ``<mix>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -158,24 +220,64 @@ Turbulent mixing is enabled with ``mix`` ``= true`` in the ``<physics>`` block 
 Registered Fields
 -----------------
 
-The package registers the turbulence moments in the table below, each as a conserved density-weighted field (advected with fluxes) paired with a derived primitive field. All are *bulk* fields. A sparse per-material face field holds the turbulent diffusive mass flux that couples the three flux stages.
+The package registers the turbulence moments in the table below, each
+as a conserved density-weighted field (advected with fluxes) paired
+with a derived primitive field. All are *bulk* fields. A sparse
+per-material face field holds the turbulent diffusive mass flux that
+couples the three flux stages.
 
-.. container:: fieldtable
+.. list-table:: Fields registered by the mix package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:mix-fields
 
-   | Fields registered by the mix package.tab:mix-fields ccbulk::rho_reynolds_stress & :math:`\rho R_{ij}` & 6 & Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved Reynolds stress.
-   | ccbulk::reynolds_stress & :math:`R_{ij}` & 6 & Cell, Intensive, Vector, Derived, OneCopy; primitive Reynolds stress.
-   | ccbulk::rho_bhr_a & :math:`\rho a_i` & 3 & Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved mass flux.
-   | ccbulk::bhr_a & :math:`a_i` & 3 & Cell, Intensive, Vector, Derived, OneCopy; primitive mass flux.
-   | ccbulk::rho_bhr_b & :math:`\rho b` & 1 & Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved density correlation.
-   | ccbulk::rho_bhr_ST & :math:`\rho S_T` & 1 & Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved transport length scale.
-   | ccbulk::rho_bhr_SD & :math:`\rho S_D` & 1 & Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved dissipation length scale.
-   | ccbulk::bhr_b, bhr_ST, bhr_SD & :math:`b, S_T, S_D` & 1 & Cell, Intensive, Derived, OneCopy; primitive :math:`b` and length scales.
-   | fm::diffusive_fluxes & — & 1/mat & Face, OneCopy, Sparse, CellMemAligned; per-material turbulent diffusive mass flux.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccbulk::rho_reynolds_stress
+     - :math:`\rho R_{ij}`
+     - 6
+     - Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved Reynolds stress.
+   * - ccbulk::reynolds_stress
+     - :math:`R_{ij}`
+     - 6
+     - Cell, Intensive, Vector, Derived, OneCopy; primitive Reynolds stress.
+   * - ccbulk::rho_bhr_a
+     - :math:`\rho a_i`
+     - 3
+     - Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved mass flux.
+   * - ccbulk::bhr_a
+     - :math:`a_i`
+     - 3
+     - Cell, Intensive, Vector, Derived, OneCopy; primitive mass flux.
+   * - ccbulk::rho_bhr_b
+     - :math:`\rho b`
+     - 1
+     - Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved density correlation.
+   * - ccbulk::rho_bhr_ST
+     - :math:`\rho S_T`
+     - 1
+     - Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved transport length scale.
+   * - ccbulk::rho_bhr_SD
+     - :math:`\rho S_D`
+     - 1
+     - Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved dissipation length scale.
+   * - ccbulk::bhr_b, bhr_ST, bhr_SD
+     - :math:`b, S_T, S_D`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; primitive :math:`b` and length scales.
+   * - fm::diffusive_fluxes
+     - —
+     - 1/mat
+     - Face, OneCopy, Sparse, CellMemAligned; per-material turbulent diffusive mass flux.
 
 Example
 -------
 
-Enable BHR mixing with the default calibration, seeding a small initial turbulent kinetic energy and length scale:
+Enable BHR mixing with the default calibration, seeding a small
+initial turbulent kinetic energy and length scale:
 
 .. code:: python
 

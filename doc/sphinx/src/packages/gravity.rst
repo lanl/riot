@@ -13,10 +13,10 @@ Gravity enters through a gravitational potential :math:`\Phi`, which exerts an a
 .. math::
 
      \frac{\partial \left(\rho\vec{v}\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\bm{I} - \bm{s}\right)
+       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\mathsf{I} - \mathsf{s}\right)
        &= -\,\rho\,\nabla\Phi, \\[2pt]
      \frac{\partial E}{\partial t}
-       + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}- \bm{s}\!\cdot\!\vec{v}\right]
+       + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}- \mathsf{s}\!\cdot\!\vec{v}\right]
        &= -\,\rho\,\vec{v}\!\cdot\!\nabla\Phi,
 
 where :math:`\rho` is the bulk density and :math:`\vec{v}` the common cell velocity. The momentum source is the body force per unit volume, :math:`-\rho\nabla\Phi`, and the energy source is the rate at which that force does work on the fluid, :math:`-\rho\,\vec{v}\!\cdot\!\nabla\Phi`. The gravitational force acts on the bulk fluid as a whole; it does not distinguish between the materials in a mixed cell.
@@ -35,6 +35,7 @@ Input Parameters
 Gravity is enabled with the ``gravity`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The acceleration is configured in the ``<gravity>`` block.
 
 .. list-table:: Parameters in the ``<gravity>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

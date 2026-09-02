@@ -5,7 +5,11 @@ Radiation Diffusion (P1)
 
 The ``multigroup_diffusion`` package is an implicit, multigroup radiation transport solver built on the *P1* (first-moment) closure. Despite its name, it is not a pure diffusion solver: it evolves both the group radiation energy density and the group radiation flux, coupling them so the scheme behaves as free-streaming transport in the optically thin limit and as diffusion in the optically thick limit. It couples the radiation field to the material internal energy through emission and absorption, and — like the discrete-ordinates transport package (Chapter :ref:`chap:radtransport`) — it takes its frequency group structure and its opacities from the materials package (Chapter :ref:`chap:materials`).
 
-   Radiation diffusion and discrete-ordinates radiation transport (Chapter :ref:`chap:radtransport`) are mutually exclusive: at most one may be enabled. Both require hydrodynamics.
+.. note::
+
+  Radiation diffusion and discrete-ordinates radiation transport
+  (Chapter :ref:`chap:radtransport`) are mutually exclusive: at most
+  one may be enabled. Both require hydrodynamics.
 
 Governing Equations
 -------------------
@@ -74,6 +78,7 @@ Input Parameters
 Radiation diffusion is enabled with ``multigroup_diffusion`` ``= true`` in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled, and ``radiation_transport`` must be off. Its controls live in the ``<diffusion>`` block.
 
 .. list-table:: Principal parameters in the ``<diffusion>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -131,6 +136,7 @@ Radiation diffusion is enabled with ``multigroup_diffusion`` ``= true`` in the 
      - Report a solver timing breakdown at the end of the run.
 
 .. list-table:: Time-step controls in the ``<diffusion>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -160,6 +166,7 @@ Radiation diffusion is enabled with ``multigroup_diffusion`` ``= true`` in the 
      - Largest per-step reduction the radiation vote may impose.
 
 .. list-table:: Refinement controls in the ``<diffusion>`` block (adaptive runs).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -187,6 +194,7 @@ Radiation diffusion is enabled with ``multigroup_diffusion`` ``= true`` in the 
 The linear solver is configured in a dedicated block; its keys are those of the Parthenon BiCGSTAB/multigrid solver.
 
 .. list-table:: Linear-solver parameters (``<diffusion/linear_solver_params>``).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -206,19 +214,60 @@ Registered Fields
 
 The package registers the fields in the table below under the ``rmg::`` (radiation-multigroup) prefix; all carry the OperatorSplit flag. The two evolved moments are ``Egroup`` (with fluxes) and the face-centered ``Fgroup``; the remainder are the diffusion coefficient, the linearized-operator scratch, the group-mean opacities, and cached geometry for the multigrid hierarchy. Each group field carries :math:`N_\nu` components. The matter fields it exchanges energy with (bulk or electron temperature and internal energy) are owned by the hydro and ionization packages.
 
-.. container:: fieldtable
+.. list-table:: Principal fields registered by the radiation diffusion package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:raddiff-fields
 
-   | Principal fields registered by the radiation diffusion package.tab:raddiff-fields rmg::Egroup & :math:`E_g` & :math:`N_\nu` & Cell, Independent, FillGhost, WithFluxes, GMGRestrict, GMGProlongate, CommunicateOne, OperatorSplit; group radiation energy density.
-   | rmg::Fgroup & :math:`\vec{F}_g` & :math:`N_\nu` & Face, Independent, Flux, CellMemAligned, OperatorSplit; group radiation flux.
-   | rmg::D & :math:`D_g` & :math:`N_\nu` & Face, Independent, OneCopy, GMGRestrict, CellMemAligned, OperatorSplit; P1 diffusion coefficient.
-   | rmg::diag_loc & — & :math:`N_\nu` & Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; local diagonal of the linear operator.
-   | rmg::sigma, dSdT & — & :math:`N_\nu` & Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; source-linearization scratch.
-   | rmg::kappa_cell & :math:`\sigma_{t,g}` & :math:`N_\nu` & Cell, Derived, OneCopy, OperatorSplit; cell group total opacity.
-   | rmg::kappa_face & :math:`\sigma_{t,g}^{\text{face}}` & :math:`N_\nu` & Face, Derived, OneCopy, CellMemAligned, OperatorSplit; face group total opacity.
-   | rmg::temperature0 & :math:`T^{n}` & 1 & Cell, Derived, OneCopy, OperatorSplit; matter temperature at the start of the step.
-   | rmg::dTc & :math:`\Delta T` & 1 & Cell, Derived, OneCopy, OperatorSplit; Newton temperature increment.
-   | rmg::face_area, DeltaX & — & 1 & Face, Derived, OneCopy, CellMemAligned, OperatorSplit; cached face area and cell spacing.
-   | rmg::volume & — & 1 & Cell, Derived, OneCopy, OperatorSplit; cached cell volume.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - rmg::Egroup
+     - :math:`E_g`
+     - :math:`N_\nu`
+     - Cell, Independent, FillGhost, WithFluxes, GMGRestrict, GMGProlongate, CommunicateOne, OperatorSplit; group radiation energy density.
+   * - rmg::Fgroup
+     - :math:`\vec{F}_g`
+     - :math:`N_\nu`
+     - Face, Independent, Flux, CellMemAligned, OperatorSplit; group radiation flux.
+   * - rmg::D
+     - :math:`D_g`
+     - :math:`N_\nu`
+     - Face, Independent, OneCopy, GMGRestrict, CellMemAligned, OperatorSplit; P1 diffusion coefficient.
+   * - rmg::diag_loc
+     - —
+     - :math:`N_\nu`
+     - Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; local diagonal of the linear operator.
+   * - rmg::sigma, dSdT
+     - —
+     - :math:`N_\nu`
+     - Cell, Independent, OneCopy, GMGRestrict, OperatorSplit; source-linearization scratch.
+   * - rmg::kappa_cell
+     - :math:`\sigma_{t,g}`
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, OperatorSplit; cell group total opacity.
+   * - rmg::kappa_face
+     - :math:`\sigma_{t,g}^{\text{face}}`
+     - :math:`N_\nu`
+     - Face, Derived, OneCopy, CellMemAligned, OperatorSplit; face group total opacity.
+   * - rmg::temperature0
+     - :math:`T^{n}`
+     - 1
+     - Cell, Derived, OneCopy, OperatorSplit; matter temperature at the start of the step.
+   * - rmg::dTc
+     - :math:`\Delta T`
+     - 1
+     - Cell, Derived, OneCopy, OperatorSplit; Newton temperature increment.
+   * - rmg::face_area, DeltaX
+     - —
+     - 1
+     - Face, Derived, OneCopy, CellMemAligned, OperatorSplit; cached face area and cell spacing.
+   * - rmg::volume
+     - —
+     - 1
+     - Cell, Derived, OneCopy, OperatorSplit; cached cell volume.
 
 ..
 

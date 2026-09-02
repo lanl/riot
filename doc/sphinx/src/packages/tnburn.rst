@@ -66,6 +66,7 @@ Input Parameters
 Thermonuclear burn is enabled with the ``tn`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`). Sparse physics (Chapter :ref:`chap:sparse-physics`) is not supported with burn, so ``sparse_physics`` must be set ``false``.
 
 .. list-table:: Parameters in the ``<physics>`` block relevant to burn.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -85,6 +86,7 @@ Thermonuclear burn is enabled with the ``tn`` toggle in the ``<physics>`` block 
 The reaction network is specified in the ``<tnburn>`` block by contiguous, zero-based ``reaction``\ :math:`K` entries in NDI reaction notation. Products may be individually flagged to deposit locally or escape.
 
 .. list-table:: Parameters in the ``<tnburn>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -104,6 +106,7 @@ The reaction network is specified in the ``<tnburn>`` block by contiguous, zero-
 The nuclear data table (isotope masses, charges, reactivities, and energetics) is selected in the ``<isotope_data>`` block:
 
 .. list-table:: Parameters in the ``<isotope_data>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -123,11 +126,28 @@ Registered Fields
 
 The burn package registers the per-reaction count fields in the table below; the isotope densities it evolves (``ccmat::iso``) are registered by the materials package when isotopes are present. All are sparse and carry the burn flag.
 
-.. container:: fieldtable
+.. list-table:: Fields registered by the thermonuclear burn package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:tnburn-fields
 
-   | Fields registered by the thermonuclear burn package.tab:tnburn-fields ccmat::tn_reaction_density & :math:`Q_r` & :math:`N_{\text{rxn}}` & Cell, Independent, Intensive, Conserved, Sparse, FillGhost, Advected, WithFluxes, BurnFlag; per-reaction count density.
-   | cm::tn_specific_reactions & — & :math:`N_{\text{rxn}}` & Cell, Derived, OneCopy, Sparse, BurnFlag; specific reaction rate.
-   | ccmat::iso & :math:`\bar\rho_i` & :math:`N_{\text{iso}}` & Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected, BurnFlag; isotope partial densities (via materials).
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccmat::tn_reaction_density
+     - :math:`Q_r`
+     - :math:`N_{\text{rxn}}`
+     - Cell, Independent, Intensive, Conserved, Sparse, FillGhost, Advected, WithFluxes, BurnFlag; per-reaction count density.
+   * - cm::tn_specific_reactions
+     - —
+     - :math:`N_{\text{rxn}}`
+     - Cell, Derived, OneCopy, Sparse, BurnFlag; specific reaction rate.
+   * - ccmat::iso
+     - :math:`\bar\rho_i`
+     - :math:`N_{\text{iso}}`
+     - Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected, BurnFlag; isotope partial densities (via materials).
 
 Example
 -------

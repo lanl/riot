@@ -41,6 +41,7 @@ Input Parameters
 Passive scalars are enabled with the ``scalars`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. Each scalar is defined in a contiguous, zero-based block ``<scalars0>``, ``<scalars1>``, …. Whether a scalar is material-tied or bulk-tied is determined by the presence of the ``matid`` parameter.
 
 .. list-table:: Per-scalar parameters in each ``<scalars``\ :math:`N`\ ``>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -62,11 +63,28 @@ Registered Fields
 
 For each material-tied scalar the package registers a conserved (advected) field and its derived primitive counterpart; a bulk-tied scalar registers a single advected field. The exact field names are taken from the user’s ``label``; the table below shows their structure.
 
-.. container:: fieldtable
+.. list-table:: Fields registered per scalar (names taken from ``label``).
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:scalars-fields
 
-   | Fields registered per scalar (names taken from ``label``).tab:scalars-fields label (material-tied) & :math:`\bar\rho_m c` & 1 & Cell, Independent, Intensive, Sparse, FillGhost, Advected, WithFluxes; conserved scalar density.
-   | prim.label & :math:`c` & 1 & Cell, Sparse, Derived, OneCopy; primitive mass fraction.
-   | label (bulk-tied) & :math:`\psi` & 1 & Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; bulk-advected scalar.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - label (material-tied)
+     - :math:`\bar\rho_m c`
+     - 1
+     - Cell, Independent, Intensive, Sparse, FillGhost, Advected, WithFluxes; conserved scalar density.
+   * - prim.label
+     - :math:`c`
+     - 1
+     - Cell, Sparse, Derived, OneCopy; primitive mass fraction.
+   * - label (bulk-tied)
+     - :math:`\psi`
+     - 1
+     - Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; bulk-advected scalar.
 
 Example
 -------

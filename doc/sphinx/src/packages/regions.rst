@@ -17,34 +17,54 @@ Region Shapes
 
 The geometric mask is chosen with the ``mask_type`` parameter. The available shapes and their defining parameters are listed in the table below. All center/coordinate parameters default to ``0``; radii default to ``1``.
 
-.. code-block:: text
+.. list-table::
+   :class: wraptable
+   :header-rows: 1
+   :widths: 24 66
 
-   @P0.24 L0.66@ **mask_type & Shape and defining parameters
-   background & Entire domain (default state); no parameters.
-   inside_sphere & Sphere: center ``x0,y0,z0``, ``radius``.
-   inside_spherical_shell & Spherical shell: center ``x0,y0,z0``, ``inner_radius``, ``outer_radius``.
-   inside_cylinder & Finite cylinder: axis endpoints ``x0,y0,z0`` to ``x1,y1,z1``, ``radius``.
-   inside_cylindrical_shell & Cylindrical shell: axis ``x0,y0,z0`` to ``x1,y1,z1``, ``inner_radius``, ``outer_radius``.
-   inside_ellipsoid & Ellipsoid: center ``x0,y0,z0``, semi-axes ``ax,ay,az``.
-   inside_ellipsoidal_shell & Ellipsoidal shell: center ``x0,y0,z0``, ``inner_ax..az``, ``outer_ax..az``.
-   inside_rectangle & Axis-aligned box: bounds ``x0,y0,z0`` to ``x1,y1,z1`` (defaults :math:`\pm\infty`, i.e. a half-space or slab if only some bounds are set).
-   python & Mask supplied by a user Python function (Chapter \ **\ :ref:`chap:python`\ **\ ).
-   cad & Solid imported from a STEP CAD file: ``cadfile``, ``name`` (Section \ **\ :ref:`sec:cad`\ **\ ).
-   **
+   * - mask_type
+     - Shape and defining parameters
+   * - background
+     - Entire domain (default state); no parameters.
+   * - inside_sphere
+     - Sphere: center ``x0,y0,z0``, ``radius``.
+   * - inside_spherical_shell
+     - Spherical shell: center ``x0,y0,z0``, ``inner_radius``, ``outer_radius``.
+   * - inside_cylinder
+     - Finite cylinder: axis endpoints ``x0,y0,z0`` to ``x1,y1,z1``, ``radius``.
+   * - inside_cylindrical_shell
+     - Cylindrical shell: axis ``x0,y0,z0`` to ``x1,y1,z1``, ``inner_radius``, ``outer_radius``.
+   * - inside_ellipsoid
+     - Ellipsoid: center ``x0,y0,z0``, semi-axes ``ax,ay,az``.
+   * - inside_ellipsoidal_shell
+     - Ellipsoidal shell: center ``x0,y0,z0``, ``inner_ax..az``, ``outer_ax..az``.
+   * - inside_rectangle
+     - Axis-aligned box: bounds ``x0,y0,z0`` to ``x1,y1,z1`` (defaults :math:`\pm\infty`, i.e. a half-space or slab if only some bounds are set).
+   * - python
+     - Mask supplied by a user Python function (Chapter :ref:`chap:python`).
+   * - cad
+     - Solid imported from a STEP CAD file: ``cadfile``, ``name`` (Section :ref:`sec:cad`).
 
 Initial State
 -------------
 
 A region’s thermodynamic state is set by providing *two* independent thermodynamic quantities per material; RIOT infers the initialization mode from which pair is given. The settable material-averaged quantities are density (``c_m_rho``), pressure (``c_m_pressure``), temperature (``c_m_temperature``), and specific internal energy (``c_m_sie``). The supported combinations are summarized in the table below. The equation of state (Chapter :ref:`chap:materials`) closes the remaining variables and produces the conserved state.
 
-.. code-block:: text
+.. list-table::
+   :class: wraptable
+   :header-rows: 1
+   :widths: 42 48
 
-   @P0.42 L0.48@ **Provide & Sets state from
-   c_m_rho + c_m_temperature & density and temperature (most common).
-   c_m_rho + c_m_pressure & density and pressure.
-   c_m_rho + c_m_sie & density and specific internal energy.
-   c_m_pressure + c_m_temperature & pressure and temperature.
-   **
+   * - Provide
+     - Sets state from
+   * - c_m_rho + c_m_temperature
+     - density and temperature (most common).
+   * - c_m_rho + c_m_pressure
+     - density and pressure.
+   * - c_m_rho + c_m_sie
+     - density and specific internal energy.
+   * - c_m_pressure + c_m_temperature
+     - pressure and temperature.
 
 When ionization is active, the electron temperature may be set independently (``c_c_bulk_electron_temperature``) or placed in equilibrium with the ions. The bulk velocity is set with ``c_c_bulk_velocity`` (a three-vector). Passive scalars are tagged in a region with ``passive_scalars``. In multi-material regions, per-material state is given by suffixing the material label (e.g. ``c_m_rho_Tungsten``), and volume fractions default such that each material fills its region.
 
@@ -52,6 +72,7 @@ Input Parameters
 ----------------
 
 .. list-table:: Per-region parameters in each ``<region``\ :math:`N`\ ``>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -99,6 +120,7 @@ Input Parameters
 Shape-specific geometry parameters (``x0``, ``radius``, etc.) are listed in the table below. The global ``<regions>`` block holds defaults and the overlap-refinement controls:
 
 .. list-table:: Parameters in the global ``<regions>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

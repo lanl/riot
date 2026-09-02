@@ -108,23 +108,23 @@ and the per-material ion conductivity :math:`\kappa_{i,m}` to the Braginskii for
 Plasma Viscosity
 ~~~~~~~~~~~~~~~~
 
-Optionally (``plasma_viscosity``), an ion viscous stress :math:`\bm{\sigma}_{\text{visc}}` is added to the bulk momentum and total-energy equations of Chapter :ref:`chap:hydro` as a divergence source,
+Optionally (``plasma_viscosity``), an ion viscous stress :math:`\mathsf{\sigma}_{\text{visc}}` is added to the bulk momentum and total-energy equations of Chapter :ref:`chap:hydro` as a divergence source,
 
 .. math::
 
      \frac{\partial \left(\rho\vec{v}\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\bm{I}\right)
-       &= \nabla\!\cdot\!\bm{\sigma}_{\text{visc}}, \\[2pt]
+       + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\mathsf{I}\right)
+       &= \nabla\!\cdot\!\mathsf{\sigma}_{\text{visc}}, \\[2pt]
      \frac{\partial E}{\partial t}
        + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}\right]
-       &= \nabla\!\cdot\!\left(\bm{\sigma}_{\text{visc}}\!\cdot\!\vec{v}\right),
+       &= \nabla\!\cdot\!\left(\mathsf{\sigma}_{\text{visc}}\!\cdot\!\vec{v}\right),
 
-so momentum diffuses and the associated viscous dissipation heats the fluid. The stress is Newtonian in the (bulk) strain rate :math:`\bm{e}` (Chapter :ref:`chap:strength`),
+so momentum diffuses and the associated viscous dissipation heats the fluid. The stress is Newtonian in the (bulk) strain rate :math:`\mathsf{e}` (Chapter :ref:`chap:strength`),
 
 .. math::
 
-     \bm{\sigma}_{\text{visc}} = 2\eta\,\bm{e}
-       + \left(\eta_b - \tfrac{2}{3}\eta\right)(\nabla\!\cdot\!\vec{v})\,\bm{I},
+     \mathsf{\sigma}_{\text{visc}} = 2\eta\,\mathsf{e}
+       + \left(\eta_b - \tfrac{2}{3}\eta\right)(\nabla\!\cdot\!\vec{v})\,\mathsf{I},
 
 with :math:`\eta` the shear viscosity and :math:`\eta_b` the bulk viscosity. The shear viscosity is set by ``ion_viscosity_model``: either a user-supplied constant (``ion_shear_viscosity``, ``ion_bulk_viscosity``), or the Fokker–Planck–Landau plasma model (Arnault, *High Energy Density Phys.* **9**, 711, 2013; Vold et al., *Phys. Plasmas* **24**, 042702, 2017),
 
@@ -140,6 +140,7 @@ Input Parameters
 Ionization is enabled with the ``ionization`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`). When it is on, every material must provide an ``electron_eos`` block (Chapter :ref:`chap:materials`). The remaining controls live in the ``<ionization>`` block.
 
 .. list-table:: Parameters in the ``<ionization>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -241,17 +242,52 @@ Registered Fields
 
 The ionization package registers the bulk electron fields in the table below, and (through the materials package) the per-material :math:`\bar{Z}` and electron-energy fields. The transported electron quantity is either ``electron_internal_energy`` (the default) or, when ``advect_electron_entropy`` is set, ``electron_entropy``; the remaining bulk electron fields are derived. The implicit conduction solve additionally allocates operator-split auxiliary fields (diffusion coefficients, temperature deltas) that are internal to the solver and omitted here.
 
-.. container:: fieldtable
+.. list-table:: Principal fields registered by the ionization package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:ionization-fields
 
-   | Principal fields registered by the ionization package.tab:ionization-fields ccbulk::electron_internal_energy & :math:`u_e` & 1 & Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; electron energy density (default transported quantity).
-   | ccbulk::electron_entropy & :math:`s_e` & 1 & Cell, Independent, Intensive, FillGhost, Advected, WithFluxes, Conserved; electron entropy density (when ``advect_electron_entropy``).
-   | ccbulk::electron_temperature & :math:`T_e` & 1 & Cell, Intensive, Derived, OneCopy; electron temperature.
-   | ccbulk::electron_pressure & :math:`p_e` & 1 & Cell, Intensive, Derived, OneCopy; electron pressure.
-   | ccbulk::electron_number_density & :math:`n_e` & 1 & Cell, Intensive, Derived, OneCopy; free-electron number density.
-   | ccbulk::electron_bulk_modulus & :math:`B_e` & 1 & Cell, Intensive, Derived, OneCopy; electron bulk modulus.
-   | ccbulk::electron_gruneisen_parameter & :math:`\Gamma_e` & 1 & Cell, Intensive, Derived, OneCopy; electron Grüneisen parameter.
-   | ccbulk::ion_shear_viscosity & :math:`\eta` & 1 & Cell, Intensive, Derived, OneCopy; ion shear viscosity (when ``plasma_viscosity``).
-   | cm::ionization_zbar & :math:`\bar{Z}` & 1 & Cell, Sparse, Derived, OneCopy, FillGhost; per-material mean ionization state.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccbulk::electron_internal_energy
+     - :math:`u_e`
+     - 1
+     - Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; electron energy density (default transported quantity).
+   * - ccbulk::electron_entropy
+     - :math:`s_e`
+     - 1
+     - Cell, Independent, Intensive, FillGhost, Advected, WithFluxes, Conserved; electron entropy density (when ``advect_electron_entropy``).
+   * - ccbulk::electron_temperature
+     - :math:`T_e`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; electron temperature.
+   * - ccbulk::electron_pressure
+     - :math:`p_e`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; electron pressure.
+   * - ccbulk::electron_number_density
+     - :math:`n_e`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; free-electron number density.
+   * - ccbulk::electron_bulk_modulus
+     - :math:`B_e`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; electron bulk modulus.
+   * - ccbulk::electron_gruneisen_parameter
+     - :math:`\Gamma_e`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; electron Grüneisen parameter.
+   * - ccbulk::ion_shear_viscosity
+     - :math:`\eta`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; ion shear viscosity (when ``plasma_viscosity``).
+   * - cm::ionization_zbar
+     - :math:`\bar{Z}`
+     - 1
+     - Cell, Sparse, Derived, OneCopy, FillGhost; per-material mean ionization state.
 
 Example
 -------
