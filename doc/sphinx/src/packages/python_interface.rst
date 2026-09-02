@@ -39,23 +39,34 @@ Both the ``riot`` module (in ``script/inputs/``) and, if used, the ``singularity
 
 Adjust these paths to match your own build and run directory; the two entries point at the ``riot`` input module and the ``singularity-eos`` Python bindings, respectively.
 
-API Surface
------------
+``riot`` module API
+--------------------
 
 The core entry points of the ``riot`` module are summarized in the table below.
 
-.. code-block:: text
+.. list-table::
+   :class: wraptable
+   :header-rows: 1
+   :widths: 40 50
 
-   @P0.40 L0.50@ **Call & Purpose
-   riot.input(block, \**kwargs) & Add or update an input block (emits ``<block>`` in the deck).
-   riot.material(id, \**kwargs) & Declare a material and its properties.
-   riot.material[id_or_name] & Look up a declared material.
-   riot.input[block] & Look up a previously declared block.
-   riot.EOS(material) & Wrap a ``singularity-eos`` object for thermodynamic queries.
-   riot.constants(units) & Physical constants (default CGS).
-   riot.log(msg) & Write to the run log.
-   riot.input.generate_input() & Write the ``.rin`` deck (name derived from the script).
-   **
+   * - Call
+     - Purpose
+   * - riot.input(block, \**kwargs)
+     - Add or update an input block (emits ``<block>`` in the deck).
+   * - riot.material(id, \**kwargs)
+     - Declare a material and its properties.
+   * - riot.material[id_or_name]
+     - Look up a declared material.
+   * - riot.input[block]
+     - Look up a previously declared block.
+   * - riot.EOS(material)
+     - Wrap a ``singularity-eos`` object for thermodynamic queries.
+   * - riot.constants(units)
+     - Physical constants (default CGS).
+   * - riot.log(msg)
+     - Write to the run log.
+   * - riot.input.generate_input()
+     - Write the ``.rin`` deck (name derived from the script).
 
 Python Regions
 --------------
@@ -68,7 +79,9 @@ A region is made Python-driven by setting ``mask_type`` ``= python`` and giving
 
 Parameters for the class are passed through a companion block ``<name/params>``; each becomes an attribute of the instance. This is how geometry and state can vary arbitrarily in space, including perturbation seeds for instability studies.
 
-   **Curvilinear caveat.** The Cartesian conversion of ``pos`` is currently partial in reduced-dimension curvilinear runs. In ``UniformCylindrical`` the mesh radius maps to :math:`x` and the axial coordinate to :math:`z`, with :math:`y=0` (i.e. the 2D :math:`r`–:math:`z` plane); in ``UniformSpherical`` the mesh radius maps to :math:`x` with :math:`y=z=0` (i.e. 1D radial). A Python region in these geometries should therefore use ``self.x`` as the radius (and, in cylindrical, ``self.z`` as the axial coordinate) and not rely on the dropped columns.
+.. note::
+
+   **Curvilinear caveat:** The Cartesian conversion of ``pos`` is currently partial in reduced-dimension curvilinear runs. In ``UniformCylindrical`` the mesh radius maps to :math:`x` and the axial coordinate to :math:`z`, with :math:`y=0` (i.e. the 2D :math:`r`–:math:`z` plane); in ``UniformSpherical`` the mesh radius maps to :math:`x` with :math:`y=z=0` (i.e. 1D radial). A Python region in these geometries should therefore use ``self.x`` as the radius (and, in cylindrical, ``self.z`` as the axial coordinate) and not rely on the dropped columns.
 
 .. _`sec:cad`:
 
@@ -79,14 +92,31 @@ When a region’s shape is too complex to express analytically or in a Python ``
 
 A CAD region reads the parameters in the table below. The ``name`` of the region doubles as the label of the solid to extract from the STEP file, so a single file may hold several named parts, each selected by a different region.
 
-.. code-block:: text
+.. list-table::
+   :class: wraptable
+   :header-rows: 1
+   :widths: 22 10 12 42
 
-   @P0.22 P0.10 P0.12 L0.42@ **Parameter & Type & Default & Description
-   mask_type & string & — & Set to ``cad``.
-   cadfile & string & — & Path to the STEP (``.step``/``.stp``) file.
-   name & string & — & Region label; also the name of the solid to extract from the file.
-   sample_dx_max & Real & ``-1`` & Optional cap on the base sampling cell size; :math:`\le 0` derives it from the mesh.
-   **
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - mask_type
+     - string
+     - —
+     - Set to ``cad``.
+   * - cadfile
+     - string
+     - —
+     - Path to the STEP (``.step``/``.stp``) file.
+   * - name
+     - string
+     - —
+     - Region label; also the name of the solid to extract from the file.
+   * - sample_dx_max
+     - Real
+     - ``-1``
+     - Optional cap on the base sampling cell size; :math:`\le 0` derives it from the mesh.
 
 At initialization RIOT loads the STEP file, heals the imported solid (to tolerate models that are not perfectly watertight), and builds a cell-based adaptive mesh that brackets the part: it samples an inside/outside point classifier on a coarse node grid and refines only those cells whose corners disagree, so the boundary is resolved to a depth tied to the mesh’s refinement levels (``nlev_min``, ``nlev_max`` in the ``<regions>`` block, and ``numlevel`` for adaptive runs). During domain initialization the region mask is then a fast interpolated lookup on this structure. Because refinement keys on node sampling, a feature sharp enough to pierce a cell face without touching a node can be missed; ``sample_dx_max`` forces a finer base grid when that matters.
 

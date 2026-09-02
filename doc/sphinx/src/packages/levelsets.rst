@@ -5,7 +5,9 @@ Level Sets
 
 The ``levelsets`` package tracks a material interface with a level-set function :math:`\phi`, whose zero contour :math:`\phi = 0` marks the interface. The field is advected with the flow and periodically reinitialized to remain a signed distance function near the interface. It provides a sharp interface representation complementing the diffuse volume-fraction description of Chapter :ref:`chap:hydro`.
 
-   **Experimental.** The level-set package currently supports a single level set and requires hydrodynamics to be enabled.
+.. warning:: 
+
+   **Experimental:** The level-set package currently supports a single level set and requires hydrodynamics to be enabled.
 
 Governing Equations
 -------------------
@@ -39,6 +41,7 @@ Input Parameters
 Level sets are enabled with the ``levelsets`` toggle in the ``<physics>`` block (Section :ref:`sec:physics-block`); ``hydro`` must also be enabled. The remaining controls live in the ``<levelsets>`` block.
 
 .. list-table:: Parameters in the ``<levelsets>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -68,11 +71,28 @@ Registered Fields
 
 The package registers the single advected level-set field in the table below, plus two single-copy scratch fields used only during reinitialization (:math:`\phi_0` storage and the pseudo-time right-hand side).
 
-.. container:: fieldtable
+.. list-table:: Fields registered by the level-set package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:levelsets-fields
 
-   | Fields registered by the level-set package.tab:levelsets-fields levelset & :math:`\phi` & 1 & Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; the level-set function.
-   | levelset0 & :math:`\phi_0` & 1 & Cell, Independent, Intensive, OneCopy; level set stored at the start of reinitialization.
-   | dudt_reinitialize & :math:`\partial_\tau\phi` & 1 & Cell, Independent, Intensive, OneCopy; reinitialization right-hand side.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - levelset
+     - :math:`\phi`
+     - 1
+     - Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; the level-set function.
+   * - levelset0
+     - :math:`\phi_0`
+     - 1
+     - Cell, Independent, Intensive, OneCopy; level set stored at the start of reinitialization.
+   * - dudt_reinitialize
+     - :math:`\partial_\tau\phi`
+     - 1
+     - Cell, Independent, Intensive, OneCopy; reinitialization right-hand side.
 
 Example
 -------

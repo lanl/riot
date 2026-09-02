@@ -18,6 +18,7 @@ Enabling Diagnostics
 Unlike the physics packages, diagnostics are not toggled in the ``<physics>`` block. Instead they are selected by name in the ``<diagnostics>`` block through the ``packages`` list; each named diagnostic is looked up in an internal registry and enrolled, and an unknown name is an error.
 
 .. list-table:: Parameter in the ``<diagnostics>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

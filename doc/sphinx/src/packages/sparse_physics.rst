@@ -25,6 +25,7 @@ Input Parameters
 Sparse physics is controlled in the ``<physics>`` block. The threshold sets the level of relative change required to keep a block active; its default value is appropriate for most problems, and it can be loosened to deactivate more aggressively or tightened to keep marginally-evolving regions active.
 
 .. list-table:: Parameters in the ``<physics>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 

@@ -126,6 +126,7 @@ Radiation transport requires hydrodynamics and is incompatible with the ionizati
 Parameters are organized into a shared ``<radiation_transport>`` block and three nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
 
 .. list-table:: Solver selection and shared parameters in the ``<radiation_transport>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -189,6 +190,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
 The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are read only when ``coupling`` is ``true``.
 
 .. list-table:: Angular-grid parameters (in the ``<radiation_transport>`` block).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -224,6 +226,7 @@ The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are r
 The explicit solver adds sub-cycling controls:
 
 .. list-table:: Parameters in the ``<radiation_transport/explicit>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -247,6 +250,7 @@ The explicit solver adds sub-cycling controls:
 The Jacobi solver adds iteration and timestep controls:
 
 .. list-table:: Parameters in the ``<radiation_transport/jacobi>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -289,6 +293,7 @@ The Jacobi solver performs a single *global* implicit solve over the whole mesh 
 Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, or — when the stall detector is enabled — when it fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
 .. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -315,6 +320,7 @@ Initialization
 The radiation field’s initial state is chosen in the ``<radiation_transport/init>`` block.
 
 .. list-table:: Parameters in the ``<radiation_transport/init>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -335,6 +341,7 @@ Boundary Conditions
 By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a fixed incoming radiation temperature — by naming it in the ``<radiation_transport/drive>`` block.
 
 .. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -362,16 +369,48 @@ Registered Fields
 
 The package registers the radiation fields in the table below under the ``ccrad::`` prefix. The stored intensity is the transported field, carrying one component per (group, angle) pair; recall it absorbs the :math:`4\pi/c` factor so that :math:`E_f = \sum_a w_a I_{f,a}`. The remaining fields are derived opacities, moments, and per-solver scratch. Every field also carries the OperatorSplit flag and a per-solver user flag; the set differs between the two solvers, as noted below.
 
-.. container:: fieldtable
+.. list-table:: Principal fields registered by the radiation package.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:rad-fields
 
-   | Principal fields registered by the radiation package.tab:rad-fields ccrad::intensity & :math:`I_{f,a}` & :math:`N_\nu N_{\text{ang}}` & Cell, Independent, FillGhost, Intensive, Conserved, OperatorSplit; stored intensity per group and angle (:math:`4\pi/c`-scaled). The explicit solver adds WithFluxes; the Jacobi solver registers linear prolongation/restriction ops instead.
-   | ccrad::aa & :math:`\sigma_{a,f}` & :math:`N_\nu` & Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell absorption coefficient.
-   | ccrad::ss & :math:`\sigma_{s,f}` & :math:`N_\nu` & Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell scattering coefficient.
-   | ccrad::moments & :math:`E_f` & :math:`N_\nu` & Cell, Derived, OneCopy, OperatorSplit; group radiation energy density and moments.
-   | ccrad::s1, s2, s3 & — & :math:`N_\nu` & Cell, Derived, OneCopy, OperatorSplit; auxiliary moment/source scratch (both solvers).
-   | ccrad::divfa & — & :math:`N_\nu N_{\text{ang}}` & Cell, Derived, OneCopy, OperatorSplit; angular-flux divergence. Explicit solver only, and only in curvilinear geometries.
-   | ccrad::tauw & — & :math:`N_\nu` & Cell, Derived, OneCopy, OperatorSplit; optical-depth weight (Jacobi solver only).
-   | ccrad::temperature & :math:`T^{n+1}` & 1 & Cell, Derived, OneCopy, OperatorSplit; advanced temperature (Jacobi solver only).
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccrad::intensity
+     - :math:`I_{f,a}`
+     - :math:`N_\nu N_{\text{ang}}`
+     - Cell, Independent, FillGhost, Intensive, Conserved, OperatorSplit; stored intensity per group and angle (:math:`4\pi/c`-scaled). The explicit solver adds WithFluxes; the Jacobi solver registers linear prolongation/restriction ops instead.
+   * - ccrad::aa
+     - :math:`\sigma_{a,f}`
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell absorption coefficient.
+   * - ccrad::ss
+     - :math:`\sigma_{s,f}`
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell scattering coefficient.
+   * - ccrad::moments
+     - :math:`E_f`
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, OperatorSplit; group radiation energy density and moments.
+   * - ccrad::s1, s2, s3
+     - —
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, OperatorSplit; auxiliary moment/source scratch (both solvers).
+   * - ccrad::divfa
+     - —
+     - :math:`N_\nu N_{\text{ang}}`
+     - Cell, Derived, OneCopy, OperatorSplit; angular-flux divergence. Explicit solver only, and only in curvilinear geometries.
+   * - ccrad::tauw
+     - —
+     - :math:`N_\nu`
+     - Cell, Derived, OneCopy, OperatorSplit; optical-depth weight (Jacobi solver only).
+   * - ccrad::temperature
+     - :math:`T^{n+1}`
+     - 1
+     - Cell, Derived, OneCopy, OperatorSplit; advanced temperature (Jacobi solver only).
 
 Example
 -------

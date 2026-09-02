@@ -36,8 +36,8 @@ block-adaptive, performance portable mutli-material radiation hydrodynamics
    src/packages/sparse_physics
    src/packages/regions
    src/packages/python_interface
-   src/programmer_guide
    src/packages/diagnostics
+   src/programmer_guide
    src/contributing
 
 Indices and tables

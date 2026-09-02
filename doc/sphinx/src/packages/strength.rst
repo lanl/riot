@@ -3,36 +3,36 @@
 Material Strength
 =================
 
-The ``strength`` package augments the hydrodynamics of Chapter :ref:`chap:hydro` with an elastic–plastic constitutive response for solid materials. When enabled, materials support a deviatoric stress :math:`\bm{s}` that modifies the momentum and energy fluxes, evolves in time with the flow, and is limited by a yield condition. Strength is applied per material: a material must be flagged as *strong* and assigned a strength model.
+The ``strength`` package augments the hydrodynamics of Chapter :ref:`chap:hydro` with an elastic–plastic constitutive response for solid materials. When enabled, materials support a deviatoric stress :math:`\mathsf{s}` that modifies the momentum and energy fluxes, evolves in time with the flow, and is limited by a yield condition. Strength is applied per material: a material must be flagged as *strong* and assigned a strength model.
 
 Governing Equations
 -------------------
 
-Strength in RIOT is a *per-material* property: each strong material :math:`m` carries its own deviatoric stress :math:`\bm{s}_m`, shear modulus :math:`G_m`, and yield strength :math:`Y_m`, and evolves them independently. The hydrodynamics, however, sees a single *bulk* deviatoric stress :math:`\bm{s}` aggregated from the per-material stresses (Section :ref:`sec:permat-bulk`). This section follows that per-material :math:`\to` bulk path.
+Strength in RIOT is a *per-material* property: each strong material :math:`m` carries its own deviatoric stress :math:`\mathsf{s}_m`, shear modulus :math:`G_m`, and yield strength :math:`Y_m`, and evolves them independently. The hydrodynamics, however, sees a single *bulk* deviatoric stress :math:`\mathsf{s}` aggregated from the per-material stresses (Section :ref:`sec:permat-bulk`). This section follows that per-material :math:`\to` bulk path.
 
 The full bulk Cauchy stress is decomposed into an isotropic (pressure) part and a traceless deviatoric part,
 
 .. math::
 
-     \bm{\sigma} = -p\,\bm{I} + \bm{s}, \qquad \mathrm{tr}\,\bm{s} = 0 ,
+     \mathsf{\sigma} = -p\,\mathsf{I} + \mathsf{s}, \qquad \mathrm{tr}\,\mathsf{s} = 0 ,
 
-where :math:`p` comes from the PTE closure (Chapter :ref:`chap:hydro`) and the bulk deviatoric stress :math:`\bm{s}` enters the bulk momentum and energy fluxes through the terms :math:`-\bm{s}` and :math:`-\bm{s}\!\cdot\!\vec{v}` (see the hydro equations in Chapter :ref:`chap:hydro`).
+where :math:`p` comes from the PTE closure (Chapter :ref:`chap:hydro`) and the bulk deviatoric stress :math:`\mathsf{s}` enters the bulk momentum and energy fluxes through the terms :math:`-\mathsf{s}` and :math:`-\mathsf{s}\!\cdot\!\vec{v}` (see the hydro equations in Chapter :ref:`chap:hydro`).
 
 Per-Material Hypoelastic Stress Evolution
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For each strong material :math:`m`, the conserved per-material deviatoric stress :math:`\bar\rho_m\bm{s}_m` is advected with the flow and sourced by a hypoelastic constitutive law using the Jaumann (corotational, objective) stress rate, which keeps the response frame-invariant under rigid rotation:
+For each strong material :math:`m`, the conserved per-material deviatoric stress :math:`\bar\rho_m\mathsf{s}_m` is advected with the flow and sourced by a hypoelastic constitutive law using the Jaumann (corotational, objective) stress rate, which keeps the response frame-invariant under rigid rotation:
 
 .. math::
 
-     \frac{\partial \left(\bar\rho_m\bm{s}_m\right)}{\partial t}
-       + \nabla\!\cdot\!\left(\bar\rho_m\bm{s}_m\,\vec{v}\right)
+     \frac{\partial \left(\bar\rho_m\mathsf{s}_m\right)}{\partial t}
+       + \nabla\!\cdot\!\left(\bar\rho_m\mathsf{s}_m\,\vec{v}\right)
      \;=\;
-     2\bar\rho_m G_m\,\bm{e}
-       + \bar\rho_m\!\left(\bm{w}\!\cdot\!\bm{s}_m
-         - \bm{s}_m\!\cdot\!\bm{w}\right).
+     2\bar\rho_m G_m\,\mathsf{e}
+       + \bar\rho_m\!\left(\mathsf{w}\!\cdot\!\mathsf{s}_m
+         - \mathsf{s}_m\!\cdot\!\mathsf{w}\right).
 
-Here :math:`G_m` is the material’s shear modulus and :math:`\bar\rho_m` its cell-volume-averaged density, both per material. The strain-rate tensor :math:`\bm{e}` and spin tensor :math:`\bm{w}`, by contrast, are *bulk* quantities: they are computed once per cell from the single velocity field common to all materials in the cell. Thus every material in a cell is driven by the same velocity gradient but evolves its own stress with its own shear modulus. The strain-rate and spin tensors are the symmetric and antisymmetric parts of that velocity gradient,
+Here :math:`G_m` is the material’s shear modulus and :math:`\bar\rho_m` its cell-volume-averaged density, both per material. The strain-rate tensor :math:`\mathsf{e}` and spin tensor :math:`\mathsf{w}`, by contrast, are *bulk* quantities: they are computed once per cell from the single velocity field common to all materials in the cell. Thus every material in a cell is driven by the same velocity gradient but evolves its own stress with its own shear modulus. The strain-rate and spin tensors are the symmetric and antisymmetric parts of that velocity gradient,
 
 .. math::
 
@@ -40,7 +40,7 @@ Here :math:`G_m` is the material’s shear modulus and :math:`\bar\rho_m` its ce
                - \tfrac{1}{3}\,(\nabla\!\cdot\!\vec{v})\,\delta_{ij}, \\
      w_{ij} &= \tfrac{1}{2}\!\left(\partial_j v_i - \partial_i v_j\right).
 
-Because :math:`\bm{s}_m` is symmetric and traceless, only five of its components are independent and stored (:math:`s_{xx}, s_{xy}, s_{xz}, s_{yy}, s_{yz}`); the sixth follows from :math:`s_{zz} = -s_{xx} - s_{yy}`.
+Because :math:`\mathsf{s}_m` is symmetric and traceless, only five of its components are independent and stored (:math:`s_{xx}, s_{xy}, s_{xz}, s_{yy}, s_{yz}`); the sixth follows from :math:`s_{zz} = -s_{xx} - s_{yy}`.
 
 Per-Material Yield and Radial Return
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -49,16 +49,16 @@ Each material’s elastic stress is limited by its own von Mises yield criterion
 
 .. math::
 
-     J_2 = \tfrac{1}{2}\,\bm{s}_m\!:\!\bm{s}_m
+     J_2 = \tfrac{1}{2}\,\mathsf{s}_m\!:\!\mathsf{s}_m
          = \tfrac{1}{2}\!\left(s_{xx}^2 + s_{yy}^2 + s_{zz}^2\right)
            + s_{xy}^2 + s_{xz}^2 + s_{yz}^2 ,
 
-material :math:`m` yields when :math:`\bm{s}_m\!:\!\bm{s}_m` exceeds :math:`\tfrac{2}{3}Y_m^2`, where :math:`Y_m` is its yield strength. When the trial stress lies outside the yield surface, a radial-return correction scales it back onto the surface,
+material :math:`m` yields when :math:`\mathsf{s}_m\!:\!\mathsf{s}_m` exceeds :math:`\tfrac{2}{3}Y_m^2`, where :math:`Y_m` is its yield strength. When the trial stress lies outside the yield surface, a radial-return correction scales it back onto the surface,
 
 .. math::
 
-     \bm{s}_m \leftarrow
-       \sqrt{\frac{2Y_m^2}{3\,\bm{s}_m\!:\!\bm{s}_m}}\;\bm{s}_m ,
+     \mathsf{s}_m \leftarrow
+       \sqrt{\frac{2Y_m^2}{3\,\mathsf{s}_m\!:\!\mathsf{s}_m}}\;\mathsf{s}_m ,
 
 and the material’s accumulated (equivalent) plastic strain :math:`\varepsilon_{p,m}` is incremented accordingly. The radial return and failure ramp are applied per material. The plastic work released by each material during its return is summed over materials and deposited into the *bulk* total energy, so plastic dissipation heats the cell.
 
@@ -69,8 +69,8 @@ As a material’s density falls toward its failure threshold :math:`\rho_{\text{
 
 .. math::
 
-     \bm{s}_m \leftarrow
-       \min\!\left(\frac{\rho_m}{\rho_{\text{fail},m}},\,1\right)\bm{s}_m ,
+     \mathsf{s}_m \leftarrow
+       \min\!\left(\frac{\rho_m}{\rho_{\text{fail},m}},\,1\right)\mathsf{s}_m ,
 
 so that a fully failed (e.g. spalled or rarefied) material carries no strength and reverts to hydrodynamic behavior.
 
@@ -81,7 +81,7 @@ The hydrodynamic fluxes use a bulk deviatoric stress and bulk shear modulus form
 
 .. math::
 
-     \bm{s} = \sum_m f_m\,\bm{s}_m, \qquad
+     \mathsf{s} = \sum_m f_m\,\mathsf{s}_m, \qquad
      G = \sum_m f_m\,G_m .
 
 In practice the per-material stresses are reconstructed to cell faces and then combined with these :math:`f_m` weights, and the resulting bulk stress is passed to the strength-aware Riemann solver. This is the sole channel by which per-material strength influences the shared momentum and energy equations.
@@ -112,6 +112,7 @@ Input Parameters
 Material strength is activated in three places: globally in the ``<physics>`` block, per material in each ``<material>`` block, and in a user-named block that defines the strength model itself.
 
 .. list-table:: Global toggle in the ``<physics>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -125,6 +126,7 @@ Material strength is activated in three places: globally in the ``<physics>`` bl
      - Enable the material strength package.
 
 .. list-table:: Per-material parameters in each ``<material``\ :math:`N`\ ``>`` block.
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -144,6 +146,7 @@ Material strength is activated in three places: globally in the ``<physics>`` bl
 The strength-model block is named by the ``strength_model`` parameter above. Its contents depend on the chosen ``modelname``.
 
 .. list-table:: Parameters in a strength-model block (for ``modelname = epp``).
+   :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
 
@@ -171,19 +174,54 @@ The strength-model block is named by the ``strength_model`` parameter above. Its
 Registered Fields
 -----------------
 
-When strength is enabled, the per-material stress fields in the table below are registered (sparse, controlled by ``ccmat::rho``), along with bulk strain-rate support fields. The conserved :math:`\rho\bm{s}` and :math:`\rho\varepsilon_p` are advected with fluxes; the material-averaged ``cm::`` counterparts and the strain-rate/face-velocity fields are derived.
+When strength is enabled, the per-material stress fields in the table below are registered (sparse, controlled by ``ccmat::rho``), along with bulk strain-rate support fields. The conserved :math:`\rho\mathsf{s}` and :math:`\rho\varepsilon_p` are advected with fluxes; the material-averaged ``cm::`` counterparts and the strain-rate/face-velocity fields are derived.
 
-.. container:: fieldtable
+.. list-table:: Fields registered when material strength is active.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 30 14 16 40
+   :name: tab:strength-fields
 
-   | Fields registered when material strength is active.tab:strength-fields ccmat::deviatoric_stress & :math:`\bar\rho_m\bm{s}` & 5 & Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; conserved deviatoric stress.
-   | ccmat::equivalent_plastic_strain & :math:`\bar\rho_m\varepsilon_p` & 1 & Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected; plastic strain.
-   | cm::deviatoric_stress & :math:`\bm{s}` & 5 & Cell, Intensive, Sparse, Derived, OneCopy; material-averaged deviatoric stress.
-   | cm::equivalent_plastic_strain & :math:`\varepsilon_p` & 1 & Cell, Intensive, Sparse, Derived, OneCopy; equivalent plastic strain.
-   | cm::shear_modulus & :math:`G` & 1 & Cell, Intensive, Sparse, Derived, OneCopy; shear modulus.
-   | cm::strength_j2 & :math:`J_2` & 1 & Cell, Sparse, Derived, OneCopy; second stress invariant (diagnostic).
-   | ccbulk::shear_modulus & :math:`G` & 1 & Cell, Intensive, Derived, OneCopy; volume-averaged shear modulus.
-   | ccbulk::strain_rate & :math:`\bm{e}` & 6 & Cell, Intensive, Derived, OneCopy; strain-rate tensor.
-   | ccbulk::face_velocity & — & 9 & Cell, Intensive, Derived, OneCopy; face velocities used to build :math:`\bm{e}`.
+   * - Field
+     - Symbol
+     - Components
+     - Metadata / description
+   * - ccmat::deviatoric_stress
+     - :math:`\bar\rho_m\mathsf{s}`
+     - 5
+     - Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; conserved deviatoric stress.
+   * - ccmat::equivalent_plastic_strain
+     - :math:`\bar\rho_m\varepsilon_p`
+     - 1
+     - Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected; plastic strain.
+   * - cm::deviatoric_stress
+     - :math:`\mathsf{s}`
+     - 5
+     - Cell, Intensive, Sparse, Derived, OneCopy; material-averaged deviatoric stress.
+   * - cm::equivalent_plastic_strain
+     - :math:`\varepsilon_p`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; equivalent plastic strain.
+   * - cm::shear_modulus
+     - :math:`G`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; shear modulus.
+   * - cm::strength_j2
+     - :math:`J_2`
+     - 1
+     - Cell, Sparse, Derived, OneCopy; second stress invariant (diagnostic).
+   * - ccbulk::shear_modulus
+     - :math:`G`
+     - 1
+     - Cell, Intensive, Derived, OneCopy; volume-averaged shear modulus.
+   * - ccbulk::strain_rate
+     - :math:`\mathsf{e}`
+     - 6
+     - Cell, Intensive, Derived, OneCopy; strain-rate tensor.
+   * - ccbulk::face_velocity
+     - —
+     - 9
+     - Cell, Intensive, Derived, OneCopy; face velocities used to build :math:`\mathsf{e}`.
 
 Example
 -------
