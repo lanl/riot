@@ -142,7 +142,7 @@ riot.input(
     "radiation_transport",
     do_explicit=False,  # enable explicit transport
     do_jacobi=True,  # enable implicit Jacobi solver (diffusion-dominated)
-    fv_fix=False, # use centroid unit normals
+    fv_fix=False,  # use centroid unit normals
     nlevel=1,  # level of geodesic mesh
     beta=5.0,  # parameter controlling tauc in Rusanov rad-flux
     coupling=True,  # flag to enable radiation source term
