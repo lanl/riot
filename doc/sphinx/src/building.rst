@@ -126,6 +126,7 @@ Pass options to CMake as ``-DOPTION=VALUE``. The options below are defined by
 documentation.
 
 .. list-table::
+   :class: wraptable
    :header-rows: 1
    :widths: 32 12 56
 

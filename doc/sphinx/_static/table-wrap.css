@@ -1,0 +1,33 @@
+/*
+ * Parameter and registered-field tables often combine long identifiers with
+ * explanatory prose.  Keep them within the documentation column where
+ * possible, while preserving the theme's horizontal-scroll fallback.
+ */
+table.wraptable {
+  table-layout: fixed;
+  width: 100%;
+  max-width: 100%;
+}
+
+table.wraptable th,
+table.wraptable td {
+  min-width: 0;
+  overflow-wrap: anywhere !important;
+  word-break: break-word;
+}
+
+/* Inline literals are the usual source of an otherwise very wide column. */
+table.wraptable code,
+table.wraptable tt,
+table.wraptable .literal {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Sphinx wraps the text inside literals in ``span.pre``, which the base theme
+ * makes non-wrapping.  Override that rule within responsive tables only. */
+table.wraptable .literal .pre {
+  white-space: normal !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-all;
+}
