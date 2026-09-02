@@ -1,15 +1,32 @@
-.. figure:: ../../riot_logo.png
-   :alt: The riot logo
-   :align: left
-   :width: 800px
+.. only:: html
+
+   .. figure:: ../../riot_logo.png
+      :alt: The riot logo
+      :align: left
+      :width: 800px
 
 block-adaptive, performance portable mutli-material radiation hydrodynamics
 ==================================================================================
 
-.. figure:: src/figures/cover.png
-   :alt: A double-shell ICF target simulated with riot
-   :width: 70%
-   :align: center
+.. only:: html
+
+   .. figure:: src/figures/cover.png
+      :alt: A double-shell ICF target simulated with riot
+      :width: 70%
+      :align: center
+
+.. only:: latex
+
+   .. raw:: latex
+
+      \clearpage
+      \thispagestyle{empty}
+      \begin{center}
+      \includegraphics[width=0.85\textwidth]{riot_logo.png}
+      \vfill
+      \includegraphics[width=0.70\textwidth]{cover.png}
+      \end{center}
+      \clearpage
 
 .. include:: src/introduction.rst
    :start-line: 4

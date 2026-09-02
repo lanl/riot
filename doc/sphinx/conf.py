@@ -79,5 +79,10 @@ html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_css_files = ["table-wrap.css"]
 
+# Make images used by the LaTeX-only cover block available in the LaTeX
+# output directory. Sphinx normally copies these automatically for figure
+# directives, but the HTML-only directives above are not processed by LaTeX.
+latex_additional_files = ["../../riot_logo.png", "src/figures/cover.png"]
+
 # configuration for sphinx_multiversion
 smv_remote_whitelist = r"^(origin)$"
