@@ -1726,8 +1726,8 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
             for (int iso = 0; iso < niso; iso++) {
               const int iso_idx = offset_iso + iso;
               RiotLoop::inner(halo_range, [&](const auto kji) {
-                const auto [k, j, i] = idx_range.GetKJI(kji);
-                d(kji) += diffusion_coefficient * v(b, cm::iso(iso_idx), k, j, i);
+                auto isofrho = RiotLoop::make_var_view(idx_range, v, cm::iso(m));
+                d(kji) += diffusion_coefficient * isofrho(kji);
                 ratemax(kji) = std::max(ratemax(kji), d(kji));
               });
             }
