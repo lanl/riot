@@ -1680,10 +1680,7 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   const int nhalo = 0;
   // Use the NN logical range so one loop covers all three face orientations.
   // This deliberately computes an extra transverse face layer for each orientation.
-  auto idx_space =
-      rt::GetIndexSpace(IndexDomain::interior,
-                        nhalo, nblocks, md,
-                        TE::NN);
+  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, TE::NN);
 
   // add scratch for diffusion coefficient and max diffusion coefficient
   idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(2);
@@ -1692,6 +1689,8 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   const auto di = idx_space.GetDelta(X1DIR);
   const auto dj = idx_space.GetDelta(X2DIR);
   const auto dk = idx_space.GetDelta(X3DIR);
+
+  std::array<int, 4> deltas{0, di, dj, dk};
 
   // X1 fluxes
   // RiotLoop::outer(
@@ -1740,78 +1739,60 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           }
           idx_range.TeamBarrier();
 
-          // X1 fluxes
-          RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-            const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
-            const Real &rhomm = v(b, ccmat::rho(m), k, j, i - 1);
-            const Real &rhomp = v(b, ccmat::rho(m), k, j, i);
-            const Real &fvm = v(b, ccmat::volume_fraction(m), k, j, i - 1);
-            const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
-            const Real &Emm = v(b, ccmat::internal_energy(m), k, j, i - 1);
-            const Real &Emp = v(b, ccmat::internal_energy(m), k, j, i);
-            const Real &Pm = v(b, ccbulk::pressure(m), k, j, i - 1);
-            const Real &Pp = v(b, ccbulk::pressure(m), k, j, i);
-            const Real J = -0.5 * (d(k, j, i - 1) + d(k, j, i)) * (rhomp - rhomm) * dxinv;
-            const Real face_rhom = 0.5 * (rhomm + rhomp);
-            Real face_specific_enthalpy =
-                0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
-              face_specific_enthalpy *= (face_rhom > 1e-10);
+          for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
+            auto dl = deltas[DIR];
+            auto pv = RiotLoop::make_pack_view(idx_range, v);
+            auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
+            auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
+            auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+            auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
+            auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+            auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                  ccbulk::total_material_energy());
+            if (niso > 0) {
+              for (int iso = 0; iso < niso; iso++) {
+                const int iso_idx = offset_iso + iso;
+                auto flx_iso =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso_idx));
+                auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(m));
+                auto isofrho = RiotLoop::make_var_view(idx_range, v, cm::iso(m));
+                RiotLoop::inner(idx_range, [&](const auto kji) {
+                  const auto [k, j, i] = idx_range.GetKJI(kji);
+                  const Real dxinv = 1.0 / (coords.Dxc(DIR, k, j, i) + 1e-20);
+                  const Real J = -0.5 * (d(kji - dl) + d(kji)) *
+                                 (isorho(kji) - isorho(kji - dl)) * dxinv;
+                  const Real face_rhom = 0.5 * (isorho(kji - dl) + isorho(kji));
+                  Real face_specific_enthalpy =
+                      0.5 *
+                      (isorho(kji - dl) * Em(kji - dl) + isorho(kji) * Em(kji) +
+                       fv(kji - dl) * pres(kji - dl) + fv(kji) * pres(kji)) /
+                      (face_rhom + 1e-20);
+                  face_specific_enthalpy *= (face_rhom > 1e-10);
 
-            Real &frhomx = v.flux(b, X1DIR, ccmat::rho(m), k, j, i);
-            Real &fEx = v.flux(b, X1DIR, ccbulk::total_material_energy(), k, j, i);
-            frhomx += J;
-            fEx += J * face_specific_enthalpy;
-          });
+                  flx_iso(kji) += J;
+                  flx_rhom(kji) += J;
+                  flx_E(kji) += J * face_specific_enthalpy;
+                });
+              }
+            } else {
+              // just flux material mass density
+              RiotLoop::inner(idx_range, [&](const auto kji) {
+                const auto [k, j, i] = idx_range.GetKJI(kji);
+                const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
+                const Real J =
+                    -0.5 * (d(kji - dj) + d(kji)) * (rhom(kji) - rhom(kji - dl)) * dxinv;
+                const Real face_rhom = 0.5 * (rhom(kji - dl) + rhom(kji));
+                Real face_specific_enthalpy =
+                    0.5 *
+                    (rhom(kji - dl) * Em(kji - dl) + rhom(kji) * Em(kji) +
+                     fv(kji - dl) * pres(kji - dl) + fv(kji) * pres(kji)) /
+                    (face_rhom + 1e-20);
+                face_specific_enthalpy *= (face_rhom > 1e-10);
 
-          if (ndim > 1) {
-            // X2 fluxes
-            RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-              const Real dyinv = 1.0 / (coords.Dxc(X2DIR, k, j, i) + 1e-20);
-              const Real &rhomm = v(b, ccmat::rho(m), k, j - 1, i);
-              const Real &rhomp = v(b, ccmat::rho(m), k, j, i);
-              const Real &fvm = v(b, ccmat::volume_fraction(m), k, j - 1, i);
-              const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
-              const Real &Emm = v(b, ccmat::internal_energy(m), k, j - 1, i);
-              const Real &Emp = v(b, ccmat::internal_energy(m), k, j, i);
-              const Real &Pm = v(b, ccbulk::pressure(m), k, j - 1, i);
-              const Real &Pp = v(b, ccbulk::pressure(m), k, j, i);
-              const Real J =
-                  -0.5 * (d(k, j - 1, i) + d(k, j, i)) * (rhomp - rhomm) * dyinv;
-              const Real face_rhom = 0.5 * (rhomm + rhomp);
-              Real face_specific_enthalpy =
-                  0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
-              face_specific_enthalpy *= (face_rhom > 1e-10);
-
-              Real &frhomy = v.flux(b, X2DIR, ccmat::rho(m), k, j, i);
-              Real &fEy = v.flux(b, X2DIR, ccbulk::total_material_energy(), k, j, i);
-              frhomy += J;
-              fEy += J * face_specific_enthalpy;
-            });
-          }
-
-          if (ndim > 2) {
-            // X3 fluxes
-            RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-              const Real dzinv = 1.0 / (coords.Dxc(X3DIR, k, j, i) + 1e-20);
-              const Real &rhomm = v.flux(b, X1DIR, ccmat::rho(m), k - 1, j, i);
-              const Real &rhomp = v.flux(b, X1DIR, ccmat::rho(m), k, j, i);
-              const Real &fvm = v(b, ccmat::volume_fraction(m), k - 1, j, i);
-              const Real &fvp = v(b, ccmat::volume_fraction(m), k, j, i);
-              const Real &Emm = v.flux(b, X1DIR, ccmat::internal_energy(m), k - 1, j, i);
-              const Real &Emp = v.flux(b, X1DIR, ccmat::internal_energy(m), k, j, i);
-              const Real &Pm = v.flux(b, X1DIR, ccbulk::pressure(m), k - 1, j, i);
-              const Real &Pp = v.flux(b, X1DIR, ccbulk::pressure(m), k, j, i);
-              const Real J =
-                  -0.5 * (d(k - 1, j, i) + d(k, j, i)) * (rhomp - rhomm) * dzinv;
-              const Real face_rhom = 0.5 * (rhomm + rhomp);
-              const Real face_specific_enthalpy =
-                  0.5 * (rhomm * Emm + rhomp * Emp + fvm * Pm + fvp * Pp) / (face_rhom + 1e-20);
-
-              Real &frhomz = v.flux(b, X3DIR, ccmat::rho(m), k, j, i);
-              Real &fEz = v.flux(b, X3DIR, ccbulk::total_material_energy(), k, j, i);
-              frhomz += J;
-              fEz += J * face_specific_enthalpy;
-            });
+                flx_rhom(kji) += J;
+                flx_E(kji) += J * face_specific_enthalpy;
+              });
+            } // niso > 0
           }
 
           offset_iso += niso;
