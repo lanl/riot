@@ -32,7 +32,7 @@ using namespace parthenon::package::prelude;
 
 class GeodesicGrid {
  public:
-  GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole);
+  GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole, bool fv_fix);
   ~GeodesicGrid();
 
   int nangles; // number of angles (derived from nlevel, 5*(2*nlevel^2) + 2)
@@ -67,7 +67,6 @@ class GeodesicGrid {
                          int comp);
 
   void ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
-                                    ParArrayHost<Real> &cart_pos_unit_h,
                                     ParArrayHost<Real> &weights_h,
                                     ParArrayHost<Real> &arc_weights_h,
                                     ParArrayHost<Real> &gflux_h,

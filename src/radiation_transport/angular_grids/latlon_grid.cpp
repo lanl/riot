@@ -32,7 +32,7 @@ using namespace parthenon;
 //----------------------------------------------------------------------------------------
 // NOTE(@pdmullen): The latlon grid infrastructure closesly resembes the AthenaK
 // geodesic grid implementation (see copyrights info above).
-LatLonGrid::LatLonGrid(int ntheta, int nphi)
+LatLonGrid::LatLonGrid(int ntheta, int nphi, bool fv_fix)
     : ntheta_(ntheta), nphi_(nphi), num_neighbors("num_neighbors", 1),
       ind_neighbors("ind_neighbors", 1, 1),
       ind_neighbors_edges("ind_neighbors_edges", 1, 1), weights("weights", 1),
@@ -71,15 +71,17 @@ LatLonGrid::LatLonGrid(int ntheta, int nphi)
 
   ComputeThetaLevels(theta_v, theta_f, costheta_v, costheta_f);
   ComputePhiAngles(phi_v, phi_f);
-  ComputeCartesianDirections(theta_v, phi_v, cart_pos_h);
+  ComputeCartesianDirections(theta_v, phi_v, cart_pos_h, cart_pos_unit_h);
   ComputeWeights(costheta_f, phi_f, weights_h);
   ComputeNeighborConnectivity(num_neighbors_h, ind_neighbors_h, ind_neighbors_edges_h);
   ComputeArcLengths(theta_f, phi_f, theta_v, phi_v, arc_weights_h, cart_pos_mid_h,
                     ind_neighbors_h, ind_neighbors_edges_h, num_neighbors_h);
   ComputeUnitFluxes(theta_v, phi_v, theta_f, phi_f, gflux_h, cart_pos_mid_h,
                     ind_neighbors_h, ind_neighbors_edges_h, num_neighbors_h);
-  ApplyFiniteVolumeCorrections(theta_f, phi_f, cart_pos_h, cart_pos_unit_h, weights_h,
-                               arc_weights_h, gflux_h, num_neighbors_h, ind_neighbors_h);
+  if (fv_fix) {
+    ApplyFiniteVolumeCorrections(theta_f, phi_f, cart_pos_h, weights_h, arc_weights_h,
+                                 gflux_h, num_neighbors_h, ind_neighbors_h);
+  }
 
   // deep copy
   Kokkos::deep_copy(num_neighbors, num_neighbors_h);
@@ -107,24 +109,11 @@ LatLonGrid::~LatLonGrid() {}
 //!   <n_y> = [int sin^2 theta dtheta][cos phi_lo - cos phi_hi] / (dcos theta * dphi)
 //!   <n_z> = 1/2 (cos theta_lo + cos theta_hi)
 //! with int sin^2 theta dtheta = [theta/2 - sin(2 theta)/4].
-//!
-//! For the "curvature direction" in a curvilinear build, we overwrite <n_curv> with the
-//! discrete angular-flux divergence coefficient built from the same gflux/arc array, so
-//! that the spatial curvature term cancels the angular divergence exactly for a uniform
-//! isotropic field.
 void LatLonGrid::ApplyFiniteVolumeCorrections(
     ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
-    ParArrayHost<Real> &cart_pos_h, ParArrayHost<Real> &cart_pos_unit_h,
-    ParArrayHost<Real> &weights_h, ParArrayHost<Real> &arc_weights_h,
-    ParArrayHost<Real> &gflux_h, ParArrayHost<int> &num_neighbors_h,
-    ParArrayHost<int> &ind_neighbors_h) {
-  // cart_pos_unit always holds the untouched true (centroid) unit cosines
-  for (int n = 0; n < nangles; ++n) {
-    for (int d = 0; d < 3; ++d) {
-      cart_pos_unit_h(n, d) = cart_pos_h(n, d);
-    }
-  }
-
+    ParArrayHost<Real> &cart_pos_h, ParArrayHost<Real> &weights_h,
+    ParArrayHost<Real> &arc_weights_h, ParArrayHost<Real> &gflux_h,
+    ParArrayHost<int> &num_neighbors_h, ParArrayHost<int> &ind_neighbors_h) {
   // Solid-angle-averaged cosines for every transported component.
   for (int it = 0; it < ntheta_; ++it) {
     const Real th_lo = theta_f(it), th_hi = theta_f(it + 1);
@@ -144,8 +133,10 @@ void LatLonGrid::ApplyFiniteVolumeCorrections(
     }
   }
 
-  // Curvature-direction component from the discrete angular-flux divergence
-  // coefficient g_a (matches the divfa operator exactly under edge symmetrization)
+  // Consistency check: the curvature-direction cosine already stored in cart_pos_h is the
+  // solid-angle average <n_curv>.  Confirm it agrees to round-off with g_a built from the
+  // exact symmetrized edge arrays the divfa operator uses (both equal the same
+  // divergence-theorem integral); this validates the edge gflux/arc_weights construction.
   if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
                 parthenon::IsCoord<parthenon::UniformSpherical>()) {
     constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
@@ -154,7 +145,9 @@ void LatLonGrid::ApplyFiniteVolumeCorrections(
       Real ga = 0.0;
       for (int nb = 0; nb < num_neighbors_h(n); ++nb)
         ga += gflux_h(n, nb) * arc_weights_h(n, nb);
-      cart_pos_h(n, curv_comp) = ga / (weights_h(n) * kappa);
+      const Real ga_curv = ga / (weights_h(n) * kappa);
+      PARTHENON_REQUIRE(std::abs(ga_curv - cart_pos_h(n, curv_comp)) < 1.0e-12,
+                        "Lat-lon g_a disagrees with solid-angle average <n_curv>.");
     }
   }
 }
@@ -190,14 +183,21 @@ void LatLonGrid::ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputeCartesianDirections(ParArrayHost<Real> &theta_v,
                                             ParArrayHost<Real> &phi_v,
-                                            ParArrayHost<Real> &cart_pos_h) {
+                                            ParArrayHost<Real> &cart_pos_h,
+                                            ParArrayHost<Real> &cart_pos_unit_h) {
   for (int it = 0; it < ntheta_; ++it) {
     for (int ip = 0; ip < nphi_; ++ip) {
       const int idx = it * nphi_ + ip;
       const Real sintheta = std::sin(theta_v(it));
-      cart_pos_h(idx, 0) = sintheta * std::cos(phi_v(ip));
-      cart_pos_h(idx, 1) = sintheta * std::sin(phi_v(ip));
-      cart_pos_h(idx, 2) = std::cos(theta_v(it));
+      const Real nx = sintheta * std::cos(phi_v(ip));
+      const Real ny = sintheta * std::sin(phi_v(ip));
+      const Real nz = std::cos(theta_v(it));
+      cart_pos_h(idx, 0) = nx;
+      cart_pos_h(idx, 1) = ny;
+      cart_pos_h(idx, 2) = nz;
+      cart_pos_unit_h(idx, 0) = nx;
+      cart_pos_unit_h(idx, 1) = ny;
+      cart_pos_unit_h(idx, 2) = nz;
     }
   }
 }
