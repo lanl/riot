@@ -1722,36 +1722,31 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           const int niso =
               num_iso_per_mat(global_mat_id); // does the material have isotopes?
 
+          auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
+          auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
+          auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
+
           if (niso > 0) {
             for (int iso = 0; iso < niso; iso++) {
               const int iso_idx = offset_iso + iso;
+
+              // calculate isotopic diffusion coefficient and diffusion rate (used for
+              // setting time step)
               RiotLoop::inner(halo_range, [&](const auto kji) {
                 auto isofrho = RiotLoop::make_var_view(idx_range, v, cm::iso(m));
                 d(kji) += diffusion_coefficient * isofrho(kji);
                 ratemax(kji) = std::max(ratemax(kji), d(kji));
               });
-            }
-          } else { // no isotopic information
-            RiotLoop::inner(idx_range, [&](const auto kji) {
-              d(kji) = diffusion_coefficient;
-              ratemax(kji) = std::max(ratemax(kji), d(kji));
-            });
-          }
-          idx_range.TeamBarrier();
+              idx_range.TeamBarrier();
 
-          for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
-            auto dl = deltas[DIR];
-            auto pv = RiotLoop::make_pack_view(idx_range, v);
-            auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
-            auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
-            auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-            auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
-            auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
-            auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
-                                                  ccbulk::total_material_energy());
-            if (niso > 0) {
-              for (int iso = 0; iso < niso; iso++) {
-                const int iso_idx = offset_iso + iso;
+              // calculate fluxes to add in
+              for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
+                auto dl = deltas[DIR];
+                auto flx_rhom =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+                auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                      ccbulk::total_material_energy());
                 auto flx_iso =
                     RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso_idx));
                 auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(m));
@@ -1772,10 +1767,26 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
                   flx_iso(kji) += J;
                   flx_rhom(kji) += J;
                   flx_E(kji) += J * face_specific_enthalpy;
-                });
-              }
-            } else {
-              // just flux material mass density
+                }); // inner loop
+              } // direction loop
+            } // isotope loop
+          } else { // no isotopic information - just compute material mass flux
+
+            // calculate material diffusion coefficient and diffusion rate (used for
+            // setting time step)
+            RiotLoop::inner(halo_range, [&](const auto kji) {
+              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+              d(kji) += diffusion_coefficient * rhom(kji);
+              ratemax(kji) = std::max(ratemax(kji), d(kji));
+            });
+            idx_range.TeamBarrier();
+
+            // calculate fluxes to add in
+            for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
+              auto dl = deltas[DIR];
+              auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+              auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                    ccbulk::total_material_energy());
               RiotLoop::inner(idx_range, [&](const auto kji) {
                 const auto [k, j, i] = idx_range.GetKJI(kji);
                 const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
@@ -1791,12 +1802,13 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
 
                 flx_rhom(kji) += J;
                 flx_E(kji) += J * face_specific_enthalpy;
-              });
-            } // niso > 0
-          }
+              }); // inner loop
+            } // direction loop
+
+          } // isotopes or not
 
           offset_iso += niso;
-        } // materials
+        } // materials loop
 
         // reduction on rate for setting stable time step limit
         RiotLoop::inner_reduce(idx_range, [&](const auto kji, Real &max_rate) {
