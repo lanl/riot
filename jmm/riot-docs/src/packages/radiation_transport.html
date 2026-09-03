@@ -1,0 +1,671 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Radiation Transport &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Radiation Diffusion (P1)" href="radiation_diffusion.html" />
+    <link rel="prev" title="Turbulent Mixing (BHR)" href="mix.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Radiation Transport</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#radiative-transfer-equation">Radiative Transfer Equation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#multigroup-formulation">Multigroup Formulation</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#stored-intensity-and-energy-density">Stored Intensity and Energy Density</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#angular-discretization">Angular Discretization</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#multi-material-opacities">Multi-Material Opacities</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#matterradiation-coupling">Matter–Radiation Coupling</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#solvers">Solvers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#convergence-subcycling">Convergence Subcycling</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#initialization">Initialization</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#boundary-conditions">Boundary Conditions</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Radiation Transport</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/radiation_transport.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="radiation-transport">
+<span id="chap-radtransport"></span><h1>Radiation Transport<a class="headerlink" href="#radiation-transport" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">radiation_transport</span></code> package solves the time-dependent equation of photon radiative transfer with a discrete-ordinates (<span class="math notranslate nohighlight">\(S_N\)</span>) method. It transports the specific intensity along a fixed set of angular directions, couples the radiation field to the material internal energy through absorption and emission, and supports grey or multigroup frequency resolution. Two solver variants are provided: an <em>explicit</em> sub-cycled integrator and an <em>implicit</em> Jacobi iteration. Opacities are supplied per material (Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>).</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<section id="radiative-transfer-equation">
+<h3>Radiative Transfer Equation<a class="headerlink" href="#radiative-transfer-equation" title="Link to this heading"></a></h3>
+<p>The time evolution of the frequency-dependent specific intensity <span class="math notranslate nohighlight">\(I_\nu\)</span> is governed by the transport equation</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial I_\nu}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_\nu = c\left(j_\nu - \alpha_\nu I_\nu\right),\]</div>
+<p>where <span class="math notranslate nohighlight">\(c\)</span> is the speed of light, <span class="math notranslate nohighlight">\(\vec{n}\)</span> is a unit vector defining the photon propagation direction, and <span class="math notranslate nohighlight">\(j_\nu\)</span> and <span class="math notranslate nohighlight">\(\alpha_\nu\)</span> are the frequency-dependent emissivity and absorptivity, respectively.</p>
+</section>
+<section id="multigroup-formulation">
+<h3>Multigroup Formulation<a class="headerlink" href="#multigroup-formulation" title="Link to this heading"></a></h3>
+<p>In the multigroup formalism the frequency domain is divided into <span class="math notranslate nohighlight">\(N_\nu\)</span> bins by endpoints <span class="math notranslate nohighlight">\(\nu_0,\nu_1,\dots,\nu_{N_\nu}\)</span>, with <span class="math notranslate nohighlight">\(\nu_0 = 0\)</span> and <span class="math notranslate nohighlight">\(\nu_{N_\nu}=\infty\)</span> covering all of frequency space. Integrating the transport equation over group <span class="math notranslate nohighlight">\(f\)</span>, with frequency bounds <span class="math notranslate nohighlight">\([\nu_{f-1},\nu_f)\)</span>, gives</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial I_f}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_f = c\left(j_f - \alpha_f I_f\right),\]</div>
+<p>where the subscript <span class="math notranslate nohighlight">\(f\)</span> denotes a quantity integrated over the group (e.g. <span class="math notranslate nohighlight">\(I_f = \int_{\nu_{f-1}}^{\nu_f} I_\nu\,\mathrm{d}\nu\)</span> is the frequency-integrated specific intensity), and the group absorptivity <span class="math notranslate nohighlight">\(\alpha_f\)</span> is a group-mean average.</p>
+<p>Assuming a static background medium (material mass density <span class="math notranslate nohighlight">\(\rho\)</span>, temperature <span class="math notranslate nohighlight">\(T\)</span>), local thermodynamic equilibrium (LTE), and isotropic elastic scattering, the group transport equation expands to</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial I_f}{\partial t} + c\,\vec{n}\!\cdot\!\nabla I_f
+  = c\left[\sigma_{s,f}\left(J_f - I_f\right)
+           + \sigma_{a,f}\left(\varepsilon_f - I_f\right)\right],\]</div>
+<p>where <span class="math notranslate nohighlight">\(\sigma_{a,f}\)</span> and <span class="math notranslate nohighlight">\(\sigma_{s,f}\)</span> are the group-mean absorption and scattering coefficients of the cell. In a multi-material cell these are aggregated from the per-material opacities as given in Section <a class="reference internal" href="#sec-rad-opacity"><span class="std std-ref">Multi-Material Opacities</span></a>; for a single material <span class="math notranslate nohighlight">\(m\)</span> they reduce to <span class="math notranslate nohighlight">\(\sigma_{a,f}=\rho_m\kappa_{a,f,m}\)</span> and <span class="math notranslate nohighlight">\(\sigma_{s,f}=\rho_m\kappa_{s,f,m}\)</span> in terms of the specific opacities <span class="math notranslate nohighlight">\(\kappa_{a,f,m}\)</span>, <span class="math notranslate nohighlight">\(\kappa_{s,f,m}\)</span>. The group mean intensity over solid angle <span class="math notranslate nohighlight">\(\Omega\)</span> is</p>
+<div class="math notranslate nohighlight">
+\[J_f = \frac{1}{4\pi}\int I_f\,\mathrm{d}\Omega ,\]</div>
+<p>and is related to the group radiation energy density by <span class="math notranslate nohighlight">\(E_f = \tfrac{4\pi}{c} J_f = \tfrac{1}{c}\int I_f\,\mathrm{d}\Omega\)</span>. The emission coefficient <span class="math notranslate nohighlight">\(\varepsilon_f\)</span> is proportional to the integral of the Planck function <span class="math notranslate nohighlight">\(B(\nu,T)\)</span> over the group band,</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\varepsilon_f &amp;= \frac{c}{4\pi}\int_{\nu_{f-1}}^{\nu_f} B(\nu,T)\,\mathrm{d}\nu,
+  \qquad\text{where}\\
+B(\nu,T) &amp;= \frac{8\pi h\nu^3}{c^3}\,
+            \frac{1}{\exp\!\left(h\nu/[kT]\right) - 1}.\end{split}\]</div>
+<p>For a single group with <span class="math notranslate nohighlight">\([\nu_0,\nu_{N_\nu}) \to [0,\infty)\)</span> (i.e. “grey”), <span class="math notranslate nohighlight">\(\varepsilon_f\)</span> reduces to <span class="math notranslate nohighlight">\(\varepsilon_{\text{grey}} = c\,a\,T^4/[4\pi]\)</span>, where <span class="math notranslate nohighlight">\(a\)</span> is the radiation constant. The band integrals are evaluated in closed form using polylogarithms.</p>
+<p>The frequency group structure (<span class="math notranslate nohighlight">\(N_\nu\)</span> and the group boundaries in Hz) is <em>not</em> an input of the radiation package: it is owned by the materials package and resolved from the <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block, the opacity tables, or a grey default, exactly as described in Section <a class="reference internal" href="materials.html#sec-mat-group-structure"><span class="std std-ref">Frequency Group Structure</span></a>. The radiation package reads the resolved structure from the materials package at initialization, so the transport and the opacities always share one group grid.</p>
+</section>
+<section id="stored-intensity-and-energy-density">
+<h3>Stored Intensity and Energy Density<a class="headerlink" href="#stored-intensity-and-energy-density" title="Link to this heading"></a></h3>
+<p>For efficiency the transported field <code class="docutils literal notranslate"><span class="pre">ccrad::intensity</span></code> stores a scaled intensity that absorbs a factor of <span class="math notranslate nohighlight">\(4\pi/c\)</span> relative to <span class="math notranslate nohighlight">\(I_f\)</span>, so that the group radiation energy density is recovered directly as a weighted sum over the discrete directions,</p>
+<div class="math notranslate nohighlight">
+\[E_f = \sum_{a} w_a\,I_{f,a},\]</div>
+<p>where <span class="math notranslate nohighlight">\(I_{f,a}\)</span> is the stored intensity in direction <span class="math notranslate nohighlight">\(a\)</span> and the angular quadrature weights <span class="math notranslate nohighlight">\(w_a\)</span> are normalized to <span class="math notranslate nohighlight">\(\sum_a w_a = 1\)</span>. The streaming term is discretized with a Rusanov flux weighted by the local optical depth (controlled by <code class="docutils literal notranslate"><span class="pre">beta</span></code> and <code class="docutils literal notranslate"><span class="pre">taumax</span></code>), so the scheme transitions smoothly between the optically thin (transport) and optically thick (diffusion) limits. In reduced-dimension curvilinear geometries (1D spherical, 2D cylindrical) an additional angular-flux divergence term (<code class="docutils literal notranslate"><span class="pre">ccrad::divfa</span></code>) accounts for the rotation of <span class="math notranslate nohighlight">\(\vec{n}\)</span> along curved streaming paths; it is compiled in only for those coordinate systems.</p>
+</section>
+<section id="angular-discretization">
+<h3>Angular Discretization<a class="headerlink" href="#angular-discretization" title="Link to this heading"></a></h3>
+<p>The unit sphere of directions is discretized into <span class="math notranslate nohighlight">\(N_{\text{ang}}\)</span> ordinates, each carrying a solid-angle weight. Two quadratures are available: a nearly uniform <em>geodesic</em> grid built by subdividing an icosahedron, for which <span class="math notranslate nohighlight">\(N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2\)</span>, and a <em>latitude–longitude</em> product grid with <span class="math notranslate nohighlight">\(N_{\text{ang}} = n_\theta\,n_\phi\)</span>. The geodesic grid may be rotated to avoid alignment with the spatial mesh. The quadrature and its resolution are set by the angular-grid parameters below.</p>
+</section>
+<section id="multi-material-opacities">
+<span id="sec-rad-opacity"></span><h3>Multi-Material Opacities<a class="headerlink" href="#multi-material-opacities" title="Link to this heading"></a></h3>
+<p>The cell absorption and scattering coefficients that appear in the equation above are aggregated from the per-material opacities (Section <a class="reference internal" href="materials.html#sec-mat-opacity"><span class="std std-ref">Opacity Models</span></a>) as volume-fraction-weighted sums,</p>
+<div class="math notranslate nohighlight">
+\[\sigma_{a,f} = \sum_m f_m\,\rho_m\,\kappa_{a,f,m}
+             = \sum_m f_m\,\sigma_{a,f,m}, \qquad
+\sigma_{s,f} = \sum_m f_m\,\sigma_{s,f,m},\]</div>
+<p>where each material’s coefficient <span class="math notranslate nohighlight">\(\sigma_{a,f,m} = \rho_m\,\kappa_{a,f,m}\)</span> is evaluated from its own opacity model at the material-averaged density <span class="math notranslate nohighlight">\(\rho_m\)</span> and the (shared) cell temperature. This follows the volume-fraction aggregation of Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>, so a mixed cell presents a single set of group coefficients to the transport solve.</p>
+</section>
+<section id="matterradiation-coupling">
+<h3>Matter–Radiation Coupling<a class="headerlink" href="#matterradiation-coupling" title="Link to this heading"></a></h3>
+<p>When coupling is enabled (<code class="docutils literal notranslate"><span class="pre">coupling</span></code>), energy exchanged with the radiation field is removed from (or added to) the material internal energy, conserving total energy,</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial E_{\text{mat}}}{\partial t} = -\,\frac{\partial E_{\text{rad}}}{\partial t}, \qquad
+E_{\text{rad}} = \sum_f E_f .\]</div>
+<p>The exchange is treated implicitly: an advanced material temperature <span class="math notranslate nohighlight">\(T^{n+1}\)</span> is found by a non-linear root solve (tolerance <code class="docutils literal notranslate"><span class="pre">troot_tol</span></code>, iteration cap <code class="docutils literal notranslate"><span class="pre">troot_max_iter</span></code>) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with <code class="docutils literal notranslate"><span class="pre">affect_fluid</span></code> (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with <code class="docutils literal notranslate"><span class="pre">fixed_temp_rhs</span></code>.</p>
+</section>
+</section>
+<section id="solvers">
+<h2>Solvers<a class="headerlink" href="#solvers" title="Link to this heading"></a></h2>
+<p>Two integrators advance the transport equation. Radiation transport is enabled by setting <code class="docutils literal notranslate"><span class="pre">radiation_transport</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">true</span></code> in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>); the solver is then chosen in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport&gt;</span></code> block by <code class="docutils literal notranslate"><span class="pre">do_explicit</span></code> and <code class="docutils literal notranslate"><span class="pre">do_jacobi</span></code>. Both default to <code class="docutils literal notranslate"><span class="pre">false</span></code>, and RIOT requires that <em>exactly one</em> be enabled — it is an error to set both or neither.</p>
+<div class="docutils container" id="tab-rad-solvers">
+<table class="docutils align-default" id="id1">
+<caption><span class="caption-text">Radiation transport solvers.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Solver</strong></p></th>
+<th class="head"><p><strong>Description</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>do_explicit</p></td>
+<td><p>Sub-cycled explicit integrator (Runge–Kutta), with an optical-depth-weighted Rusanov streaming flux.</p></td>
+</tr>
+<tr class="row-odd"><td><p>do_jacobi</p></td>
+<td><p>Iterative implicit (Jacobi) solver; robust at large optical depth, iterated to a residual threshold.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Radiation transport requires hydrodynamics and is incompatible with the ionization package, with sparse physics (Chapter <a class="reference internal" href="sparse_physics.html#chap-sparse-physics"><span class="std std-ref">Sparse Physics</span></a>), and with the P1 radiation diffusion package (Chapter <a class="reference internal" href="radiation_diffusion.html#chap-raddiffusion"><span class="std std-ref">Radiation Diffusion (P1)</span></a>), which provides an alternative radiation model — at most one of the two may be enabled. Because <code class="docutils literal notranslate"><span class="pre">sparse_physics</span></code> defaults to <code class="docutils literal notranslate"><span class="pre">true</span></code>, a radiation run must set it <code class="docutils literal notranslate"><span class="pre">false</span></code> explicitly in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block.</p>
+<p>Parameters are organized into a shared <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport&gt;</span></code> block and three nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/explicit&gt;</span></code> or <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/jacobi&gt;</span></code>; the radiation initial state is set in <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/init&gt;</span></code>; and the drive boundary condition is configured in <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/drive&gt;</span></code>.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Solver selection and shared parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>do_explicit</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Use the explicit sub-cycled integrator.</p></td>
+</tr>
+<tr class="row-odd"><td><p>do_jacobi</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Use the implicit Jacobi solver. Exactly one of these two must be <code class="docutils literal notranslate"><span class="pre">true</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>cfl</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.8</span></code></p></td>
+<td><p>CFL number for the transport update.</p></td>
+</tr>
+<tr class="row-odd"><td><p>coupling</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Enable the emission/absorption/scattering source.</p></td>
+</tr>
+<tr class="row-even"><td><p>affect_fluid</p></td>
+<td><p>bool</p></td>
+<td><p><em>=coupling</em></p></td>
+<td><p>Feed the radiation source back onto the fluid energy (requires <code class="docutils literal notranslate"><span class="pre">coupling</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>fixed_temp_rhs</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Skip the advanced-temperature solve in the source term.</p></td>
+</tr>
+<tr class="row-even"><td><p>beta</p></td>
+<td><p>Real</p></td>
+<td><p><em>geom.</em></p></td>
+<td><p>Weight on the local optical depth in the Rusanov flux (<span class="math notranslate nohighlight">\(1.0\)</span> in Cartesian, <span class="math notranslate nohighlight">\(0.0\)</span> in curvilinear geometries).</p></td>
+</tr>
+<tr class="row-odd"><td><p>taumax</p></td>
+<td><p>Real</p></td>
+<td><p><em>large</em></p></td>
+<td><p>Cap on the optical depth used in the Rusanov flux (default <span class="math notranslate nohighlight">\(\approx\)</span> <code class="docutils literal notranslate"><span class="pre">Real</span></code> max).</p></td>
+</tr>
+<tr class="row-even"><td><p>troot_tol</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-8</span></code></p></td>
+<td><p>Tolerance for the non-linear temperature root find.</p></td>
+</tr>
+<tr class="row-odd"><td><p>troot_max_iter</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">25</span></code></p></td>
+<td><p>Maximum iterations for the temperature root find.</p></td>
+</tr>
+<tr class="row-even"><td><p>fixed_pgen_opac</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Fix opacities to the values set in the problem generator.</p></td>
+</tr>
+<tr class="row-odd"><td><p>units_override</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Use a custom (non-CGS) unit system for testing.</p></td>
+</tr>
+<tr class="row-even"><td><p>c, arad, kb, h</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Speed of light, radiation, Boltzmann, and Planck constants (only when <code class="docutils literal notranslate"><span class="pre">units_override</span></code>).</p></td>
+</tr>
+</tbody>
+</table>
+<p>The <code class="docutils literal notranslate"><span class="pre">beta</span></code>, <code class="docutils literal notranslate"><span class="pre">taumax</span></code>, <code class="docutils literal notranslate"><span class="pre">troot_tol</span></code>, and <code class="docutils literal notranslate"><span class="pre">troot_max_iter</span></code> parameters are read only when <code class="docutils literal notranslate"><span class="pre">coupling</span></code> is <code class="docutils literal notranslate"><span class="pre">true</span></code>.</p>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Angular-grid parameters (in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport&gt;</span></code> block).</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>angular_mesh</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">geodesic</span></code></p></td>
+<td><p>Angular quadrature: <code class="docutils literal notranslate"><span class="pre">geodesic</span></code> or <code class="docutils literal notranslate"><span class="pre">latlon</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>nlevel</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Geodesic refinement level; <span class="math notranslate nohighlight">\(N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>rotate_geo</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Geodesic rotation: 0 none, 1 automatic, 2 user angles.</p></td>
+</tr>
+<tr class="row-odd"><td><p>zpole, ppole</p></td>
+<td><p>Real</p></td>
+<td><p><em>NaN</em></p></td>
+<td><p>Manual geodesic rotation angles (used when <code class="docutils literal notranslate"><span class="pre">rotate_geo</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">2</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>ntheta</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">8</span></code></p></td>
+<td><p>Latitude bins (latlon grid).</p></td>
+</tr>
+<tr class="row-odd"><td><p>nphi</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">16</span></code></p></td>
+<td><p>Longitude bins (latlon grid).</p></td>
+</tr>
+</tbody>
+</table>
+<p>The explicit solver adds sub-cycling controls:</p>
+<table class="wraptable docutils align-default" id="id4">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/explicit&gt;</span></code> block.</span><a class="headerlink" href="#id4" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>integrator</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rk2</span></code></p></td>
+<td><p>Time integrator for sub-cycling: <code class="docutils literal notranslate"><span class="pre">rk1</span></code>, <code class="docutils literal notranslate"><span class="pre">rk2</span></code>, or <code class="docutils literal notranslate"><span class="pre">rk3</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>dt_ratio_hyperbolic</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1.0</span></code></p></td>
+<td><p>Limit the global step to <code class="docutils literal notranslate"><span class="pre">cfl</span></code><span class="math notranslate nohighlight">\(\times\)</span>this<span class="math notranslate nohighlight">\(\times\min(\Delta x)/c\)</span>; <span class="math notranslate nohighlight">\(-1\)</span> lets radiation sub-cycle without limiting the global step.</p></td>
+</tr>
+<tr class="row-even"><td><p>verbose</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Diagnostic verbosity (0–2).</p></td>
+</tr>
+</tbody>
+</table>
+<p>The Jacobi solver adds iteration and timestep controls:</p>
+<table class="wraptable docutils align-default" id="id5">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/jacobi&gt;</span></code> block.</span><a class="headerlink" href="#id5" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>niter_limit</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1000</span></code></p></td>
+<td><p>Maximum Jacobi iterations per step.</p></td>
+</tr>
+<tr class="row-odd"><td><p>err_thr</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-8</span></code></p></td>
+<td><p>Residual threshold for convergence.</p></td>
+</tr>
+<tr class="row-even"><td><p>split_g1</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Split the Jacobi coefficient into positive/negative parts for robustness.</p></td>
+</tr>
+<tr class="row-odd"><td><p>dt_ratio_hyperbolic</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e4</span></code></p></td>
+<td><p>Limit the global step to a multiple of the hyperbolic step; <span class="math notranslate nohighlight">\(-1\)</span> disables this controller.</p></td>
+</tr>
+<tr class="row-even"><td><p>dt_ratio_lag</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1.0</span></code></p></td>
+<td><p><em>Experimental</em> step limiter accounting for lagged opacities; <span class="math notranslate nohighlight">\(-1\)</span> disables it.</p></td>
+</tr>
+<tr class="row-odd"><td><p>verbose</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Diagnostic verbosity (0–3; higher levels report per-iteration residuals, subcycling, and root-find failures).</p></td>
+</tr>
+</tbody>
+</table>
+<section id="convergence-subcycling">
+<span id="sec-rad-jacobi-subcycle"></span><h3>Convergence Subcycling<a class="headerlink" href="#convergence-subcycling" title="Link to this heading"></a></h3>
+<p>The Jacobi solver performs a single <em>global</em> implicit solve over the whole mesh each step, with the opacities lagged from the start of the step. This is a demanding nonlinear problem, and RIOT provides an escape hatch for the rare case in which an individual solve truly goes off the rails — its residual growing or stalling rather than settling. When a solve is judged to be diverging, it is discarded and the operator-split step is retried from the pristine start-of-step state with the timestep divided by <code class="docutils literal notranslate"><span class="pre">reduce_factor</span></code>, repeating (reducing further as needed) until each subinterval completes and the full step is covered. It is a robustness backstop rather than part of the normal solve, and it is off by default.</p>
+<p>Subcycling is distinct from the ordinary iteration count. Reaching <code class="docutils literal notranslate"><span class="pre">niter_limit</span></code> is <em>not</em> divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, or — when the stall detector is enabled — when it fails to improve on its best residual so far for <code class="docutils literal notranslate"><span class="pre">ndiverge_limit</span></code> consecutive iterations. If subcycling is disabled (<code class="docutils literal notranslate"><span class="pre">nreduce_limit</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">0</span></code>) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.</p>
+<table class="wraptable docutils align-default" id="id6">
+<caption><span class="caption-text">Convergence-subcycling parameters (in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/jacobi&gt;</span></code> block).</span><a class="headerlink" href="#id6" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>nreduce_limit</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Maximum number of timestep reductions permitted on divergence; <span class="math notranslate nohighlight">\(0\)</span> disables subcycling (a diverging solve aborts).</p></td>
+</tr>
+<tr class="row-odd"><td><p>reduce_factor</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Integer factor by which the subcycle timestep is divided at each reduction (<span class="math notranslate nohighlight">\(&gt;1\)</span>).</p></td>
+</tr>
+<tr class="row-even"><td><p>ndiverge_limit</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1</span></code></p></td>
+<td><p>Consecutive non-improving iterations that count as divergence and trigger a reduction; <span class="math notranslate nohighlight">\(-1\)</span> disables the stall detector, so only a non-finite residual fails a solve.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="initialization">
+<h3>Initialization<a class="headerlink" href="#initialization" title="Link to this heading"></a></h3>
+<p>The radiation field’s initial state is chosen in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/init&gt;</span></code> block.</p>
+<table class="wraptable docutils align-default" id="id7">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/init&gt;</span></code> block.</span><a class="headerlink" href="#id7" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>initialization</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">thermal</span></code></p></td>
+<td><p>Initial radiation field: <code class="docutils literal notranslate"><span class="pre">thermal</span></code> (in equilibrium with the matter, <span class="math notranslate nohighlight">\(E=aT^4\)</span>), <code class="docutils literal notranslate"><span class="pre">zero</span></code> (empty), or <code class="docutils literal notranslate"><span class="pre">none</span></code> (leave the problem-generator-set intensity untouched).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="boundary-conditions">
+<span id="sec-rad-drive-bc"></span><h3>Boundary Conditions<a class="headerlink" href="#boundary-conditions" title="Link to this heading"></a></h3>
+<p>By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (<code class="docutils literal notranslate"><span class="pre">ix1_bc</span></code> …, Chapter <a class="reference internal" href="../programmer_guide.html#chap-parthenon"><span class="std std-ref">Developer’s guide</span></a>). Any face may instead be given a <em>drive</em> condition — a fixed incoming radiation temperature — by naming it in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/drive&gt;</span></code> block.</p>
+<table class="wraptable docutils align-default" id="id8">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;radiation_transport/drive&gt;</span></code> block.</span><a class="headerlink" href="#id8" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ix1_bc …ox3_bc</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">default</span></code></p></td>
+<td><p>Per-face selector; set to <code class="docutils literal notranslate"><span class="pre">drive</span></code> to impose the drive condition on that face.</p></td>
+</tr>
+<tr class="row-odd"><td><p>trad_bc</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Uniform radiation temperature (K) injected by driven faces.</p></td>
+</tr>
+<tr class="row-even"><td><p>force_upwind_flux_bc</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Zero the boundary opacity to force a purely upwind flux at a driven face; if <code class="docutils literal notranslate"><span class="pre">false</span></code>, copy the interior opacity.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Opacities are a <em>material</em> property, not a radiation input: absorption and scattering models are selected per material in each material’s opacity block (<code class="docutils literal notranslate"><span class="pre">opac_a</span></code>, <code class="docutils literal notranslate"><span class="pre">opac_s</span></code>), and the frequency group structure on which the transport runs is likewise owned by the materials package. Both are documented in the materials chapter — the opacity models in Section <a class="reference internal" href="materials.html#sec-mat-opacity"><span class="std std-ref">Opacity Models</span></a> and the group structure in Section <a class="reference internal" href="materials.html#sec-mat-group-structure"><span class="std std-ref">Frequency Group Structure</span></a>.</p>
+</section>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The package registers the radiation fields in the table below under the <code class="docutils literal notranslate"><span class="pre">ccrad::</span></code> prefix. The stored intensity is the transported field, carrying one component per (group, angle) pair; recall it absorbs the <span class="math notranslate nohighlight">\(4\pi/c\)</span> factor so that <span class="math notranslate nohighlight">\(E_f = \sum_a w_a I_{f,a}\)</span>. The remaining fields are derived opacities, moments, and per-solver scratch. Every field also carries the OperatorSplit flag and a per-solver user flag; the set differs between the two solvers, as noted below.</p>
+<table class="wraptable docutils align-default" id="tab-rad-fields">
+<caption><span class="caption-text">Principal fields registered by the radiation package.</span><a class="headerlink" href="#tab-rad-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccrad::intensity</p></td>
+<td><p><span class="math notranslate nohighlight">\(I_{f,a}\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu N_{\text{ang}}\)</span></p></td>
+<td><p>Cell, Independent, FillGhost, Intensive, Conserved, OperatorSplit; stored intensity per group and angle (<span class="math notranslate nohighlight">\(4\pi/c\)</span>-scaled). The explicit solver adds WithFluxes; the Jacobi solver registers linear prolongation/restriction ops instead.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccrad::aa</p></td>
+<td><p><span class="math notranslate nohighlight">\(\sigma_{a,f}\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell absorption coefficient.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccrad::ss</p></td>
+<td><p><span class="math notranslate nohighlight">\(\sigma_{s,f}\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, FillGhost, OperatorSplit; cell scattering coefficient.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccrad::moments</p></td>
+<td><p><span class="math notranslate nohighlight">\(E_f\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, OperatorSplit; group radiation energy density and moments.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccrad::s1, s2, s3</p></td>
+<td><p>—</p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, OperatorSplit; auxiliary moment/source scratch (both solvers).</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccrad::divfa</p></td>
+<td><p>—</p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu N_{\text{ang}}\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, OperatorSplit; angular-flux divergence. Explicit solver only, and only in curvilinear geometries.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccrad::tauw</p></td>
+<td><p>—</p></td>
+<td><p><span class="math notranslate nohighlight">\(N_\nu\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, OperatorSplit; optical-depth weight (Jacobi solver only).</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccrad::temperature</p></td>
+<td><p><span class="math notranslate nohighlight">\(T^{n+1}\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Derived, OneCopy, OperatorSplit; advanced temperature (Jacobi solver only).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A grey, geodesic-grid transport run using the implicit Jacobi solver, coupled to a fixed (non-advecting) fluid, with a power-law absorption opacity on material <code class="docutils literal notranslate"><span class="pre">0</span></code> — the structure of a Marshak-wave problem:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">hydro</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">radiation_transport</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+           <span class="n">fixed_fluid</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sparse_physics</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material0"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"mat0"</span><span class="p">,</span>
+           <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">8.61733e10</span><span class="p">,</span>
+           <span class="n">opac_a</span><span class="o">=</span><span class="s2">"powerlaw"</span><span class="p">,</span>       <span class="c1"># absorption opacity model</span>
+           <span class="n">kappa0_a</span><span class="o">=</span><span class="mf">1.56272e22</span><span class="p">,</span>     <span class="c1"># coefficient</span>
+           <span class="n">kappa_Tpower_a</span><span class="o">=-</span><span class="mf">3.0</span><span class="p">)</span>     <span class="c1"># Kramers-like temperature power</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"radiation_transport"</span><span class="p">,</span>
+           <span class="n">do_jacobi</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>          <span class="c1"># select the implicit solver</span>
+           <span class="n">nlevel</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>                <span class="c1"># geodesic grid: 12 angles</span>
+           <span class="n">coupling</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+           <span class="n">affect_fluid</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>       <span class="c1"># let radiation heat the matter</span>
+           <span class="n">beta</span><span class="o">=</span><span class="mf">5.0</span><span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"radiation_transport/jacobi"</span><span class="p">,</span>
+           <span class="n">err_thr</span><span class="o">=</span><span class="mf">1.0e-4</span><span class="p">,</span> <span class="n">niter_limit</span><span class="o">=</span><span class="mi">200</span><span class="p">,</span>
+           <span class="n">dt_ratio_hyperbolic</span><span class="o">=</span><span class="mf">5.0e4</span><span class="p">)</span>
+
+<span class="c1"># A hot radiating wall driving the inner-x1 face:</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"radiation_transport/drive"</span><span class="p">,</span> <span class="n">ix1_bc</span><span class="o">=</span><span class="s2">"drive"</span><span class="p">,</span> <span class="n">trad_bc</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"radiation_transport/init"</span><span class="p">,</span> <span class="n">initialization</span><span class="o">=</span><span class="s2">"zero"</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="mix.html" class="btn btn-neutral float-left" title="Turbulent Mixing (BHR)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="radiation_diffusion.html" class="btn btn-neutral float-right" title="Radiation Diffusion (P1)" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="radiation_transport.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

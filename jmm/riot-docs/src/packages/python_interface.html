@@ -1,0 +1,367 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Python Interface &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Diagnostics" href="diagnostics.html" />
+    <link rel="prev" title="Regions" href="regions.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">The Python Interface</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#workflow">Workflow</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#setting-pythonpath">Setting <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#riot-module-api"><code class="docutils literal notranslate"><span class="pre">riot</span></code> module API</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#python-regions">Python Regions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#cad-geometry">CAD Geometry</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#consistent-states-with-singularity-eos">Consistent States with singularity-eos</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">The Python Interface</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/python_interface.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="the-python-interface">
+<span id="chap-python"></span><h1>The Python Interface<a class="headerlink" href="#the-python-interface" title="Link to this heading"></a></h1>
+<p>The recommended way to set up a RIOT problem is with a Python input script. A script uses the <code class="docutils literal notranslate"><span class="pre">riot</span></code> Python module to declare the mesh, materials, physics, and regions, and can define regions whose geometry and initial state are arbitrary Python functions. This is strictly more powerful than the text input deck: it supports parameterized studies, programmatic geometry, and—through the <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> Python bindings—initial states that are thermodynamically consistent with the equation of state.</p>
+<section id="workflow">
+<h2>Workflow<a class="headerlink" href="#workflow" title="Link to this heading"></a></h2>
+<p>A Python input serves two roles. Run as an ordinary script it <em>generates</em> a text input deck; at run time RIOT <em>calls back</em> into it for any region whose geometry or state is defined in Python.</p>
+<ol class="arabic simple">
+<li><p>Write a script (e.g. <code class="docutils literal notranslate"><span class="pre">myproblem.py</span></code>) that imports the <code class="docutils literal notranslate"><span class="pre">riot</span></code> module, declares the problem, and finally calls <code class="docutils literal notranslate"><span class="pre">generate_input()</span></code> to write the deck.</p></li>
+<li><p>Run it to emit the deck; then launch RIOT on the generated deck:</p></li>
+</ol>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">python3</span> <span class="n">myproblem</span><span class="o">.</span><span class="n">py</span>                 <span class="c1"># writes myproblem.rin</span>
+<span class="n">mpiexec</span> <span class="o">-</span><span class="n">n</span> <span class="mi">1</span> <span class="o">./</span><span class="n">riot</span> <span class="o">-</span><span class="n">i</span> <span class="n">myproblem</span><span class="o">.</span><span class="n">rin</span> <span class="o">-</span><span class="n">d</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">output</span><span class="o">/</span>
+</pre></div>
+</div>
+<p>The two steps can also be combined: because the script prints the path of the deck it writes, its output can be fed directly to the <code class="docutils literal notranslate"><span class="pre">-i</span></code> flag, so the deck is (re)generated and consumed in a single command:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>mpiexec -n 1 ./riot -i $(python3 myproblem.py) -d /path/to/output/
+</pre></div>
+</div>
+<p>When RIOT encounters a region with <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">python</span></code>, it loads the script, instantiates the class named by the region, and calls its methods to fill the initial data.</p>
+<section id="setting-pythonpath">
+<h3>Setting <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code><a class="headerlink" href="#setting-pythonpath" title="Link to this heading"></a></h3>
+<p>Both the <code class="docutils literal notranslate"><span class="pre">riot</span></code> module (in <code class="docutils literal notranslate"><span class="pre">script/inputs/</span></code>) and, if used, the <code class="docutils literal notranslate"><span class="pre">singularity_eos</span></code> bindings must be importable, so <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code> must include their locations. The exact paths depend on where RIOT is built and consumed as a dependency. As a concrete example, when running from the build tree at <code class="docutils literal notranslate"><span class="pre">build/src/</span></code> (the location of the executable):</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">export</span> <span class="n">PYTHONPATH</span><span class="o">=</span><span class="s2">"$(pwd)/../../external/riot/script/inputs/:</span><span class="se">\</span>
+<span class="s2">$(pwd)/../external/riot/singularity-eos/python:$PYTHONPATH"</span>
+</pre></div>
+</div>
+<p>Adjust these paths to match your own build and run directory; the two entries point at the <code class="docutils literal notranslate"><span class="pre">riot</span></code> input module and the <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> Python bindings, respectively.</p>
+</section>
+</section>
+<section id="riot-module-api">
+<h2><code class="docutils literal notranslate"><span class="pre">riot</span></code> module API<a class="headerlink" href="#riot-module-api" title="Link to this heading"></a></h2>
+<p>The core entry points of the <code class="docutils literal notranslate"><span class="pre">riot</span></code> module are summarized in the table below.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 44.4%" />
+<col style="width: 55.6%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Call</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>riot.input(block, **kwargs)</p></td>
+<td><p>Add or update an input block (emits <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;</span></code> in the deck).</p></td>
+</tr>
+<tr class="row-odd"><td><p>riot.material(id, **kwargs)</p></td>
+<td><p>Declare a material and its properties.</p></td>
+</tr>
+<tr class="row-even"><td><p>riot.material[id_or_name]</p></td>
+<td><p>Look up a declared material.</p></td>
+</tr>
+<tr class="row-odd"><td><p>riot.input[block]</p></td>
+<td><p>Look up a previously declared block.</p></td>
+</tr>
+<tr class="row-even"><td><p>riot.EOS(material)</p></td>
+<td><p>Wrap a <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> object for thermodynamic queries.</p></td>
+</tr>
+<tr class="row-odd"><td><p>riot.constants(units)</p></td>
+<td><p>Physical constants (default CGS).</p></td>
+</tr>
+<tr class="row-even"><td><p>riot.log(msg)</p></td>
+<td><p>Write to the run log.</p></td>
+</tr>
+<tr class="row-odd"><td><p>riot.input.generate_input()</p></td>
+<td><p>Write the <code class="docutils literal notranslate"><span class="pre">.rin</span></code> deck (name derived from the script).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="python-regions">
+<h2>Python Regions<a class="headerlink" href="#python-regions" title="Link to this heading"></a></h2>
+<p>A region is made Python-driven by setting <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">python</span></code> and giving it a <code class="docutils literal notranslate"><span class="pre">name</span></code>; RIOT instantiates the class of that name from the script. The class may define:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">mask(self,</span> <span class="pre">pos)</span></code> — returns a boolean array selecting the cells in the region. <code class="docutils literal notranslate"><span class="pre">pos</span></code> is an <span class="math notranslate nohighlight">\((N,3)\)</span> array of positions; the attributes <code class="docutils literal notranslate"><span class="pre">self.x</span></code>, <code class="docutils literal notranslate"><span class="pre">self.y</span></code>, <code class="docutils literal notranslate"><span class="pre">self.z</span></code> are set to the column indices <span class="math notranslate nohighlight">\(0,1,2\)</span>. The columns are always <em>Cartesian</em> <span class="math notranslate nohighlight">\((x,y,z)\)</span>, even when the mesh uses a curvilinear coordinate system: RIOT converts each cell’s native coordinates to Cartesian before calling the Python region, so a region’s geometry is written in Cartesian space regardless of the run’s coordinates (see the caveat below).</p></li>
+<li><p>state setters such as <code class="docutils literal notranslate"><span class="pre">c_m_rho(self,</span> <span class="pre">pos,</span> <span class="pre">rho)</span></code>, <code class="docutils literal notranslate"><span class="pre">c_m_pressure(self,</span> <span class="pre">pos,</span> <span class="pre">press)</span></code>, and <code class="docutils literal notranslate"><span class="pre">c_c_bulk_velocity(self,</span> <span class="pre">pos,</span> <span class="pre">vel)</span></code> — each fills the output array in place from the positions.</p></li>
+</ul>
+<p>Parameters for the class are passed through a companion block <code class="docutils literal notranslate"><span class="pre">&lt;name/params&gt;</span></code>; each becomes an attribute of the instance. This is how geometry and state can vary arbitrarily in space, including perturbation seeds for instability studies.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Curvilinear caveat:</strong> The Cartesian conversion of <code class="docutils literal notranslate"><span class="pre">pos</span></code> is currently partial in reduced-dimension curvilinear runs. In <code class="docutils literal notranslate"><span class="pre">UniformCylindrical</span></code> the mesh radius maps to <span class="math notranslate nohighlight">\(x\)</span> and the axial coordinate to <span class="math notranslate nohighlight">\(z\)</span>, with <span class="math notranslate nohighlight">\(y=0\)</span> (i.e. the 2D <span class="math notranslate nohighlight">\(r\)</span>–<span class="math notranslate nohighlight">\(z\)</span> plane); in <code class="docutils literal notranslate"><span class="pre">UniformSpherical</span></code> the mesh radius maps to <span class="math notranslate nohighlight">\(x\)</span> with <span class="math notranslate nohighlight">\(y=z=0\)</span> (i.e. 1D radial). A Python region in these geometries should therefore use <code class="docutils literal notranslate"><span class="pre">self.x</span></code> as the radius (and, in cylindrical, <code class="docutils literal notranslate"><span class="pre">self.z</span></code> as the axial coordinate) and not rely on the dropped columns.</p>
+</div>
+</section>
+<section id="cad-geometry">
+<span id="sec-cad"></span><h2>CAD Geometry<a class="headerlink" href="#cad-geometry" title="Link to this heading"></a></h2>
+<p>When a region’s shape is too complex to express analytically or in a Python <code class="docutils literal notranslate"><span class="pre">mask</span></code>, its geometry can be imported directly from a CAD model. Setting <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">cad</span></code> makes RIOT read a solid from a STEP file and use it as the region mask; the region’s state is still set by the usual analytic or Python setters, so CAD supplies only the <em>shape</em>. This path is built on Open CASCADE (OCCT) and is compiled in only when RIOT is configured with <code class="docutils literal notranslate"><span class="pre">-DRIOT_ENABLE_CAD</span></code>; a build without it will abort if a <code class="docutils literal notranslate"><span class="pre">cad</span></code> region is requested.</p>
+<p>A CAD region reads the parameters in the table below. The <code class="docutils literal notranslate"><span class="pre">name</span></code> of the region doubles as the label of the solid to extract from the STEP file, so a single file may hold several named parts, each selected by a different region.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 25.6%" />
+<col style="width: 11.6%" />
+<col style="width: 14.0%" />
+<col style="width: 48.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>mask_type</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Set to <code class="docutils literal notranslate"><span class="pre">cad</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cadfile</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Path to the STEP (<code class="docutils literal notranslate"><span class="pre">.step</span></code>/<code class="docutils literal notranslate"><span class="pre">.stp</span></code>) file.</p></td>
+</tr>
+<tr class="row-even"><td><p>name</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Region label; also the name of the solid to extract from the file.</p></td>
+</tr>
+<tr class="row-odd"><td><p>sample_dx_max</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1</span></code></p></td>
+<td><p>Optional cap on the base sampling cell size; <span class="math notranslate nohighlight">\(\le 0\)</span> derives it from the mesh.</p></td>
+</tr>
+</tbody>
+</table>
+<p>At initialization RIOT loads the STEP file, heals the imported solid (to tolerate models that are not perfectly watertight), and builds a cell-based adaptive mesh that brackets the part: it samples an inside/outside point classifier on a coarse node grid and refines only those cells whose corners disagree, so the boundary is resolved to a depth tied to the mesh’s refinement levels (<code class="docutils literal notranslate"><span class="pre">nlev_min</span></code>, <code class="docutils literal notranslate"><span class="pre">nlev_max</span></code> in the <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block, and <code class="docutils literal notranslate"><span class="pre">numlevel</span></code> for adaptive runs). During domain initialization the region mask is then a fast interpolated lookup on this structure. Because refinement keys on node sampling, a feature sharp enough to pierce a cell face without touching a node can be missed; <code class="docutils literal notranslate"><span class="pre">sample_dx_max</span></code> forces a finer base grid when that matters.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"regions"</span><span class="p">,</span> <span class="n">nlev_max</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"region1"</span><span class="p">,</span> <span class="n">mask_type</span><span class="o">=</span><span class="s2">"cad"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"bracket"</span><span class="p">,</span> <span class="n">matid</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+           <span class="n">cadfile</span><span class="o">=</span><span class="s2">"assembly.step"</span><span class="p">,</span>
+           <span class="n">c_m_rho</span><span class="o">=</span><span class="mf">8.0</span><span class="p">,</span> <span class="n">c_m_temperature</span><span class="o">=</span><span class="mf">293.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Here the solid named <code class="docutils literal notranslate"><span class="pre">bracket</span></code> inside <code class="docutils literal notranslate"><span class="pre">assembly.step</span></code> defines the region’s shape, while its material state is set analytically; the same region could instead draw its state from a Python class exactly as in the previous section.</p>
+</section>
+<section id="consistent-states-with-singularity-eos">
+<h2>Consistent States with singularity-eos<a class="headerlink" href="#consistent-states-with-singularity-eos" title="Link to this heading"></a></h2>
+<p>Because the same equation of state is available in Python, initial states can be made thermodynamically consistent. For example, a region can set its pressure from a prescribed density and specific internal energy by calling the EOS directly:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="bp">self</span><span class="o">.</span><span class="n">eos</span> <span class="o">=</span> <span class="n">riot</span><span class="o">.</span><span class="n">EOS</span><span class="p">(</span><span class="s2">"material1"</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">c_m_pressure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">,</span> <span class="n">press</span><span class="p">):</span>
+    <span class="n">rho</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rho_func</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">eos</span><span class="o">.</span><span class="n">PressureFromDensityInternalEnergy</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">/</span> <span class="n">rho</span><span class="p">,</span> <span class="n">press</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">riot.EOS</span></code> wrapper reads the material’s EOS block and constructs the matching <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> object, so the initial condition uses exactly the EOS the simulation will run with.</p>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>The following complete script (<code class="docutils literal notranslate"><span class="pre">rose.py</span></code>) builds a 2D problem whose Python region carves a rose-curve (<span class="math notranslate nohighlight">\(r = |a\sin(k\theta)|\)</span>) filled with a spatially varying density, using the EOS to set a consistent pressure.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">riot</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">singularity_eos</span>
+
+<span class="n">const</span> <span class="o">=</span> <span class="n">riot</span><span class="o">.</span><span class="n">constants</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">make_input</span><span class="p">():</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"riot"</span><span class="p">,</span> <span class="n">problem</span><span class="o">=</span><span class="s2">"region_pgen"</span><span class="p">,</span> <span class="n">sparse_physics</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/job"</span><span class="p">,</span> <span class="n">problem_id</span><span class="o">=</span><span class="s2">"python"</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/time"</span><span class="p">,</span> <span class="n">nlim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">tlim</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">integrator</span><span class="o">=</span><span class="s2">"rk2"</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/mesh"</span><span class="p">,</span> <span class="n">refinement</span><span class="o">=</span><span class="s2">"adaptive"</span><span class="p">,</span> <span class="n">numlevel</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+               <span class="n">nx1</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">x1min</span><span class="o">=-</span><span class="mf">1.2</span><span class="p">,</span> <span class="n">x1max</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
+               <span class="n">ix1_bc</span><span class="o">=</span><span class="s2">"reflecting"</span><span class="p">,</span> <span class="n">ox1_bc</span><span class="o">=</span><span class="s2">"reflecting"</span><span class="p">,</span>
+               <span class="n">nx2</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">x2min</span><span class="o">=-</span><span class="mf">1.2</span><span class="p">,</span> <span class="n">x2max</span><span class="o">=</span><span class="mf">1.2</span><span class="p">,</span>
+               <span class="n">ix2_bc</span><span class="o">=</span><span class="s2">"reflecting"</span><span class="p">,</span> <span class="n">ox2_bc</span><span class="o">=</span><span class="s2">"reflecting"</span><span class="p">,</span>
+               <span class="n">nx3</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">x3min</span><span class="o">=-</span><span class="mf">0.01</span><span class="p">,</span> <span class="n">x3max</span><span class="o">=</span><span class="mf">0.01</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/meshblock"</span><span class="p">,</span> <span class="n">nx1</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">nx2</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">nx3</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">riot</span><span class="o">.</span><span class="n">material</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"air1"</span><span class="p">,</span> <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">1.0e-3</span><span class="p">)</span>
+
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"regions"</span><span class="p">,</span> <span class="n">nlev_max</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"region0"</span><span class="p">,</span> <span class="n">mask_type</span><span class="o">=</span><span class="s2">"background"</span><span class="p">,</span> <span class="n">matid</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+               <span class="n">c_m_rho</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">c_m_pressure</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"region1"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"rose"</span><span class="p">,</span> <span class="n">mask_type</span><span class="o">=</span><span class="s2">"python"</span><span class="p">,</span> <span class="n">matid</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">hydro</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"hydro"</span><span class="p">,</span> <span class="n">recon</span><span class="o">=</span><span class="s2">"plm"</span><span class="p">,</span> <span class="n">cfl</span><span class="o">=</span><span class="mf">0.8</span><span class="p">,</span> <span class="n">riemann</span><span class="o">=</span><span class="s2">"hllc"</span><span class="p">)</span>
+
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"rose/params"</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">"sin"</span><span class="p">,</span> <span class="n">a</span><span class="o">=</span><span class="mf">0.6</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">rose</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">make_input</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eos</span> <span class="o">=</span> <span class="n">riot</span><span class="o">.</span><span class="n">EOS</span><span class="p">(</span><span class="s2">"material1"</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">mask</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">):</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">hypot</span><span class="p">(</span><span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">],</span> <span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">y</span><span class="p">])</span>
+        <span class="n">theta</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">atan2</span><span class="p">(</span><span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">y</span><span class="p">],</span> <span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">])</span>
+        <span class="n">base</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">*</span> <span class="n">theta</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mode</span> <span class="o">==</span> <span class="s2">"sin"</span> <span class="k">else</span> <span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">k</span> <span class="o">*</span> <span class="n">theta</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">r</span> <span class="o">&lt;=</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">a</span> <span class="o">*</span> <span class="n">base</span><span class="p">)</span> <span class="o">+</span> <span class="mf">1.0e-12</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">rho_func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">):</span>
+        <span class="k">return</span> <span class="mf">1.0</span> <span class="o">+</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">x</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">pos</span><span class="p">[:,</span> <span class="bp">self</span><span class="o">.</span><span class="n">y</span><span class="p">]</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">c_m_rho</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">,</span> <span class="n">rho</span><span class="p">):</span>
+        <span class="n">rho</span><span class="p">[:]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rho_func</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">c_m_pressure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">,</span> <span class="n">press</span><span class="p">):</span>
+        <span class="n">rho</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rho_func</span><span class="p">(</span><span class="n">pos</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">eos</span><span class="o">.</span><span class="n">PressureFromDensityInternalEnergy</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span> <span class="mf">2.0</span> <span class="o">/</span> <span class="n">rho</span><span class="p">,</span> <span class="n">press</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">make_input</span><span class="p">()</span>
+    <span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="o">.</span><span class="n">generate_input</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Running <code class="docutils literal notranslate"><span class="pre">python3</span> <span class="pre">rose.py</span></code> writes <code class="docutils literal notranslate"><span class="pre">rose.rin</span></code>; the <code class="docutils literal notranslate"><span class="pre">rose</span></code> region carries <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">python</span></code>, so at run time RIOT instantiates the <code class="docutils literal notranslate"><span class="pre">rose</span></code> class and calls <code class="docutils literal notranslate"><span class="pre">mask</span></code>, <code class="docutils literal notranslate"><span class="pre">c_m_rho</span></code>, and <code class="docutils literal notranslate"><span class="pre">c_m_pressure</span></code> to initialize the petals.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="regions.html" class="btn btn-neutral float-left" title="Regions" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="diagnostics.html" class="btn btn-neutral float-right" title="Diagnostics" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="python_interface.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

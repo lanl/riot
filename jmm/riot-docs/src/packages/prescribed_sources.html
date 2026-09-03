@@ -1,0 +1,321 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prescribed Sources &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Tracer Particles" href="tracers.html" />
+    <link rel="prev" title="Gravity" href="gravity.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Prescribed Sources</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#numerical-method">Numerical Method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#the-schedule-file">The Schedule File</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Prescribed Sources</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/prescribed_sources.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="prescribed-sources">
+<span id="chap-prescribed-sources"></span><h1>Prescribed Sources<a class="headerlink" href="#prescribed-sources" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">prescribed_sources</span></code> package deposits energy into a material
+according to a user-supplied schedule — a time series of the
+cumulative energy delivered to that material. It is the way to drive a
+simulation with an externally specified energy input (for example a
+modeled laser or radiation drive) without resolving the physical
+source. Any number of independent sources may be defined, each
+targeting one material. The package requires hydrodynamics.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>Each source is specified by a monotonically increasing schedule
+<span class="math notranslate nohighlight">\(\mathcal{E}_m(t)\)</span> giving the <em>cumulative, total</em> energy
+delivered to material <span class="math notranslate nohighlight">\(m\)</span> up to time <span class="math notranslate nohighlight">\(t\)</span>, integrated over
+all of that material in the domain. Over a step from <span class="math notranslate nohighlight">\(t\)</span> to
+<span class="math notranslate nohighlight">\(t+\Delta t\)</span> the total energy added to the material is the
+increment</p>
+<div class="math notranslate nohighlight">
+\[\Delta E_m = \max\!\left(\mathcal{E}_m(t+\Delta t) - \mathcal{E}_m(t),\ 0\right).\]</div>
+<p>This total is converted to a <em>specific</em> energy increment by dividing
+by the material’s current total mass <span class="math notranslate nohighlight">\(M_m\)</span> (summed over the
+whole domain, Section <a class="reference internal" href="#sec-presrc-method"><span class="std std-ref">Numerical Method</span></a>), and deposited
+uniformly by mass: a cell holding a partial density <span class="math notranslate nohighlight">\(\bar\rho_m\)</span>
+of the material receives</p>
+<div class="math notranslate nohighlight">
+\[\Delta\!\left(\text{bulk energy density}\right)
+  = \bar\rho_m\,\frac{\Delta E_m}{M_m}.\]</div>
+<p>The increment therefore adds the same specific energy <span class="math notranslate nohighlight">\(\Delta
+E_m/M_m\)</span> everywhere the material is present, so the source heats the
+material uniformly per unit mass rather than per unit volume. The
+energy is added to the bulk total energy
+(<code class="docutils literal notranslate"><span class="pre">ccbulk::total_material_energy</span></code>); the per-material internal
+energies, temperature, and pressure are then recovered through the
+equation-of-state and PTE closure of Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>The schedule is <em>cumulative</em>: the file records total energy
+delivered so far, not an instantaneous rate. Because the source is
+applied as a specific energy increment, a multi-phase material is
+heated with a single <span class="math notranslate nohighlight">\(\mathrm{d}e/\mathrm{d}t\)</span> common to all
+its phases.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>The energies in the schedule have units of <strong>total</strong> energy,
+<strong>not</strong> specific, even though a specific energy is used internally
+by the actual source terms.</p>
+</div>
+</section>
+<section id="numerical-method">
+<span id="sec-presrc-method"></span><h2>Numerical Method<a class="headerlink" href="#numerical-method" title="Link to this heading"></a></h2>
+<p>The package runs as an operator-split step after the hydrodynamic
+update. On each step it adds the energy increment to the bulk total
+energy, then recomputes the derived material state (internal energies
+and a PTE solve), exchanges boundary data, and fills derived
+quantities again. The domain-summed per-material masses <span class="math notranslate nohighlight">\(M_m\)</span>
+needed to convert total to specific energy are reduced before each
+step (and once before the main loop, so they are present in the first
+output).</p>
+<p>The schedule file is read as an ASCII table and resampled onto a
+uniform time grid at initialization; values are interpolated within
+the tabulated range and held constant (constant extrapolation) outside
+it. The package also votes on the time step: it limits <span class="math notranslate nohighlight">\(\Delta
+t\)</span> so that the energy deposited does not change a material’s
+temperature too abruptly, scaling the estimate by <code class="docutils literal notranslate"><span class="pre">dt_safety</span></code>.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Prescribed sources are enabled with <code class="docutils literal notranslate"><span class="pre">prescribed_sources</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">true</span></code>
+in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>);
+<code class="docutils literal notranslate"><span class="pre">hydro</span></code> must also be enabled. A single global control lives in the
+<code class="docutils literal notranslate"><span class="pre">&lt;prescribed_sources&gt;</span></code> block, and each source is defined in its own
+contiguous, zero-based <code class="docutils literal notranslate"><span class="pre">&lt;energy_source0&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;energy_source1&gt;</span></code>,
+… block.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Parameter in the <code class="docutils literal notranslate"><span class="pre">&lt;prescribed_sources&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>dt_safety</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.9</span></code></p></td>
+<td><p>Safety factor applied to the source time-step limit.</p></td>
+</tr>
+</tbody>
+</table>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Per-source parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;energy_source</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>material</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Index of the material this source drives; required.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cumulative_energies</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Path to an ASCII file giving the schedule; required.</p></td>
+</tr>
+<tr class="row-even"><td><p>active</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Set <code class="docutils literal notranslate"><span class="pre">false</span></code> to disable this source without removing the block.</p></td>
+</tr>
+</tbody>
+</table>
+<section id="the-schedule-file">
+<h3>The Schedule File<a class="headerlink" href="#the-schedule-file" title="Link to this heading"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">cumulative_energies</span></code> file is a two-column ASCII table: the
+first column is time and the second is the cumulative total energy
+delivered to the material by that time. The energies must be
+monotonically increasing and non-negative, and the first energy entry
+must be exactly <code class="docutils literal notranslate"><span class="pre">0</span></code>. The table need not be uniformly spaced — RIOT
+resamples it onto a uniform grid on read.</p>
+</section>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>Drive material <code class="docutils literal notranslate"><span class="pre">0</span></code> with a tabulated energy schedule, and record the
+per-material masses and energies in the history file:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">hydro</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">prescribed_sources</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+           <span class="n">sparse_physics</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"energy_source0"</span><span class="p">,</span>
+           <span class="n">material</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+           <span class="n">cumulative_energies</span><span class="o">=</span><span class="s2">"drive_schedule.dat"</span><span class="p">)</span>  <span class="c1"># time, cumulative energy</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"diagnostics"</span><span class="p">,</span> <span class="n">packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"masses"</span><span class="p">,</span> <span class="s2">"energies"</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>A minimal <code class="docutils literal notranslate"><span class="pre">drive_schedule.dat</span></code> delivering <span class="math notranslate nohighlight">\(100\)</span> (energy units)
+linearly over the first microsecond and holding thereafter:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># time      cumulative_energy</span>
+<span class="mf">0.0</span>         <span class="mf">0.0</span>
+<span class="mf">1.0e-6</span>      <span class="mf">100.0</span>
+<span class="mf">1.0e-3</span>      <span class="mf">100.0</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="gravity.html" class="btn btn-neutral float-left" title="Gravity" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="tracers.html" class="btn btn-neutral float-right" title="Tracer Particles" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="prescribed_sources.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

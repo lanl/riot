@@ -1,0 +1,506 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Laser Ray Tracing &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Level Sets" href="levelsets.html" />
+    <link rel="prev" title="Ionization" href="ionization.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Laser Ray Tracing</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#beams-and-rays">Beams and Rays</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#ray-refraction">Ray Refraction</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#inverse-bremsstrahlung-absorption">Inverse-Bremsstrahlung Absorption</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#power-history">Power History</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#numerical-method">Numerical Method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Laser Ray Tracing</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/laser.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="laser-ray-tracing">
+<span id="chap-laser"></span><h1>Laser Ray Tracing<a class="headerlink" href="#laser-ray-tracing" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">lasers</span></code> package models laser energy deposition by
+geometric-optics ray tracing. Each laser beam is discretized into many
+sample rays that are launched at the domain boundary, refracted
+through the plasma by the electron-density gradient, and attenuated by
+inverse-bremsstrahlung absorption; the absorbed energy is deposited
+into the electron internal energy. Because the absorption and
+refraction depend on the electron density, temperature, and mean
+ionization, the package <em>requires the ionization package</em>
+(Chapter <a class="reference internal" href="ionization.html#chap-ionization"><span class="std std-ref">Ionization</span></a>) to be active.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The package supports Cartesian meshes (1D, 2D, or 3D) and 2D
+(<span class="math notranslate nohighlight">\(r\)</span>–<span class="math notranslate nohighlight">\(z\)</span>) cylindrical meshes; 3D cylindrical and other
+coordinate systems are not supported.</p>
+</div>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<section id="beams-and-rays">
+<h3>Beams and Rays<a class="headerlink" href="#beams-and-rays" title="Link to this heading"></a></h3>
+<p>A <em>beam</em> is defined by a lens position and a target position (which
+set its centerline and focusing), a wavelength, a transverse power
+profile, and a power-versus-time history. Each beam is sampled into
+many <em>rays</em> on an equal-area polar grid over its spot, each ray
+carrying a fraction of the beam power set by the profile weight. Rays
+are tracked as Lagrangian particles (Parthenon swarm particles) that
+carry a position, direction, energy, and wavelength, and are
+communicated between mesh blocks and MPI ranks as they cross the
+domain.</p>
+</section>
+<section id="ray-refraction">
+<h3>Ray Refraction<a class="headerlink" href="#ray-refraction" title="Link to this heading"></a></h3>
+<p>Each ray follows the geometric-optics trajectory of a medium with refractive index</p>
+<div class="math notranslate nohighlight">
+\[n_r = \sqrt{1 - n_e/n_c},\]</div>
+<p>where <span class="math notranslate nohighlight">\(n_e\)</span> is qthe electron number density and <span class="math notranslate nohighlight">\(n_c\)</span> is
+the critical density for the ray wavelength <span class="math notranslate nohighlight">\(\lambda\)</span>,</p>
+<div class="math notranslate nohighlight">
+\[n_c(\lambda) = \frac{\pi\,m_e\,c^2}{\lambda^2 q_e^2}.\]</div>
+<p>The ray bends toward lower density under an acceleration proportional
+to the electron-density gradient,</p>
+<div class="math notranslate nohighlight">
+\[\frac{\mathrm{d}\vec{v}}{\mathrm{d}s}
+  = -\,\frac{\lambda^2 q_e^2}{2\pi\,m_e}\,\nabla n_e ,\]</div>
+<p>and travels at the local group speed <span class="math notranslate nohighlight">\(c\,\sqrt{1 -
+n_e/n_c}\)</span>. The trajectory is integrated cell by cell with a
+velocity–Verlet push that steps exactly to each cell face. A ray that
+reaches the critical density (<span class="math notranslate nohighlight">\(n_e \ge n_c\)</span>) deposits its
+remaining energy locally; there is no explicit specular reflection —
+the density gradient alone turns rays back.</p>
+</section>
+<section id="inverse-bremsstrahlung-absorption">
+<h3>Inverse-Bremsstrahlung Absorption<a class="headerlink" href="#inverse-bremsstrahlung-absorption" title="Link to this heading"></a></h3>
+<p>Along its path a ray is absorbed by electron–ion collisions. The absorption coefficient is</p>
+<div class="math notranslate nohighlight">
+\[\kappa \;\propto\; \frac{n_e^2\,\bar{Z}\,\ln\Lambda}{n_c\,T_e^{3/2}\,
+                        \sqrt{1 - n_e/n_c}} ,\]</div>
+<p>where <span class="math notranslate nohighlight">\(\bar Z\)</span> is the mean ionization state, <span class="math notranslate nohighlight">\(T_e\)</span> the
+electron temperature, and <span class="math notranslate nohighlight">\(\ln\Lambda\)</span> the Coulomb logarithm
+(fixed at <span class="math notranslate nohighlight">\(7\)</span>). Over a path length <span class="math notranslate nohighlight">\(\Delta s\)</span> through a
+cell the optical depth is <span class="math notranslate nohighlight">\(\tau = \kappa\,\Delta s\)</span> and the ray
+loses the fraction</p>
+<div class="math notranslate nohighlight">
+\[\Delta\mathcal{E} = \mathcal{E}\left(1 - e^{-\tau}\right)\]</div>
+<p>of its energy (linearized to <span class="math notranslate nohighlight">\(\mathcal{E}\,\tau\)</span> for small
+<span class="math notranslate nohighlight">\(\tau\)</span>). That energy is deposited into the cell: it is
+accumulated as a deposition <em>rate</em> (<code class="docutils literal notranslate"><span class="pre">ccbulk::laser_deposition</span></code>) and,
+at the end of the step, integrated into the electron internal energy
+<span class="math notranslate nohighlight">\(u_e\)</span> and the bulk total energy <span class="math notranslate nohighlight">\(E\)</span>,</p>
+<div class="math notranslate nohighlight">
+\[u_e \mathrel{+}= \Delta t\,\dot{q}_{\text{laser}}, \qquad
+E   \mathrel{+}= \Delta t\,\dot{q}_{\text{laser}} .\]</div>
+<p>Setting <code class="docutils literal notranslate"><span class="pre">enable_deposition</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">false</span></code> traces the rays but
+suppresses the energy deposition (useful for visualizing beam paths).</p>
+</section>
+<section id="power-history">
+<h3>Power History<a class="headerlink" href="#power-history" title="Link to this heading"></a></h3>
+<p>Each beam’s <code class="docutils literal notranslate"><span class="pre">power_watts</span></code>-versus-<code class="docutils literal notranslate"><span class="pre">time_ns</span></code> table is converted to
+CGS, resampled onto a uniform time grid, and integrated to a
+cumulative energy. The energy released over a step is distributed
+among the beam’s rays by their profile weights, which are normalized
+so the whole beam power is captured.</p>
+</section>
+</section>
+<section id="numerical-method">
+<h2>Numerical Method<a class="headerlink" href="#numerical-method" title="Link to this heading"></a></h2>
+<p>The laser update runs at the top of each cycle, before the
+hydrodynamic step. It interpolates the electron density to mesh nodes,
+spawns rays on the boundary blocks where each beam enters the domain,
+and then traces every ray to completion: rays are pushed cell by cell,
+depositing energy as they go, and those that cross a block or rank
+boundary are handed to Parthenon’s swarm communication and continued
+on the next iteration until no rays remain active. Ray tracing uses a
+<em>fast-light</em> approximation — each ray crosses the whole mesh within a
+single cycle, so there is no finite ray transit time.</p>
+<p>After the trace, the package votes on the time step to keep the
+electron heating per step controlled: it limits <span class="math notranslate nohighlight">\(\Delta t\)</span> so
+the deposited energy does not change the electron energy too abruptly
+(floored by <code class="docutils literal notranslate"><span class="pre">dt_edot_floor</span></code>, and applied only where the optical
+depth exceeds <code class="docutils literal notranslate"><span class="pre">dt_tau_cutoff</span></code>) and, when the fluid is evolving, so
+the heating does not violate the subsequent hydrodynamic CFL
+condition. The estimate is scaled by <code class="docutils literal notranslate"><span class="pre">dt_safety</span></code>. When the fluid is
+held fixed (<code class="docutils literal notranslate"><span class="pre">fixed_fluid</span></code>), the laser deposition is the entire step.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Lasers are enabled with <code class="docutils literal notranslate"><span class="pre">lasers</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">true</span></code> in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code>
+block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>); <code class="docutils literal notranslate"><span class="pre">ionization</span></code> must also be
+enabled. Global controls live in the <code class="docutils literal notranslate"><span class="pre">&lt;laser&gt;</span></code> block; each beam is
+defined in its own contiguous, zero-based <code class="docutils literal notranslate"><span class="pre">&lt;laser0&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;laser1&gt;</span></code>,
+… block.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Global parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;laser&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>enable_deposition</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Deposit absorbed energy; <code class="docutils literal notranslate"><span class="pre">false</span></code> traces rays without heating.</p></td>
+</tr>
+<tr class="row-odd"><td><p>node_interp_order</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Order of the cell-to-node electron-density interpolation (<span class="math notranslate nohighlight">\(2\)</span> or <span class="math notranslate nohighlight">\(4\)</span>).</p></td>
+</tr>
+<tr class="row-even"><td><p>dt_safety</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.95</span></code></p></td>
+<td><p>Safety factor on the laser-limited time step.</p></td>
+</tr>
+<tr class="row-odd"><td><p>dt_edot_floor</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.2</span></code></p></td>
+<td><p>Floor on the electron-heating time-step factor.</p></td>
+</tr>
+<tr class="row-even"><td><p>dt_tau_cutoff</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.2</span></code></p></td>
+<td><p>Optical-depth threshold below which the heating time-step limit is disabled.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Each <code class="docutils literal notranslate"><span class="pre">&lt;laser&gt;</span></code><span class="math notranslate nohighlight">\(N\)</span> block defines one beam. A beam may instead
+point to a separate input file with <code class="docutils literal notranslate"><span class="pre">laser_file</span></code> (read under the
+block named by <code class="docutils literal notranslate"><span class="pre">name</span></code>, defaulting to <code class="docutils literal notranslate"><span class="pre">laser</span></code><span class="math notranslate nohighlight">\(N\)</span>), which is
+convenient for reusing a beam definition across problems.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Per-beam parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;laser</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>laser_file</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Optional separate file holding this beam’s parameters.</p></td>
+</tr>
+<tr class="row-odd"><td><p>name</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">laser</span></code><span class="math notranslate nohighlight">\(N\)</span></p></td>
+<td><p>Block name to read within <code class="docutils literal notranslate"><span class="pre">laser_file</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>time_ns</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Times (ns) of the power history; required, <span class="math notranslate nohighlight">\(\ge 2\)</span> entries.</p></td>
+</tr>
+<tr class="row-odd"><td><p>power_watts</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Beam power (W) at each <code class="docutils literal notranslate"><span class="pre">time_ns</span></code>; same length.</p></td>
+</tr>
+<tr class="row-even"><td><p>wavelength_nm</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">351.0</span></code></p></td>
+<td><p>Laser wavelength (nm).</p></td>
+</tr>
+<tr class="row-odd"><td><p>lens_x</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Lens center position <span class="math notranslate nohighlight">\((x,y,z)\)</span>; required.</p></td>
+</tr>
+<tr class="row-even"><td><p>target_x</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Target/focus center position <span class="math notranslate nohighlight">\((x,y,z)\)</span>; required.</p></td>
+</tr>
+<tr class="row-odd"><td><p>target_size_ratio</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Target spot size relative to the lens spot (sets convergence).</p></td>
+</tr>
+<tr class="row-even"><td><p>phi</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Roll angle (rad) of the beam’s transverse axes about the centerline.</p></td>
+</tr>
+<tr class="row-odd"><td><p>phi_axis</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Reference axis for <code class="docutils literal notranslate"><span class="pre">phi</span></code>: <code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, or <code class="docutils literal notranslate"><span class="pre">z</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>distribution</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Transverse power profile: <code class="docutils literal notranslate"><span class="pre">flat</span></code> or <code class="docutils literal notranslate"><span class="pre">super</span></code> (super-Gaussian).</p></td>
+</tr>
+<tr class="row-odd"><td><p>power_semi_major_axis</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Spot semi-major axis.</p></td>
+</tr>
+<tr class="row-even"><td><p>power_semi_minor_axis</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Spot semi-minor axis.</p></td>
+</tr>
+<tr class="row-odd"><td><p>power_super_exp</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Super-Gaussian order (required when <code class="docutils literal notranslate"><span class="pre">distribution</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">super</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>power_sample_frac</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.999</span></code></p></td>
+<td><p>Fraction of beam power the sampled super-Gaussian spot must capture.</p></td>
+</tr>
+<tr class="row-odd"><td><p>grid_type</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Ray sampling grid; <code class="docutils literal notranslate"><span class="pre">equal_area</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>nr</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Number of radial rings in the sample grid.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ntarget</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Target total number of sample rays.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The package registers the diagnostic and coupling fields in the table
+below (all single-copy), plus the node-centered electron density used
+by the ray push and a swarm of ray particles. The deposited energy is
+carried by <code class="docutils literal notranslate"><span class="pre">ccbulk::laser_deposition</span></code> (a rate), integrated into the
+electron and total energy each step.</p>
+<table class="wraptable docutils align-default" id="tab-laser-fields">
+<caption><span class="caption-text">Fields registered by the laser package.</span><a class="headerlink" href="#tab-laser-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccbulk::laser_deposition</p></td>
+<td><p><span class="math notranslate nohighlight">\(\dot{q}_{\text{laser}}\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, OneCopy; laser energy deposition rate.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::laser_energy_density</p></td>
+<td><p>—</p></td>
+<td><p>1</p></td>
+<td><p>Cell, OneCopy; path-averaged in-cell laser energy density (diagnostic).</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::laser_tau_max</p></td>
+<td><p><span class="math notranslate nohighlight">\(\tau_{\max}\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, OneCopy; maximum per-cell optical depth (drives the time step).</p></td>
+</tr>
+<tr class="row-odd"><td><p>nv::electron_number_density</p></td>
+<td><p><span class="math notranslate nohighlight">\(n_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Node, OneCopy, CellMemAligned; node-interpolated electron density for the ray push.</p></td>
+</tr>
+<tr class="row-even"><td><p>particles::laser</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p>Swarm of ray particles carrying position, direction, energy, and wavelength.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A single flat-profile beam entering from the <span class="math notranslate nohighlight">\(-x\)</span> boundary and focused along the <span class="math notranslate nohighlight">\(x\)</span> axis, delivering <span class="math notranslate nohighlight">\(2\,\mathrm{kJ}\)</span> over <span class="math notranslate nohighlight">\(1\,\mathrm{ns}\)</span> into an ionized plasma:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">hydro</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">ionization</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">lasers</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"laser"</span><span class="p">,</span> <span class="n">enable_deposition</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">dt_safety</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>
+           <span class="n">dt_edot_floor</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">dt_tau_cutoff</span><span class="o">=</span><span class="mf">0.2</span><span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"laser0"</span><span class="p">,</span>
+           <span class="n">lens_x</span><span class="o">=</span><span class="p">[</span><span class="o">-</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>       <span class="c1"># beam origin</span>
+           <span class="n">target_x</span><span class="o">=</span><span class="p">[</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>     <span class="c1"># focus (defines pointing)</span>
+           <span class="n">target_size_ratio</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+           <span class="n">phi</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">phi_axis</span><span class="o">=</span><span class="s2">"z"</span><span class="p">,</span>
+           <span class="n">distribution</span><span class="o">=</span><span class="s2">"flat"</span><span class="p">,</span>
+           <span class="n">power_semi_major_axis</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>    <span class="c1"># spot half-widths</span>
+           <span class="n">power_semi_minor_axis</span><span class="o">=</span><span class="mf">0.01</span><span class="p">,</span>
+           <span class="n">grid_type</span><span class="o">=</span><span class="s2">"equal_area"</span><span class="p">,</span> <span class="n">nr</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">ntarget</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+           <span class="n">time_ns</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>            <span class="c1"># power history</span>
+           <span class="n">power_watts</span><span class="o">=</span><span class="p">[</span><span class="mf">2.0e12</span><span class="p">,</span> <span class="mf">2.0e12</span><span class="p">],</span>  <span class="c1"># 2 kJ / 1 ns</span>
+           <span class="n">wavelength_nm</span><span class="o">=</span><span class="mf">530.0</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="ionization.html" class="btn btn-neutral float-left" title="Ionization" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="levelsets.html" class="btn btn-neutral float-right" title="Level Sets" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="laser.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

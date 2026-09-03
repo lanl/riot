@@ -1,0 +1,207 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagnostics &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Developer’s guide" href="../programmer_guide.html" />
+    <link rel="prev" title="The Python Interface" href="python_interface.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Diagnostics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#concept">Concept</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#enabling-diagnostics">Enabling Diagnostics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#adding-a-diagnostic">Adding a Diagnostic</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Diagnostics</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/diagnostics.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="diagnostics">
+<span id="chap-diagnostics"></span><h1>Diagnostics<a class="headerlink" href="#diagnostics" title="Link to this heading"></a></h1>
+<p><em>Diagnostics</em> are the mechanism through which RIOT computes derived, problem-specific quantities that probe a running simulation — typically global or regional reductions written to the history file — without altering the evolved state. They are deliberately open-ended: rather than a fixed menu of outputs, the diagnostics layer is an <em>extension point</em> where a developer registers a small, self-contained package that measures whatever a particular study needs (a total energy, a peak temperature, a shell mass, and so on). This chapter describes the mechanism and how to add a diagnostic, rather than cataloguing the specific diagnostics that happen to exist today, which come and go with the problems they serve.</p>
+<section id="concept">
+<h2>Concept<a class="headerlink" href="#concept" title="Link to this heading"></a></h2>
+<p>A diagnostic is a lightweight Parthenon package that registers one or more <em>history outputs</em>: reduction functions that Parthenon evaluates on a schedule and appends to the run’s history (<code class="docutils literal notranslate"><span class="pre">.hst</span></code>) file. Each reduction maps the whole mesh (across all blocks and MPI ranks) to a scalar or a small vector — for example a volume integral of a field, a maximum over the domain, or a per-material sum. Because a diagnostic only <em>reads</em> the state and writes to the history stream, it is side-effect free and can be enabled or disabled freely without changing the simulation result.</p>
+<p>Diagnostics are distinct from the field <em>outputs</em> of Chapter <a class="reference internal" href="../programmer_guide.html#chap-parthenon"><span class="std std-ref">Developer’s guide</span></a> (full-mesh dumps of variables) and from the tracer particles of Chapter <a class="reference internal" href="tracers.html#chap-tracers"><span class="std std-ref">Tracer Particles</span></a> (Lagrangian sampling): they are the channel for <em>reduced</em>, whole-domain measurements recorded frequently over time.</p>
+</section>
+<section id="enabling-diagnostics">
+<h2>Enabling Diagnostics<a class="headerlink" href="#enabling-diagnostics" title="Link to this heading"></a></h2>
+<p>Unlike the physics packages, diagnostics are not toggled in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block. Instead they are selected by name in the <code class="docutils literal notranslate"><span class="pre">&lt;diagnostics&gt;</span></code> block through the <code class="docutils literal notranslate"><span class="pre">packages</span></code> list; each named diagnostic is looked up in an internal registry and enrolled, and an unknown name is an error.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Parameter in the <code class="docutils literal notranslate"><span class="pre">&lt;diagnostics&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>packages</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Names of the diagnostic packages to enable this run.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"diagnostics"</span><span class="p">,</span> <span class="n">packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"masses"</span><span class="p">,</span> <span class="s2">"energies"</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>A diagnostic may read additional parameters from its own block if it needs configuration, but many take none. The quantities each diagnostic registers appear as named columns in the history file.</p>
+</section>
+<section id="adding-a-diagnostic">
+<h2>Adding a Diagnostic<a class="headerlink" href="#adding-a-diagnostic" title="Link to this heading"></a></h2>
+<p>A new diagnostic is a self-contained unit in <code class="docutils literal notranslate"><span class="pre">src/diagnostics/</span></code> with a single <code class="docutils literal notranslate"><span class="pre">Initialize</span></code> entry point, registered in the diagnostics registry so it can be requested by name. The pattern is:</p>
+<ol class="arabic simple">
+<li><p>Write one or more <em>reduction functions</em>. A reduction takes the mesh data and returns a scalar (or a vector, e.g. one entry per material), computed with a Parthenon parallel reduction over the interior cells. A volume integral weights each cell by its volume; a peak uses a max reduction; a per-material quantity reduces each material’s contribution separately.</p></li>
+<li><p>In <code class="docutils literal notranslate"><span class="pre">Initialize</span></code>, create a Parthenon <code class="docutils literal notranslate"><span class="pre">StateDescriptor</span></code> and attach the reductions as <em>history outputs</em>, each with a reduction operation (sum, max, …), the function, and a column label. Scalar and vector history outputs are registered through their respective history-output parameter keys.</p></li>
+<li><p>Add the diagnostic’s name to the registry (the <code class="docutils literal notranslate"><span class="pre">FOREACH_DIAG</span></code> list in <code class="docutils literal notranslate"><span class="pre">diagnostics.hpp</span></code>) so <code class="docutils literal notranslate"><span class="pre">packages</span></code> can find it.</p></li>
+</ol>
+<p>Parthenon then performs the cross-rank reduction and writes the labeled result to the history file at the configured cadence; the diagnostic itself only supplies the per-rank measurement. Because the reduction runs on the device over variable packs, a diagnostic sees exactly the same field data — bulk, per-material, or sparse — as any physics kernel, so it can measure any registered quantity.</p>
+<blockquote>
+<div><p>The diagnostics currently in the tree (for example per-material mass and energy sums, and problem-specific shell diagnostics) are illustrative instances of this pattern and are tied to the problems they were written for; they are best read directly as templates for a new diagnostic rather than relied on as a stable, general-purpose set.</p>
+</div></blockquote>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="python_interface.html" class="btn btn-neutral float-left" title="The Python Interface" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../programmer_guide.html" class="btn btn-neutral float-right" title="Developer’s guide" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="diagnostics.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,464 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ionization &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Laser Ray Tracing" href="laser.html" />
+    <link rel="prev" title="Material Strength" href="strength.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Ionization</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#energy-and-pressure-splitting">Energy and Pressure Splitting</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#electron-energy-transport">Electron Energy Transport</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#electronion-energy-exchange">Electron–Ion Energy Exchange</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mean-ionization-state">Mean Ionization State</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#thermal-conduction">Thermal Conduction</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#plasma-viscosity">Plasma Viscosity</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Ionization</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/ionization.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="ionization">
+<span id="chap-ionization"></span><h1>Ionization<a class="headerlink" href="#ionization" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">ionization</span></code> package extends RIOT to partially ionized plasmas with a two-temperature (2T) description in which the ions and free electrons carry separate temperatures and internal energies. Each material must supply a separate electron equation of state.</p>
+<p>Enabling ionization does two distinct things, and the organization of this chapter follows that split. First, it <em>establishes the 2T plasma state</em>: the mean ionization state <span class="math notranslate nohighlight">\(\bar{Z}\)</span>, the free-electron number density <span class="math notranslate nohighlight">\(n_e\)</span>, and a separate electron energy and temperature <span class="math notranslate nohighlight">\(T_e\)</span> alongside the ion temperature <span class="math notranslate nohighlight">\(T_i\)</span>. No other package produces these quantities. Second, it provides a family of optional <em>transport processes defined on that state</em> — electron–ion energy exchange, electron and ion thermal conduction, and ion viscosity. These share a common character: each is an independent physical process with its own governing equation, but each closes on the <em>same</em> plasma variables (<span class="math notranslate nohighlight">\(n_e\)</span>, <span class="math notranslate nohighlight">\(T_e\)</span>, <span class="math notranslate nohighlight">\(T_i\)</span>, <span class="math notranslate nohighlight">\(\bar{Z}\)</span>), which is why they live in one package and one input block rather than in separate packages. Each is turned on by its own switch in the <code class="docutils literal notranslate"><span class="pre">&lt;ionization&gt;</span></code> block and, having no plasma state to act on otherwise, requires ionization to be enabled.</p>
+<p>The subsections below treat the state-defining physics first (energy/pressure splitting and the mean ionization state), then each transport process in turn, each with the specific equation it solves.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<section id="energy-and-pressure-splitting">
+<h3>Energy and Pressure Splitting<a class="headerlink" href="#energy-and-pressure-splitting" title="Link to this heading"></a></h3>
+<p>Ionization is a <em>per-material</em> property closed on a shared electron temperature. Each material <span class="math notranslate nohighlight">\(m\)</span> carries its own mean ionization state <span class="math notranslate nohighlight">\(\bar{Z}_m\)</span>, electron internal energy <span class="math notranslate nohighlight">\(u_{e,m}\)</span>, and electron pressure <span class="math notranslate nohighlight">\(p_{e,m}\)</span>; these aggregate to bulk electron quantities that split the bulk energy and pressure,</p>
+<div class="math notranslate nohighlight">
+\[E = u_i + u_e + \tfrac{1}{2}\rho|\vec{v}|^2, \qquad
+p = p_i + p_e .\]</div>
+<p>Here <span class="math notranslate nohighlight">\(u_i\)</span>, <span class="math notranslate nohighlight">\(u_e\)</span> are the bulk ion and electron internal-energy densities and <span class="math notranslate nohighlight">\(p_i\)</span>, <span class="math notranslate nohighlight">\(p_e\)</span> the corresponding bulk pressures. Following the aggregation rules of Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>, the bulk electron energy is a cell-averaged sum of per-material electron energy densities while the bulk electron pressure is a volume-fraction-weighted sum,</p>
+<div class="math notranslate nohighlight">
+\[u_e = \sum_m \bar\rho_m\,e_{e,m}(\rho_m, T_e), \qquad
+p_e = \sum_m f_m\,p_{e,m}(\rho_m, T_e),\]</div>
+<p>with each material’s electron specific energy <span class="math notranslate nohighlight">\(e_{e,m}\)</span> and pressure <span class="math notranslate nohighlight">\(p_{e,m}\)</span> supplied by its own electron equation of state.</p>
+<p>Crucially, the electron temperature <span class="math notranslate nohighlight">\(T_e\)</span> is a <em>single bulk</em> quantity shared by all materials: it is found by a root solve enforcing that the per-material electron energies sum to the transported bulk electron energy,</p>
+<div class="math notranslate nohighlight">
+\[u_e = \sum_m \bar\rho_m\,e_{e,m}(\rho_m, T_e),\]</div>
+<p>which is the electron-side analogue of the PTE temperature equilibrium.</p>
+</section>
+<section id="electron-energy-transport">
+<h3>Electron Energy Transport<a class="headerlink" href="#electron-energy-transport" title="Link to this heading"></a></h3>
+<p>By default the electron internal energy is advected with the flow and does <span class="math notranslate nohighlight">\(p\,\mathrm{d}V\)</span> work against the electron pressure,</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial u_e}{\partial t} + \nabla\!\cdot\!\left(u_e\vec{v}\right) = -\,p_e\,\nabla\!\cdot\!\vec{v} .\]</div>
+<p>Alternatively the package can instead advance a conserved electron <em>entropy</em> density <span class="math notranslate nohighlight">\(s_e\)</span> (which assumes an ideal electron gas and avoids the volumetric work source),</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial s_e}{\partial t} + \nabla\!\cdot\!\left(s_e\vec{v}\right) = 0 ,\]</div>
+<p>converting between <span class="math notranslate nohighlight">\(s_e\)</span> and <span class="math notranslate nohighlight">\(u_e\)</span> as needed. The choice is controlled by <code class="docutils literal notranslate"><span class="pre">advect_electron_entropy</span></code>.</p>
+</section>
+<section id="electronion-energy-exchange">
+<h3>Electron–Ion Energy Exchange<a class="headerlink" href="#electronion-energy-exchange" title="Link to this heading"></a></h3>
+<p>When <code class="docutils literal notranslate"><span class="pre">electron_ion_coupling</span></code> is enabled, the (bulk) electron and ion temperatures relax toward a common value on a coupling time scale <span class="math notranslate nohighlight">\(\tau_{ei}\)</span>,</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho c_{v,i}\,\frac{\partial T_i}{\partial t} &amp;= \frac{T_e - T_i}{\tau_{ei}}, \\
+\rho c_{v,e}\,\frac{\partial T_e}{\partial t} &amp;= \frac{T_i - T_e}{\tau_{ei}} ,\end{split}\]</div>
+<p>integrated with a first-order exponential (analytic) update so the equilibrium <span class="math notranslate nohighlight">\(T_e = T_i\)</span> is recovered stably for any step size. In a mixed cell the heat capacities <span class="math notranslate nohighlight">\(\rho c_{v,i}\)</span>, <span class="math notranslate nohighlight">\(\rho c_{v,e}\)</span> and the coupling rate are formed as volume-fraction-weighted sums over the per-material contributions (evaluated at <span class="math notranslate nohighlight">\(T_e\)</span>, <span class="math notranslate nohighlight">\(T_i\)</span> and each material’s <span class="math notranslate nohighlight">\(\rho_m\)</span>, <span class="math notranslate nohighlight">\(\bar{Z}_m\)</span>), so a single bulk relaxation represents the whole cell. The coupling time may be a user-supplied constant (<code class="docutils literal notranslate"><span class="pre">tau_ei</span></code>) or the Landau–Spitzer form (Blancard et al., <em>High Energy Density Phys.</em> <strong>9</strong>, 247, 2013),</p>
+<div class="math notranslate nohighlight">
+\[\tau_{ei} = \frac{3\,m_e m_i}{8\sqrt{2\pi}\,n_i \bar{Z}^2 e^4}\,
+            \frac{\left(k_B T_e/m_e + k_B T_i/m_i\right)^{3/2}}{\ln\Lambda} ,\]</div>
+<p>with the Coulomb logarithm <span class="math notranslate nohighlight">\(\ln\Lambda\)</span> selected by <code class="docutils literal notranslate"><span class="pre">coulomb_logarithm</span></code>.</p>
+</section>
+<section id="mean-ionization-state">
+<h3>Mean Ionization State<a class="headerlink" href="#mean-ionization-state" title="Link to this heading"></a></h3>
+<p>The mean ionization state is computed <em>per material</em>: for each material <span class="math notranslate nohighlight">\(m\)</span>, <span class="math notranslate nohighlight">\(\bar{Z}_m\)</span> is evaluated from the Thomas–Fermi statistical model with the fit of More (UCRL-84991, 1981; see Salzmann, <em>Atomic Physics in Hot Plasmas</em>, 1998), using that material’s atomic number <span class="math notranslate nohighlight">\(Z_{\text{nuc},m}\)</span>, atomic mass, and material-averaged density <span class="math notranslate nohighlight">\(\rho_m\)</span>, evaluated at the shared bulk electron temperature <span class="math notranslate nohighlight">\(T_e\)</span>,</p>
+<div class="math notranslate nohighlight">
+\[\bar{Z}_m = Z_{\text{nuc},m}\,f(x_m), \qquad x_m = \alpha\,Q_m^{\beta}.\]</div>
+<p>The per-material ionization states set the free-electron number density <span class="math notranslate nohighlight">\(n_e = \sum_m \bar\rho_m\,\bar{Z}_m/m_{\text{nuc},m}\)</span>. Setting <code class="docutils literal notranslate"><span class="pre">fully_ionized</span></code> forces <span class="math notranslate nohighlight">\(\bar{Z}_m = Z_{\text{nuc},m}\)</span>.</p>
+</section>
+<section id="thermal-conduction">
+<h3>Thermal Conduction<a class="headerlink" href="#thermal-conduction" title="Link to this heading"></a></h3>
+<p>Optionally, electron and/or ion heat conduction are solved as implicit diffusion equations on the shared bulk temperature,</p>
+<div class="math notranslate nohighlight">
+\[\rho c_v\,\frac{\partial T}{\partial t} = \nabla\!\cdot\!\left(\kappa\,\nabla T\right) ,\]</div>
+<p>using a BiCGSTAB linear solve. In a mixed cell the effective conductivity is a volume-fraction average (arithmetic or harmonic, selectable) of the per-material conductivities <span class="math notranslate nohighlight">\(\kappa_m\)</span>, each evaluated at the shared bulk temperature with that material’s <span class="math notranslate nohighlight">\(\rho_m\)</span> and <span class="math notranslate nohighlight">\(\bar{Z}_m\)</span>. The per-material electron conductivity <span class="math notranslate nohighlight">\(\kappa_{e,m}\)</span> defaults to the Spitzer–Härm form (Molvig, Simakov &amp; Vold, <em>Phys. Plasmas</em> <strong>21</strong>, 092709, 2014),</p>
+<div class="math notranslate nohighlight">
+\[\kappa_{e,m} = \frac{\alpha(\bar{Z}_m)}{\bar{Z}_m}\,\frac{8}{\pi^{3/2}}\,
+           \frac{k_B^{7/2}}{e^4\sqrt{m_e}}\,\frac{T_e^{5/2}}{\ln\Lambda},
+\qquad \alpha(\bar{Z}_m) = \frac{1}{1 + 3.3/\bar{Z}_m},\]</div>
+<p>and the per-material ion conductivity <span class="math notranslate nohighlight">\(\kappa_{i,m}\)</span> to the Braginskii form. Either may instead be set to a constant.</p>
+</section>
+<section id="plasma-viscosity">
+<h3>Plasma Viscosity<a class="headerlink" href="#plasma-viscosity" title="Link to this heading"></a></h3>
+<p>Optionally (<code class="docutils literal notranslate"><span class="pre">plasma_viscosity</span></code>), an ion viscous stress <span class="math notranslate nohighlight">\(\mathsf{\sigma}_{\text{visc}}\)</span> is added to the bulk momentum and total-energy equations of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a> as a divergence source,</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\frac{\partial \left(\rho\vec{v}\right)}{\partial t}
+  + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\mathsf{I}\right)
+  &amp;= \nabla\!\cdot\!\mathsf{\sigma}_{\text{visc}}, \\[2pt]
+\frac{\partial E}{\partial t}
+  + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}\right]
+  &amp;= \nabla\!\cdot\!\left(\mathsf{\sigma}_{\text{visc}}\!\cdot\!\vec{v}\right),\end{split}\]</div>
+<p>so momentum diffuses and the associated viscous dissipation heats the fluid. The stress is Newtonian in the (bulk) strain rate <span class="math notranslate nohighlight">\(\mathsf{e}\)</span> (Chapter <a class="reference internal" href="strength.html#chap-strength"><span class="std std-ref">Material Strength</span></a>),</p>
+<div class="math notranslate nohighlight">
+\[\mathsf{\sigma}_{\text{visc}} = 2\eta\,\mathsf{e}
+  + \left(\eta_b - \tfrac{2}{3}\eta\right)(\nabla\!\cdot\!\vec{v})\,\mathsf{I},\]</div>
+<p>with <span class="math notranslate nohighlight">\(\eta\)</span> the shear viscosity and <span class="math notranslate nohighlight">\(\eta_b\)</span> the bulk viscosity. The shear viscosity is set by <code class="docutils literal notranslate"><span class="pre">ion_viscosity_model</span></code>: either a user-supplied constant (<code class="docutils literal notranslate"><span class="pre">ion_shear_viscosity</span></code>, <code class="docutils literal notranslate"><span class="pre">ion_bulk_viscosity</span></code>), or the Fokker–Planck–Landau plasma model (Arnault, <em>High Energy Density Phys.</em> <strong>9</strong>, 711, 2013; Vold et al., <em>Phys. Plasmas</em> <strong>24</strong>, 042702, 2017),</p>
+<div class="math notranslate nohighlight">
+\[\eta = \sum_i \frac{\alpha_{ij}\,n_i\,k_B T_i}{\sum_j \nu_{ij}},\]</div>
+<p>where the ion–ion momentum-exchange rates <span class="math notranslate nohighlight">\(\nu_{ij}\)</span> are summed over the ion species in the cell, <span class="math notranslate nohighlight">\(n_i\)</span> is the ion number density, and <span class="math notranslate nohighlight">\(T_i\)</span> the ion temperature. This is a bulk (whole-cell) transport coefficient built from the per-material ion states, in the same spirit as the conductivities above.</p>
+</section>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Ionization is enabled with the <code class="docutils literal notranslate"><span class="pre">ionization</span></code> toggle in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>). When it is on, every material must provide an <code class="docutils literal notranslate"><span class="pre">electron_eos</span></code> block (Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>). The remaining controls live in the <code class="docutils literal notranslate"><span class="pre">&lt;ionization&gt;</span></code> block.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;ionization&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>fully_ionized</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Force <span class="math notranslate nohighlight">\(\bar{Z} = Z_{\text{nuc}}\)</span> (fully ionized).</p></td>
+</tr>
+<tr class="row-odd"><td><p>root_tol</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-20</span></code></p></td>
+<td><p>Root-find tolerance for the electron temperature.</p></td>
+</tr>
+<tr class="row-even"><td><p>advect_electron_entropy</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Advect electron entropy density instead of solving the electron energy with a <span class="math notranslate nohighlight">\(p\,\mathrm{d}V\)</span> source.</p></td>
+</tr>
+<tr class="row-odd"><td><p>electron_ion_coupling</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Relax <span class="math notranslate nohighlight">\(T_e\)</span> and <span class="math notranslate nohighlight">\(T_i\)</span> toward equilibrium.</p></td>
+</tr>
+<tr class="row-even"><td><p>electron_ion_coupling_model</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">landau_spitzer</span></code></p></td>
+<td><p>Coupling model: <code class="docutils literal notranslate"><span class="pre">constant</span></code> or <code class="docutils literal notranslate"><span class="pre">landau_spitzer</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>tau_ei</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Constant coupling time (used when model is <code class="docutils literal notranslate"><span class="pre">constant</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>coulomb_logarithm</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">brysk</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\ln\Lambda\)</span> model: <code class="docutils literal notranslate"><span class="pre">basic</span></code>, <code class="docutils literal notranslate"><span class="pre">brysk</span></code>, <code class="docutils literal notranslate"><span class="pre">lee_moore</span></code>, or <code class="docutils literal notranslate"><span class="pre">bps</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>electron_thermal_conduction</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Solve electron heat conduction.</p></td>
+</tr>
+<tr class="row-even"><td><p>electron_conductivity_model</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">spitzer_volume_average_arithmetic</span></code></p></td>
+<td><p>Electron conductivity model (Spitzer variants or <code class="docutils literal notranslate"><span class="pre">constant</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>electron_conductivity</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Constant electron conductivity (if selected).</p></td>
+</tr>
+<tr class="row-even"><td><p>ion_thermal_conduction</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Solve ion heat conduction.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ion_conductivity_model</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">braginskii</span></code></p></td>
+<td><p>Ion conductivity model: <code class="docutils literal notranslate"><span class="pre">braginskii</span></code> or <code class="docutils literal notranslate"><span class="pre">constant</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>ion_conductivity</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Constant ion conductivity (if selected).</p></td>
+</tr>
+<tr class="row-odd"><td><p>plasma_viscosity</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Add the ion viscous stress to the momentum and energy equations.</p></td>
+</tr>
+<tr class="row-even"><td><p>ion_viscosity_model</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">fokker_planck_landau</span></code></p></td>
+<td><p>Viscosity model: <code class="docutils literal notranslate"><span class="pre">fokker_planck_landau</span></code> or <code class="docutils literal notranslate"><span class="pre">constant</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ion_shear_viscosity</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Constant shear viscosity <span class="math notranslate nohighlight">\(\eta\)</span> (if model is <code class="docutils literal notranslate"><span class="pre">constant</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>ion_bulk_viscosity</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Constant bulk viscosity <span class="math notranslate nohighlight">\(\eta_b\)</span> (if model is <code class="docutils literal notranslate"><span class="pre">constant</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>timestep_control</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">relative</span></code></p></td>
+<td><p>Conduction step control: <code class="docutils literal notranslate"><span class="pre">explicit</span></code> or <code class="docutils literal notranslate"><span class="pre">relative</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>T_scale_floor</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Temperature-scale floor for <code class="docutils literal notranslate"><span class="pre">relative</span></code> step control.</p></td>
+</tr>
+<tr class="row-odd"><td><p>fractional_change_scale</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.1</span></code></p></td>
+<td><p>Allowed fractional <span class="math notranslate nohighlight">\(T_e\)</span> change per conduction step.</p></td>
+</tr>
+<tr class="row-even"><td><p>zbar_floor</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-6</span></code></p></td>
+<td><p>Floor on <span class="math notranslate nohighlight">\(\bar{Z}\)</span> in microphysics evaluations.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ion_number_density_floor</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e11</span></code></p></td>
+<td><p>Floor on ion number density (cm<span class="math notranslate nohighlight">\(^{-3}\)</span>).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The ionization package registers the bulk electron fields in the table below, and (through the materials package) the per-material <span class="math notranslate nohighlight">\(\bar{Z}\)</span> and electron-energy fields. The transported electron quantity is either <code class="docutils literal notranslate"><span class="pre">electron_internal_energy</span></code> (the default) or, when <code class="docutils literal notranslate"><span class="pre">advect_electron_entropy</span></code> is set, <code class="docutils literal notranslate"><span class="pre">electron_entropy</span></code>; the remaining bulk electron fields are derived. The implicit conduction solve additionally allocates operator-split auxiliary fields (diffusion coefficients, temperature deltas) that are internal to the solver and omitted here.</p>
+<table class="wraptable docutils align-default" id="tab-ionization-fields">
+<caption><span class="caption-text">Principal fields registered by the ionization package.</span><a class="headerlink" href="#tab-ionization-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccbulk::electron_internal_energy</p></td>
+<td><p><span class="math notranslate nohighlight">\(u_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, FillGhost, Advected, WithFluxes; electron energy density (default transported quantity).</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::electron_entropy</p></td>
+<td><p><span class="math notranslate nohighlight">\(s_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, FillGhost, Advected, WithFluxes, Conserved; electron entropy density (when <code class="docutils literal notranslate"><span class="pre">advect_electron_entropy</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::electron_temperature</p></td>
+<td><p><span class="math notranslate nohighlight">\(T_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; electron temperature.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::electron_pressure</p></td>
+<td><p><span class="math notranslate nohighlight">\(p_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; electron pressure.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::electron_number_density</p></td>
+<td><p><span class="math notranslate nohighlight">\(n_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; free-electron number density.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::electron_bulk_modulus</p></td>
+<td><p><span class="math notranslate nohighlight">\(B_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; electron bulk modulus.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::electron_gruneisen_parameter</p></td>
+<td><p><span class="math notranslate nohighlight">\(\Gamma_e\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; electron Grüneisen parameter.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::ion_shear_viscosity</p></td>
+<td><p><span class="math notranslate nohighlight">\(\eta\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; ion shear viscosity (when <code class="docutils literal notranslate"><span class="pre">plasma_viscosity</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>cm::ionization_zbar</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar{Z}\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Sparse, Derived, OneCopy, FillGhost; per-material mean ionization state.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A single ionized material with electron–ion coupling and electron conduction:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">ionization</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"ionization"</span><span class="p">,</span>
+           <span class="n">electron_ion_coupling</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+           <span class="n">electron_ion_coupling_model</span><span class="o">=</span><span class="s2">"landau_spitzer"</span><span class="p">,</span>
+           <span class="n">coulomb_logarithm</span><span class="o">=</span><span class="s2">"brysk"</span><span class="p">,</span>
+           <span class="n">electron_thermal_conduction</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material0"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"plasma"</span><span class="p">,</span>
+           <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.66667</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">1.0e12</span><span class="p">,</span>
+           <span class="n">electron_eos</span><span class="o">=</span><span class="s2">"plasma_electrons"</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"plasma_electrons"</span><span class="p">,</span> <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealElectrons"</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="strength.html" class="btn btn-neutral float-left" title="Material Strength" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="laser.html" class="btn btn-neutral float-right" title="Laser Ray Tracing" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="ionization.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

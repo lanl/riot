@@ -1,0 +1,419 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Material Strength &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Ionization" href="ionization.html" />
+    <link rel="prev" title="Hydrodynamics" href="hydro.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Material Strength</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#per-material-hypoelastic-stress-evolution">Per-Material Hypoelastic Stress Evolution</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#per-material-yield-and-radial-return">Per-Material Yield and Radial Return</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#failure">Failure</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#aggregation-to-the-bulk-stress">Aggregation to the Bulk Stress</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#strength-models">Strength Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Material Strength</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/strength.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="material-strength">
+<span id="chap-strength"></span><h1>Material Strength<a class="headerlink" href="#material-strength" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">strength</span></code> package augments the hydrodynamics of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a> with an elastic–plastic constitutive response for solid materials. When enabled, materials support a deviatoric stress <span class="math notranslate nohighlight">\(\mathsf{s}\)</span> that modifies the momentum and energy fluxes, evolves in time with the flow, and is limited by a yield condition. Strength is applied per material: a material must be flagged as <em>strong</em> and assigned a strength model.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>Strength in RIOT is a <em>per-material</em> property: each strong material <span class="math notranslate nohighlight">\(m\)</span> carries its own deviatoric stress <span class="math notranslate nohighlight">\(\mathsf{s}_m\)</span>, shear modulus <span class="math notranslate nohighlight">\(G_m\)</span>, and yield strength <span class="math notranslate nohighlight">\(Y_m\)</span>, and evolves them independently. The hydrodynamics, however, sees a single <em>bulk</em> deviatoric stress <span class="math notranslate nohighlight">\(\mathsf{s}\)</span> aggregated from the per-material stresses (Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>). This section follows that per-material <span class="math notranslate nohighlight">\(\to\)</span> bulk path.</p>
+<p>The full bulk Cauchy stress is decomposed into an isotropic (pressure) part and a traceless deviatoric part,</p>
+<div class="math notranslate nohighlight">
+\[\mathsf{\sigma} = -p\,\mathsf{I} + \mathsf{s}, \qquad \mathrm{tr}\,\mathsf{s} = 0 ,\]</div>
+<p>where <span class="math notranslate nohighlight">\(p\)</span> comes from the PTE closure (Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>) and the bulk deviatoric stress <span class="math notranslate nohighlight">\(\mathsf{s}\)</span> enters the bulk momentum and energy fluxes through the terms <span class="math notranslate nohighlight">\(-\mathsf{s}\)</span> and <span class="math notranslate nohighlight">\(-\mathsf{s}\!\cdot\!\vec{v}\)</span> (see the hydro equations in Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>).</p>
+<section id="per-material-hypoelastic-stress-evolution">
+<h3>Per-Material Hypoelastic Stress Evolution<a class="headerlink" href="#per-material-hypoelastic-stress-evolution" title="Link to this heading"></a></h3>
+<p>For each strong material <span class="math notranslate nohighlight">\(m\)</span>, the conserved per-material deviatoric stress <span class="math notranslate nohighlight">\(\bar\rho_m\mathsf{s}_m\)</span> is advected with the flow and sourced by a hypoelastic constitutive law using the Jaumann (corotational, objective) stress rate, which keeps the response frame-invariant under rigid rotation:</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial \left(\bar\rho_m\mathsf{s}_m\right)}{\partial t}
+  + \nabla\!\cdot\!\left(\bar\rho_m\mathsf{s}_m\,\vec{v}\right)
+\;=\;
+2\bar\rho_m G_m\,\mathsf{e}
+  + \bar\rho_m\!\left(\mathsf{w}\!\cdot\!\mathsf{s}_m
+    - \mathsf{s}_m\!\cdot\!\mathsf{w}\right).\]</div>
+<p>Here <span class="math notranslate nohighlight">\(G_m\)</span> is the material’s shear modulus and <span class="math notranslate nohighlight">\(\bar\rho_m\)</span> its cell-volume-averaged density, both per material. The strain-rate tensor <span class="math notranslate nohighlight">\(\mathsf{e}\)</span> and spin tensor <span class="math notranslate nohighlight">\(\mathsf{w}\)</span>, by contrast, are <em>bulk</em> quantities: they are computed once per cell from the single velocity field common to all materials in the cell. Thus every material in a cell is driven by the same velocity gradient but evolves its own stress with its own shear modulus. The strain-rate and spin tensors are the symmetric and antisymmetric parts of that velocity gradient,</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}e_{ij} &amp;= \tfrac{1}{2}\!\left(\partial_j v_i + \partial_i v_j\right)
+          - \tfrac{1}{3}\,(\nabla\!\cdot\!\vec{v})\,\delta_{ij}, \\
+w_{ij} &amp;= \tfrac{1}{2}\!\left(\partial_j v_i - \partial_i v_j\right).\end{split}\]</div>
+<p>Because <span class="math notranslate nohighlight">\(\mathsf{s}_m\)</span> is symmetric and traceless, only five of its components are independent and stored (<span class="math notranslate nohighlight">\(s_{xx}, s_{xy}, s_{xz}, s_{yy}, s_{yz}\)</span>); the sixth follows from <span class="math notranslate nohighlight">\(s_{zz} = -s_{xx} - s_{yy}\)</span>.</p>
+</section>
+<section id="per-material-yield-and-radial-return">
+<h3>Per-Material Yield and Radial Return<a class="headerlink" href="#per-material-yield-and-radial-return" title="Link to this heading"></a></h3>
+<p>Each material’s elastic stress is limited by its own von Mises yield criterion. Defining the second invariant of the per-material deviatoric stress,</p>
+<div class="math notranslate nohighlight">
+\[J_2 = \tfrac{1}{2}\,\mathsf{s}_m\!:\!\mathsf{s}_m
+    = \tfrac{1}{2}\!\left(s_{xx}^2 + s_{yy}^2 + s_{zz}^2\right)
+      + s_{xy}^2 + s_{xz}^2 + s_{yz}^2 ,\]</div>
+<p>material <span class="math notranslate nohighlight">\(m\)</span> yields when <span class="math notranslate nohighlight">\(\mathsf{s}_m\!:\!\mathsf{s}_m\)</span> exceeds <span class="math notranslate nohighlight">\(\tfrac{2}{3}Y_m^2\)</span>, where <span class="math notranslate nohighlight">\(Y_m\)</span> is its yield strength. When the trial stress lies outside the yield surface, a radial-return correction scales it back onto the surface,</p>
+<div class="math notranslate nohighlight">
+\[\mathsf{s}_m \leftarrow
+  \sqrt{\frac{2Y_m^2}{3\,\mathsf{s}_m\!:\!\mathsf{s}_m}}\;\mathsf{s}_m ,\]</div>
+<p>and the material’s accumulated (equivalent) plastic strain <span class="math notranslate nohighlight">\(\varepsilon_{p,m}\)</span> is incremented accordingly. The radial return and failure ramp are applied per material. The plastic work released by each material during its return is summed over materials and deposited into the <em>bulk</em> total energy, so plastic dissipation heats the cell.</p>
+</section>
+<section id="failure">
+<h3>Failure<a class="headerlink" href="#failure" title="Link to this heading"></a></h3>
+<p>As a material’s density falls toward its failure threshold <span class="math notranslate nohighlight">\(\rho_{\text{fail},m}\)</span>, its deviatoric stress is ramped smoothly to zero,</p>
+<div class="math notranslate nohighlight">
+\[\mathsf{s}_m \leftarrow
+  \min\!\left(\frac{\rho_m}{\rho_{\text{fail},m}},\,1\right)\mathsf{s}_m ,\]</div>
+<p>so that a fully failed (e.g. spalled or rarefied) material carries no strength and reverts to hydrodynamic behavior.</p>
+</section>
+<section id="aggregation-to-the-bulk-stress">
+<h3>Aggregation to the Bulk Stress<a class="headerlink" href="#aggregation-to-the-bulk-stress" title="Link to this heading"></a></h3>
+<p>The hydrodynamic fluxes use a bulk deviatoric stress and bulk shear modulus formed as volume-fraction-weighted sums of the per-material values (Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>),</p>
+<div class="math notranslate nohighlight">
+\[\mathsf{s} = \sum_m f_m\,\mathsf{s}_m, \qquad
+G = \sum_m f_m\,G_m .\]</div>
+<p>In practice the per-material stresses are reconstructed to cell faces and then combined with these <span class="math notranslate nohighlight">\(f_m\)</span> weights, and the resulting bulk stress is passed to the strength-aware Riemann solver. This is the sole channel by which per-material strength influences the shared momentum and energy equations.</p>
+</section>
+</section>
+<section id="strength-models">
+<h2>Strength Models<a class="headerlink" href="#strength-models" title="Link to this heading"></a></h2>
+<p>Each strong material is assigned a strength model that supplies the shear modulus <span class="math notranslate nohighlight">\(G\)</span> and yield strength <span class="math notranslate nohighlight">\(Y\)</span>. The available model is listed in the table below.</p>
+<div class="docutils container" id="tab-strength-models">
+<table class="docutils align-default" id="id1">
+<caption><span class="caption-text">Strength models (<code class="docutils literal notranslate"><span class="pre">modelname</span></code>).</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Option</strong></p></th>
+<th class="head"><p><strong>Name</strong></p></th>
+<th class="head"><p><strong>Description</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>epp</p></td>
+<td><p>Elastic–perfectly-plastic</p></td>
+<td><p>Constant shear modulus <span class="math notranslate nohighlight">\(G_0\)</span> and constant yield strength <span class="math notranslate nohighlight">\(Y_0\)</span>.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<div><p>A pressure- and temperature-dependent Steinberg–Guinan model (Steinberg, Cochran &amp; Guinan, <em>J. Appl. Phys.</em> <strong>51</strong>, 1498, 1980) is present in the source but not yet enabled.</p>
+</div></blockquote>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Material strength is activated in three places: globally in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block, per material in each <code class="docutils literal notranslate"><span class="pre">&lt;material&gt;</span></code> block, and in a user-named block that defines the strength model itself.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Global toggle in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>strength</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable the material strength package.</p></td>
+</tr>
+</tbody>
+</table>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Per-material parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;material</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>strong</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Flag this material as having strength.</p></td>
+</tr>
+<tr class="row-odd"><td><p>strength_model</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Name of the input block defining this material’s strength model (required if <code class="docutils literal notranslate"><span class="pre">strong</span></code> is true).</p></td>
+</tr>
+</tbody>
+</table>
+<p>The strength-model block is named by the <code class="docutils literal notranslate"><span class="pre">strength_model</span></code> parameter above. Its contents depend on the chosen <code class="docutils literal notranslate"><span class="pre">modelname</span></code>.</p>
+<table class="wraptable docutils align-default" id="id4">
+<caption><span class="caption-text">Parameters in a strength-model block (for <code class="docutils literal notranslate"><span class="pre">modelname</span> <span class="pre">=</span> <span class="pre">epp</span></code>).</span><a class="headerlink" href="#id4" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>modelname</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Model selector; use <code class="docutils literal notranslate"><span class="pre">epp</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>G0</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Shear modulus <span class="math notranslate nohighlight">\(G_0\)</span> (required for <code class="docutils literal notranslate"><span class="pre">epp</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>Y0</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Yield strength <span class="math notranslate nohighlight">\(Y_0\)</span> (required for <code class="docutils literal notranslate"><span class="pre">epp</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>rho_fail</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Density below which the material loses strength.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>When strength is enabled, the per-material stress fields in the table below are registered (sparse, controlled by <code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>), along with bulk strain-rate support fields. The conserved <span class="math notranslate nohighlight">\(\rho\mathsf{s}\)</span> and <span class="math notranslate nohighlight">\(\rho\varepsilon_p\)</span> are advected with fluxes; the material-averaged <code class="docutils literal notranslate"><span class="pre">cm::</span></code> counterparts and the strain-rate/face-velocity fields are derived.</p>
+<table class="wraptable docutils align-default" id="tab-strength-fields">
+<caption><span class="caption-text">Fields registered when material strength is active.</span><a class="headerlink" href="#tab-strength-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccmat::deviatoric_stress</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar\rho_m\mathsf{s}\)</span></p></td>
+<td><p>5</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; conserved deviatoric stress.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccmat::equivalent_plastic_strain</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar\rho_m\varepsilon_p\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected; plastic strain.</p></td>
+</tr>
+<tr class="row-even"><td><p>cm::deviatoric_stress</p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathsf{s}\)</span></p></td>
+<td><p>5</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; material-averaged deviatoric stress.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::equivalent_plastic_strain</p></td>
+<td><p><span class="math notranslate nohighlight">\(\varepsilon_p\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; equivalent plastic strain.</p></td>
+</tr>
+<tr class="row-even"><td><p>cm::shear_modulus</p></td>
+<td><p><span class="math notranslate nohighlight">\(G\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; shear modulus.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::strength_j2</p></td>
+<td><p><span class="math notranslate nohighlight">\(J_2\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Sparse, Derived, OneCopy; second stress invariant (diagnostic).</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::shear_modulus</p></td>
+<td><p><span class="math notranslate nohighlight">\(G\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; volume-averaged shear modulus.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::strain_rate</p></td>
+<td><p><span class="math notranslate nohighlight">\(\mathsf{e}\)</span></p></td>
+<td><p>6</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; strain-rate tensor.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::face_velocity</p></td>
+<td><p>—</p></td>
+<td><p>9</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; face velocities used to build <span class="math notranslate nohighlight">\(\mathsf{e}\)</span>.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>An elastic–perfectly-plastic beryllium, flagged as strong and pointed at a strength-model block:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">strength</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material0"</span><span class="p">,</span> <span class="n">strong</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+           <span class="n">strength_model</span><span class="o">=</span><span class="s2">"beryllium_strength"</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"beryllium_strength"</span><span class="p">,</span> <span class="n">modelname</span><span class="o">=</span><span class="s2">"epp"</span><span class="p">,</span>
+           <span class="n">G0</span><span class="o">=</span><span class="mf">1.519e12</span><span class="p">,</span>   <span class="c1"># shear modulus</span>
+           <span class="n">Y0</span><span class="o">=</span><span class="mf">3.30e9</span><span class="p">,</span>     <span class="c1"># yield strength</span>
+           <span class="n">rho_fail</span><span class="o">=</span><span class="mf">0.5</span><span class="p">)</span>  <span class="c1"># failure density</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="hydro.html" class="btn btn-neutral float-left" title="Hydrodynamics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="ionization.html" class="btn btn-neutral float-right" title="Ionization" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="strength.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

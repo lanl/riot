@@ -1,0 +1,350 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Building riot &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Contributing" href="contributing.html" />
+    <link rel="prev" title="block-adaptive, performance portable mutli-material radiation hydrodynamics" href="../index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#python-environment">Python environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#configure-build-and-install">Configure, build, and install</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#building-in-wsl">Building in WSL</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#micromamba-alternative">Micromamba alternative</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#build-options">Build options</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/src/building.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="building-riot">
+<span id="building-doc"></span><h1>Building <code class="docutils literal notranslate"><span class="pre">riot</span></code><a class="headerlink" href="#building-riot" title="Link to this heading"></a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">riot</span></code> builds on Linux with CMake. Windows users should build it in Windows
+Subsystem for Linux (WSL); after WSL is installed, the Linux build steps are
+the same as on Ubuntu.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">riot</span></code> requires CMake 3.26 or newer, a C++17-capable compiler, MPI, and a
+parallel HDF5 installation. For Ubuntu, install the base dependencies with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt<span class="w"> </span>update
+sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>build-essential<span class="w"> </span>libhdf5-mpich-dev<span class="w"> </span>git<span class="w"> </span>cmake<span class="w"> </span>curl<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python3<span class="w"> </span>python3-dev<span class="w"> </span>python3-venv
+</pre></div>
+</div>
+<p>Clone <code class="docutils literal notranslate"><span class="pre">riot</span></code> and all required submodules:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>--recursive<span class="w"> </span>git@github.com:lanl/riot.git
+<span class="nb">cd</span><span class="w"> </span>riot
+</pre></div>
+</div>
+<p>If the repository was cloned without submodules, initialize them before
+configuring:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>submodule<span class="w"> </span>update<span class="w"> </span>--init<span class="w"> </span>--recursive
+</pre></div>
+</div>
+</section>
+<section id="python-environment">
+<h2>Python environment<a class="headerlink" href="#python-environment" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">riot</span></code>’s Python interface requires Python development files and NumPy. A virtual
+environment keeps Python packages isolated from the system installation:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>-m<span class="w"> </span>venv<span class="w"> </span>riot_venv
+.<span class="w"> </span>riot_venv/bin/activate
+python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>pip
+python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>numpy
+</pre></div>
+</div>
+<p>Additional Python packages, such as <code class="docutils literal notranslate"><span class="pre">scipy</span></code> and <code class="docutils literal notranslate"><span class="pre">h5py</span></code>, may be installed
+in this virtual environment when needed by an input deck. Do not install them
+into a Conda or Micromamba environment that CMake will use to locate parallel
+HDF5 unless that environment provides a compatible MPI-enabled HDF5 package.</p>
+</section>
+<section id="configure-build-and-install">
+<h2>Configure, build, and install<a class="headerlink" href="#configure-build-and-install" title="Link to this heading"></a></h2>
+<p>Create a separate build directory. The following configuration uses the active
+virtual environment for Python and installs <code class="docutils literal notranslate"><span class="pre">riot</span></code>’s runtime files into it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DPython_ROOT_DIR<span class="o">=</span><span class="s2">"</span><span class="nv">$VIRTUAL_ENV</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_INSTALL_PREFIX<span class="o">=</span><span class="s2">"</span><span class="nv">$VIRTUAL_ENV</span><span class="s2">"</span>
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--parallel<span class="w"> </span><span class="m">6</span>
+cmake<span class="w"> </span>--install<span class="w"> </span>build
+</pre></div>
+</div>
+<p>The executable is built at <code class="docutils literal notranslate"><span class="pre">build/src/riot</span></code>. To run a Cartesian example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>build/src
+cp<span class="w"> </span>../../inputs/triple/triple.py<span class="w"> </span>.
+./riot<span class="w"> </span>-i<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>triple.py<span class="k">)</span><span class="s2">"</span>
+mpirun<span class="w"> </span>-np<span class="w"> </span><span class="m">4</span><span class="w"> </span>./riot<span class="w"> </span>-i<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>triple.py<span class="k">)</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>The final command runs the example with four MPI ranks.</p>
+</section>
+<section id="building-in-wsl">
+<h2>Building in WSL<a class="headerlink" href="#building-in-wsl" title="Link to this heading"></a></h2>
+<p>Install WSL and Ubuntu from an elevated Windows PowerShell prompt:</p>
+<div class="highlight-powershell notranslate"><div class="highlight"><pre><span></span><span class="n">wsl</span> <span class="p">-</span><span class="n">-list</span> <span class="p">-</span><span class="n">-online</span>
+<span class="n">wsl</span> <span class="p">-</span><span class="n">-install</span> <span class="n">Ubuntu</span><span class="p">-</span><span class="n">24</span><span class="p">.</span><span class="n">04</span>
+</pre></div>
+</div>
+<p>Restart Windows if prompted, launch Ubuntu, and create a Linux username and
+password. Then follow the Ubuntu instructions above inside the Ubuntu terminal.
+Windows drives are available under <code class="docutils literal notranslate"><span class="pre">/mnt</span></code>; for example, the <code class="docutils literal notranslate"><span class="pre">C:</span></code> drive is
+mounted at <code class="docutils literal notranslate"><span class="pre">/mnt/c</span></code>.</p>
+</section>
+<section id="micromamba-alternative">
+<h2>Micromamba alternative<a class="headerlink" href="#micromamba-alternative" title="Link to this heading"></a></h2>
+<p>Micromamba can be used instead of a Python virtual environment. After creating
+and activating an environment with MPI-enabled HDF5, configure <code class="docutils literal notranslate"><span class="pre">riot</span></code> with its
+prefix:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="s2">"</span><span class="si">${</span><span class="nv">SHELL</span><span class="si">}</span><span class="s2">"</span><span class="w"> </span>&lt;<span class="o">(</span>curl<span class="w"> </span>-L<span class="w"> </span>micro.mamba.pm/install.sh<span class="o">)</span>
+<span class="nb">source</span><span class="w"> </span>~/.bashrc
+micromamba<span class="w"> </span>create<span class="w"> </span>-n<span class="w"> </span>riot<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.12<span class="w"> </span>numpy<span class="w"> </span>matplotlib<span class="w"> </span>scipy<span class="w"> </span>h5py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">'hdf5=*=mpi*'</span><span class="w"> </span>zlib<span class="w"> </span>cmake<span class="w"> </span>cxx-compiler<span class="w"> </span>c-compiler<span class="w"> </span>pkg-config
+micromamba<span class="w"> </span>activate<span class="w"> </span>riot
+
+cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_BUILD_TYPE<span class="o">=</span>Release<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_PREFIX_PATH<span class="o">=</span><span class="s2">"</span><span class="nv">$CONDA_PREFIX</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DHDF5_ROOT<span class="o">=</span><span class="s2">"</span><span class="nv">$CONDA_PREFIX</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DHDF5_IS_PARALLEL<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DHDF5_PREFER_PARALLEL<span class="o">=</span>ON<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DPython_ROOT_DIR<span class="o">=</span><span class="s2">"</span><span class="nv">$CONDA_PREFIX</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-DCMAKE_INSTALL_PREFIX<span class="o">=</span><span class="s2">"</span><span class="nv">$CONDA_PREFIX</span><span class="s2">"</span>
+</pre></div>
+</div>
+</section>
+<section id="build-options">
+<h2>Build options<a class="headerlink" href="#build-options" title="Link to this heading"></a></h2>
+<p>Pass options to CMake as <code class="docutils literal notranslate"><span class="pre">-DOPTION=VALUE</span></code>. The options below are defined by
+<code class="docutils literal notranslate"><span class="pre">riot</span></code>; additional Parthenon and Kokkos options are available from their
+documentation.</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 32.0%" />
+<col style="width: 12.0%" />
+<col style="width: 56.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">CMAKE_BUILD_TYPE</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">RelWithDebInfo</span></code></p></td>
+<td><p>Build configuration. Common alternatives are <code class="docutils literal notranslate"><span class="pre">Debug</span></code> and <code class="docutils literal notranslate"><span class="pre">Release</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_UNIT_TESTS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Build <code class="docutils literal notranslate"><span class="pre">riot</span></code> unit tests.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_INTEGRATION_TESTS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Build <code class="docutils literal notranslate"><span class="pre">riot</span></code> integration tests.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_REGRESSION_TESTS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Build <code class="docutils literal notranslate"><span class="pre">riot</span></code> regression tests.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_CUDA</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable CUDA support in <code class="docutils literal notranslate"><span class="pre">riot</span></code> and its in-tree dependencies.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_HDF5</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Enable HDF5 support. MPI builds require a parallel HDF5 installation.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_MPI</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Enable MPI support.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_OPENMP</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable OpenMP support in <code class="docutils literal notranslate"><span class="pre">riot</span></code> and Parthenon.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_WARNINGS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable compiler warnings.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_SANITIZE</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable the address sanitizer.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_NDI</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable NDI support for the <code class="docutils literal notranslate"><span class="pre">ndi2spiner</span></code> tool.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_NDI</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code> when NDI is enabled</p></td>
+<td><p>Build the bundled NDI dependency. This option is available only when
+<code class="docutils literal notranslate"><span class="pre">RIOT_ENABLE_NDI=ON</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_CATCH2</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Build the bundled Catch2. Set to <code class="docutils literal notranslate"><span class="pre">OFF</span></code> to use a system Catch2 package.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_PARTHENON</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Build the bundled Parthenon. Set to <code class="docutils literal notranslate"><span class="pre">OFF</span></code> to use an installed package.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_SINGULARITY</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Build the bundled singularity-eos. Set to <code class="docutils literal notranslate"><span class="pre">OFF</span></code> to use an installed package.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_PYTHON</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ON</span></code></p></td>
+<td><p>Build <code class="docutils literal notranslate"><span class="pre">riot</span></code>’s Python interface.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_BUILD_CAD</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">OFF</span></code></p></td>
+<td><p>Enable CAD-file support through OpenCASCADE.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_MAX_MATERIALS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">16</span></code></p></td>
+<td><p>Maximum number of materials stored per mesh block.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_MAX_STRONG</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">16</span></code></p></td>
+<td><p>Maximum number of strong materials.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_MAX_ADV</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">32</span></code></p></td>
+<td><p>Maximum number of advected quantities.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">RIOT_MAX_GROUPS</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">64</span></code></p></td>
+<td><p>Maximum number of radiation energy groups.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PARTHENON_COORDINATES</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UniformCartesian</span></code></p></td>
+<td><p>Coordinate system: <code class="docutils literal notranslate"><span class="pre">UniformCartesian</span></code>, <code class="docutils literal notranslate"><span class="pre">UniformCylindrical</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">UniformSpherical</span></code>. Use a separate build directory for each choice.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">MACHINE_CFG</span></code></p></td>
+<td><p>unset</p></td>
+<td><p>Path to a Parthenon machine-configuration file for compiler and platform
+defaults.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../index.html" class="btn btn-neutral float-left" title="block-adaptive, performance portable mutli-material radiation hydrodynamics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="contributing.html" class="btn btn-neutral float-right" title="Contributing" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: main
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../regression-gold-20260831/src/building.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../HEAD/src/building.html">HEAD</a></dd>
+      <dd><a href="../../jmm/re-git-ci/src/building.html">jmm/re-git-ci</a></dd>
+      <dd><a href="../../jmm/riot-docs/src/building.html">jmm/riot-docs</a></dd>
+      <dd><a href="building.html">main</a></dd>
+      <dd><a href="../../pdmullen/curv-transport/src/building.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../pdmullen/tabular-drive-bc/src/building.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../swjones/isotopic-diffusion/src/building.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

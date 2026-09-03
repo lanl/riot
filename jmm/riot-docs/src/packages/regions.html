@@ -1,0 +1,365 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Regions &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="The Python Interface" href="python_interface.html" />
+    <link rel="prev" title="Sparse Physics" href="sparse_physics.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Regions</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#concept">Concept</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#region-shapes">Region Shapes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#initial-state">Initial State</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Regions</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/regions.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="regions">
+<span id="chap-regions"></span><h1>Regions<a class="headerlink" href="#regions" title="Link to this heading"></a></h1>
+<p>Most users interact with RIOT by specifying <em>initial conditions</em>, and in RIOT initial conditions are built from <em>regions</em>. A region is a geometric subdomain assigned to one or more materials together with an initial thermodynamic and kinematic state. The problem generator paints the mesh by evaluating each region over every cell; where regions overlap, higher-numbered regions take precedence. This chapter describes the region model and its text input-deck parameters; the Python interface in Chapter <a class="reference internal" href="python_interface.html#chap-python"><span class="std std-ref">The Python Interface</span></a> offers a more powerful way to define the same regions.</p>
+<section id="concept">
+<h2>Concept<a class="headerlink" href="#concept" title="Link to this heading"></a></h2>
+<p>Regions are declared in numbered input blocks <code class="docutils literal notranslate"><span class="pre">&lt;region0&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;region1&gt;</span></code>, …; the numeric suffix is the region <em>id</em>. Each region selects a geometric <em>mask</em> (a shape), a list of materials (<code class="docutils literal notranslate"><span class="pre">matid</span></code>), and an initial state. The problem generator processes regions in order of increasing id so that a later (higher-id) region overrides earlier ones where they overlap. By convention <code class="docutils literal notranslate"><span class="pre">&lt;region0&gt;</span></code> uses the <code class="docutils literal notranslate"><span class="pre">background</span></code> mask (which covers the whole domain) to provide a default state that subsequent regions carve into.</p>
+<p>Where two regions meet within a single cell, RIOT can adaptively subdivide the cell to compute accurate volume fractions; the depth of this subdivision is controlled by <code class="docutils literal notranslate"><span class="pre">nlev_min</span></code> and <code class="docutils literal notranslate"><span class="pre">nlev_max</span></code> in the global <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block. Defaults placed in the <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block apply to every region unless overridden locally.</p>
+</section>
+<section id="region-shapes">
+<h2>Region Shapes<a class="headerlink" href="#region-shapes" title="Link to this heading"></a></h2>
+<p>The geometric mask is chosen with the <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> parameter. The available shapes and their defining parameters are listed in the table below. All center/coordinate parameters default to <code class="docutils literal notranslate"><span class="pre">0</span></code>; radii default to <code class="docutils literal notranslate"><span class="pre">1</span></code>.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 26.7%" />
+<col style="width: 73.3%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>mask_type</p></th>
+<th class="head"><p>Shape and defining parameters</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>background</p></td>
+<td><p>Entire domain (default state); no parameters.</p></td>
+</tr>
+<tr class="row-odd"><td><p>inside_sphere</p></td>
+<td><p>Sphere: center <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code>, <code class="docutils literal notranslate"><span class="pre">radius</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>inside_spherical_shell</p></td>
+<td><p>Spherical shell: center <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code>, <code class="docutils literal notranslate"><span class="pre">inner_radius</span></code>, <code class="docutils literal notranslate"><span class="pre">outer_radius</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>inside_cylinder</p></td>
+<td><p>Finite cylinder: axis endpoints <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code> to <code class="docutils literal notranslate"><span class="pre">x1,y1,z1</span></code>, <code class="docutils literal notranslate"><span class="pre">radius</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>inside_cylindrical_shell</p></td>
+<td><p>Cylindrical shell: axis <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code> to <code class="docutils literal notranslate"><span class="pre">x1,y1,z1</span></code>, <code class="docutils literal notranslate"><span class="pre">inner_radius</span></code>, <code class="docutils literal notranslate"><span class="pre">outer_radius</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>inside_ellipsoid</p></td>
+<td><p>Ellipsoid: center <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code>, semi-axes <code class="docutils literal notranslate"><span class="pre">ax,ay,az</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>inside_ellipsoidal_shell</p></td>
+<td><p>Ellipsoidal shell: center <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code>, <code class="docutils literal notranslate"><span class="pre">inner_ax..az</span></code>, <code class="docutils literal notranslate"><span class="pre">outer_ax..az</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>inside_rectangle</p></td>
+<td><p>Axis-aligned box: bounds <code class="docutils literal notranslate"><span class="pre">x0,y0,z0</span></code> to <code class="docutils literal notranslate"><span class="pre">x1,y1,z1</span></code> (defaults <span class="math notranslate nohighlight">\(\pm\infty\)</span>, i.e. a half-space or slab if only some bounds are set).</p></td>
+</tr>
+<tr class="row-even"><td><p>python</p></td>
+<td><p>Mask supplied by a user Python function (Chapter <a class="reference internal" href="python_interface.html#chap-python"><span class="std std-ref">The Python Interface</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>cad</p></td>
+<td><p>Solid imported from a STEP CAD file: <code class="docutils literal notranslate"><span class="pre">cadfile</span></code>, <code class="docutils literal notranslate"><span class="pre">name</span></code> (Section <a class="reference internal" href="python_interface.html#sec-cad"><span class="std std-ref">CAD Geometry</span></a>).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="initial-state">
+<h2>Initial State<a class="headerlink" href="#initial-state" title="Link to this heading"></a></h2>
+<p>A region’s thermodynamic state is set by providing <em>two</em> independent thermodynamic quantities per material; RIOT infers the initialization mode from which pair is given. The settable material-averaged quantities are density (<code class="docutils literal notranslate"><span class="pre">c_m_rho</span></code>), pressure (<code class="docutils literal notranslate"><span class="pre">c_m_pressure</span></code>), temperature (<code class="docutils literal notranslate"><span class="pre">c_m_temperature</span></code>), and specific internal energy (<code class="docutils literal notranslate"><span class="pre">c_m_sie</span></code>). The supported combinations are summarized in the table below. The equation of state (Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>) closes the remaining variables and produces the conserved state.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 46.7%" />
+<col style="width: 53.3%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Provide</p></th>
+<th class="head"><p>Sets state from</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>c_m_rho + c_m_temperature</p></td>
+<td><p>density and temperature (most common).</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_m_rho + c_m_pressure</p></td>
+<td><p>density and pressure.</p></td>
+</tr>
+<tr class="row-even"><td><p>c_m_rho + c_m_sie</p></td>
+<td><p>density and specific internal energy.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_m_pressure + c_m_temperature</p></td>
+<td><p>pressure and temperature.</p></td>
+</tr>
+</tbody>
+</table>
+<p>When ionization is active, the electron temperature may be set independently (<code class="docutils literal notranslate"><span class="pre">c_c_bulk_electron_temperature</span></code>) or placed in equilibrium with the ions. The bulk velocity is set with <code class="docutils literal notranslate"><span class="pre">c_c_bulk_velocity</span></code> (a three-vector). Passive scalars are tagged in a region with <code class="docutils literal notranslate"><span class="pre">passive_scalars</span></code>. In multi-material regions, per-material state is given by suffixing the material label (e.g. <code class="docutils literal notranslate"><span class="pre">c_m_rho_Tungsten</span></code>), and volume fractions default such that each material fills its region.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Per-region parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;region</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>mask_type</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Region shape (the table below).</p></td>
+</tr>
+<tr class="row-odd"><td><p>matid</p></td>
+<td><p>int/list</p></td>
+<td><p>—</p></td>
+<td><p>Material id(s) present in the region.</p></td>
+</tr>
+<tr class="row-even"><td><p>name</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Optional label (also the Python class name).</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_m_rho</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Initial density (with a second state variable).</p></td>
+</tr>
+<tr class="row-even"><td><p>c_m_pressure</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Initial pressure.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_m_temperature</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Initial temperature.</p></td>
+</tr>
+<tr class="row-even"><td><p>c_m_sie</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Initial specific internal energy.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_c_bulk_velocity</p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0,0,0</span></code></p></td>
+<td><p>Initial velocity vector.</p></td>
+</tr>
+<tr class="row-even"><td><p>passive_scalars</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Passive scalars tagged in this region.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Shape-specific geometry parameters (<code class="docutils literal notranslate"><span class="pre">x0</span></code>, <code class="docutils literal notranslate"><span class="pre">radius</span></code>, etc.) are listed in the table below. The global <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block holds defaults and the overlap-refinement controls:</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Parameters in the global <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>nlev_min</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Minimum subdivision level in cells spanning multiple regions.</p></td>
+</tr>
+<tr class="row-odd"><td><p>nlev_max</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Maximum subdivision level for computing overlap volume fractions.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A Sedov-like setup: a uniform background of material <code class="docutils literal notranslate"><span class="pre">0</span></code> with a small high-pressure cylinder at the origin. The regions are shown here in the text input-deck form to illustrate the block syntax; the equivalent Python calls (<code class="docutils literal notranslate"><span class="pre">riot.input(&quot;region0&quot;,</span> <span class="pre">…)</span></code>, etc.) are the recommended way to write them (Chapter <a class="reference internal" href="python_interface.html#chap-python"><span class="std std-ref">The Python Interface</span></a>).</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">regions</span><span class="o">&gt;</span>
+<span class="n">nlev_max</span> <span class="o">=</span> <span class="mi">5</span>
+
+<span class="o">&lt;</span><span class="n">region0</span><span class="o">&gt;</span>
+<span class="n">mask_type</span> <span class="o">=</span> <span class="n">background</span>
+<span class="n">matid</span>     <span class="o">=</span> <span class="mi">0</span>
+<span class="n">c_m_rho</span>      <span class="o">=</span> <span class="mf">1.0</span>
+<span class="n">c_m_pressure</span> <span class="o">=</span> <span class="mf">0.1</span>
+
+<span class="o">&lt;</span><span class="n">region1</span><span class="o">&gt;</span>
+<span class="n">mask_type</span> <span class="o">=</span> <span class="n">inside_cylinder</span>
+<span class="n">matid</span>     <span class="o">=</span> <span class="mi">0</span>
+<span class="n">x0</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="n">y0</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="n">z0</span> <span class="o">=</span> <span class="o">-</span><span class="mf">0.75</span>
+<span class="n">x1</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="n">y1</span> <span class="o">=</span> <span class="mf">0.0</span>
+<span class="n">z1</span> <span class="o">=</span> <span class="mf">0.75</span>
+<span class="n">radius</span> <span class="o">=</span> <span class="mf">0.1</span>
+<span class="n">c_m_rho</span>      <span class="o">=</span> <span class="mf">1.0</span>
+<span class="n">c_m_pressure</span> <span class="o">=</span> <span class="mf">10.0</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="sparse_physics.html" class="btn btn-neutral float-left" title="Sparse Physics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="python_interface.html" class="btn btn-neutral float-right" title="The Python Interface" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="regions.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

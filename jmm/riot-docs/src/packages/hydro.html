@@ -1,0 +1,517 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hydrodynamics &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Material Strength" href="strength.html" />
+    <link rel="prev" title="Materials and Equations of State" href="materials.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Hydrodynamics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#amagat-volume-additive-closure">Amagat (Volume-Additive) Closure</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#conservation-laws">Conservation Laws</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#pressuretemperature-equilibrium-pte">Pressure–Temperature Equilibrium (PTE)</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#geometric-source-terms">Geometric Source Terms</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#numerical-method">Numerical Method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Hydrodynamics</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/hydro.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="hydrodynamics">
+<span id="chap-hydro"></span><h1>Hydrodynamics<a class="headerlink" href="#hydrodynamics" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">hydro</span></code> package integrates the multi-material compressible Euler
+equations in conservative form. It is the core solver of RIOT: it
+performs reconstruction, evaluates interface fluxes with a Riemann
+solver, and applies the geometric source terms of curvilinear
+coordinates. It couples to the material strength, level-set,
+ionization, gravity, and other packages when those are enabled.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>RIOT treats each cell as containing one or more materials. Before
+writing the conservation laws we fix the per-material decomposition
+and its notation; the per-material/bulk conventions used throughout
+are defined in Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>.</p>
+<section id="amagat-volume-additive-closure">
+<h3>Amagat (Volume-Additive) Closure<a class="headerlink" href="#amagat-volume-additive-closure" title="Link to this heading"></a></h3>
+<p>Each material <span class="math notranslate nohighlight">\(m\)</span> carries a cell-volume-averaged density
+<span class="math notranslate nohighlight">\(\bar\rho_m\)</span> (<code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>, its mass per unit <em>cell</em> volume)
+and a volume fraction <span class="math notranslate nohighlight">\(f_m\)</span>
+(Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>). RIOT uses the Amagat volume-additive
+closure, which assumes the materials occupy <em>distinct</em> sub-volumes of
+the cell — they do not interpenetrate, so no two materials share the
+same physical volume. Their volumes then partition the cell and sum to
+fill it,</p>
+<div class="math notranslate nohighlight">
+\[\sum_m f_m = 1 .\]</div>
+<p>The physical (material-averaged) density is <span class="math notranslate nohighlight">\(\rho_m = \bar\rho_m
+/ f_m\)</span> (<code class="docutils literal notranslate"><span class="pre">cm::rho</span></code>), and the bulk density is the sum of the
+cell-volume-averaged densities,</p>
+<div class="math notranslate nohighlight">
+\[\rho= \sum_m \bar\rho_m = \sum_m f_m\,\rho_m .\]</div>
+<p>The bulk volumetric internal energy <span class="math notranslate nohighlight">\(u\)</span> (internal energy per
+unit cell volume) is the sum over materials of the per-material
+internal-energy densities,</p>
+<div class="math notranslate nohighlight">
+\[u = \sum_m \bar\rho_m\,e_m ,\]</div>
+<p>where <span class="math notranslate nohighlight">\(e_m\)</span> is the specific internal energy of material
+<span class="math notranslate nohighlight">\(m\)</span>. The bulk velocity is <span class="math notranslate nohighlight">\(\vec{v}= (\rho\vec{v})/\rho\)</span>,
+and the bulk pressure is set by the equilibrium closure of
+Section <a class="reference internal" href="#sec-hydro-pte"><span class="std std-ref">Pressure–Temperature Equilibrium (PTE)</span></a>.</p>
+</section>
+<section id="conservation-laws">
+<h3>Conservation Laws<a class="headerlink" href="#conservation-laws" title="Link to this heading"></a></h3>
+<p>The quantities that are actually integrated in time (advected with the
+interface fluxes) are the per-material cell-volume-averaged densities
+<span class="math notranslate nohighlight">\(\bar\rho_m\)</span> and the <em>bulk</em> momentum and total energy. These
+obey</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\frac{\partial \bar\rho_m}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_m\vec{v}\right) &amp;= 0,
+  \qquad m = 1,\dots,N_{\text{mat}}, \\[2pt]
+\frac{\partial \left(\rho\vec{v}\right)}{\partial t}
+  + \nabla\!\cdot\!\left(\rho\vec{v}\otimes\vec{v}+ p\,\mathsf{I} - \mathsf{s}\right)
+  &amp;= \vec{0}, \\[2pt]
+\frac{\partial E}{\partial t}
+  + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}- \mathsf{s}\!\cdot\!\vec{v}\right]
+  &amp;= 0,\end{split}\]</div>
+<p>where <span class="math notranslate nohighlight">\(\vec{v}\)</span> is the single velocity common to all materials
+in the cell, <span class="math notranslate nohighlight">\(p\)</span> the bulk pressure, <span class="math notranslate nohighlight">\(E = u +
+\tfrac{1}{2}\rho|\vec{v}|^2\)</span> the total energy density (the sum of the
+bulk volumetric internal energy <span class="math notranslate nohighlight">\(u\)</span> and the kinetic energy
+density), and <span class="math notranslate nohighlight">\(\mathsf{s}\)</span> the <em>bulk</em> deviatoric stress
+tensor. Other packages contribute source terms to the right-hand sides
+above when enabled — for example the gravitational body force of
+Chapter <a class="reference internal" href="gravity.html#chap-gravity"><span class="std std-ref">Gravity</span></a>. Each material partial density is advected
+by the common Riemann velocity from the bulk solver. The deviatoric
+stress is present only when the material strength package is active
+(Chapter <a class="reference internal" href="strength.html#chap-strength"><span class="std std-ref">Material Strength</span></a>); it is itself an aggregate of the
+per-material deviatoric stresses, <span class="math notranslate nohighlight">\(\mathsf{s}=\sum_m
+f_m\mathsf{s}_m\)</span>, and for pure hydrodynamics
+<span class="math notranslate nohighlight">\(\mathsf{s}=\vec{0}\)</span>, reducing the momentum/energy equations to
+the standard compressible Euler form. Note that there is <em>no</em>
+independent per-material energy equation: only the bulk total energy
+is transported, and the individual material energies are recovered
+each step from the equilibrium closure below.</p>
+<p>The bulk quantities appearing above (<span class="math notranslate nohighlight">\(\rho\)</span>, <span class="math notranslate nohighlight">\(\vec{v}\)</span>,
+<span class="math notranslate nohighlight">\(p\)</span>, <span class="math notranslate nohighlight">\(u\)</span>, <span class="math notranslate nohighlight">\(\mathsf{s}\)</span>) are aggregated from the
+per-material states after each update according to the rules in
+Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>: <span class="math notranslate nohighlight">\(\rho\)</span> and the volumetric
+internal energy <span class="math notranslate nohighlight">\(u\)</span> are cell-averaged sums over materials,
+<span class="math notranslate nohighlight">\(\mathsf{s}\)</span> is a volume-fraction-weighted sum, and <span class="math notranslate nohighlight">\(p\)</span>
+(with <span class="math notranslate nohighlight">\(T\)</span>) is the common equilibrium value from the PTE closure
+below.</p>
+</section>
+<section id="pressuretemperature-equilibrium-pte">
+<span id="sec-hydro-pte"></span><h3>Pressure–Temperature Equilibrium (PTE)<a class="headerlink" href="#pressuretemperature-equilibrium-pte" title="Link to this heading"></a></h3>
+<p>The closure that determines the volume fractions <span class="math notranslate nohighlight">\(f_m\)</span> and the
+material states is pressure–temperature equilibrium. Given the
+per-material cell-volume-averaged densities <span class="math notranslate nohighlight">\(\bar\rho_m\)</span> and the
+bulk volumetric internal energy <span class="math notranslate nohighlight">\(u\)</span>, RIOT solves for a common
+equilibrium pressure <span class="math notranslate nohighlight">\(p\)</span> and temperature <span class="math notranslate nohighlight">\(T\)</span> together with
+the volume fractions <span class="math notranslate nohighlight">\(f_m\)</span> subject to</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}p_m(\rho_m, T) &amp;= p \quad \text{for all } m
+  &amp;&amp;\text{(pressure equilibrium)}, \\
+T_m &amp;= T \quad \text{for all } m
+  &amp;&amp;\text{(temperature equilibrium)}, \\
+\sum_m f_m &amp;= 1
+  &amp;&amp;\text{(volume additivity)}, \\
+u &amp;= \sum_m \bar\rho_m\,e_m(\rho_m, T)
+  &amp;&amp;\text{(energy consistency)},\end{split}\]</div>
+<p>where each material’s pressure <span class="math notranslate nohighlight">\(p_m(\rho_m, T)\)</span> and specific
+internal energy <span class="math notranslate nohighlight">\(e_m(\rho_m, T)\)</span> are provided by its equation of
+state through <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code>. In equilibrium every material
+shares the same pressure <span class="math notranslate nohighlight">\(p\)</span> and temperature <span class="math notranslate nohighlight">\(T\)</span>, so the
+common <span class="math notranslate nohighlight">\(p\)</span> is the bulk pressure carried by the momentum and
+energy equations. This root-finding problem is handled by the
+<code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> <code class="docutils literal notranslate"><span class="pre">PTESolverRhoT</span></code> closure; a fixed-temperature
+solver is used as a fallback. For ideal-gas materials the equilibrium
+admits a closed-form solution and is evaluated analytically.</p>
+<p>Materials whose volume or mass fraction falls below a threshold are
+removed from the cell (see <code class="docutils literal notranslate"><span class="pre">vol_frac_thresh</span></code> and
+<code class="docutils literal notranslate"><span class="pre">mass_frac_thresh</span></code>).</p>
+</section>
+<section id="geometric-source-terms">
+<h3>Geometric Source Terms<a class="headerlink" href="#geometric-source-terms" title="Link to this heading"></a></h3>
+<p>For reduced-dimension curvilinear runs (1D spherical, 2D cylindrical),
+the divergence operators above acquire geometric source terms that
+RIOT applies explicitly. These are activated by the mesh geometry
+rather than by a hydro parameter.</p>
+</section>
+</section>
+<section id="numerical-method">
+<h2>Numerical Method<a class="headerlink" href="#numerical-method" title="Link to this heading"></a></h2>
+<p>Interface states are obtained by <em>reconstruction</em> of the primitive
+variables and combined into fluxes by a <em>Riemann solver</em>. The
+available reconstruction methods are listed in the table below and the
+Riemann solvers in the table below. The stable time step is limited by
+the CFL condition with the user-specified Courant number <code class="docutils literal notranslate"><span class="pre">cfl</span></code>.</p>
+<div class="docutils container" id="tab-hydro-recon">
+<table class="docutils align-default" id="id1">
+<caption><span class="caption-text">Reconstruction methods (<code class="docutils literal notranslate"><span class="pre">recon</span></code>, <code class="docutils literal notranslate"><span class="pre">vfrac_recon</span></code>).</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Option</strong></p></th>
+<th class="head"><p><strong>Order</strong></p></th>
+<th class="head"><p><strong>Description</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>constant</p></td>
+<td><p>1</p></td>
+<td><p>Piecewise constant</p></td>
+</tr>
+<tr class="row-odd"><td><p>plm</p></td>
+<td><p>2</p></td>
+<td><p>Piecewise linear (MC limiter)</p></td>
+</tr>
+<tr class="row-even"><td><p>ppm4</p></td>
+<td><p>4</p></td>
+<td><p>Piecewise parabolic (4th-order interpolation)</p></td>
+</tr>
+<tr class="row-odd"><td><p>weno5</p></td>
+<td><p>5</p></td>
+<td><p>Weighted essentially non-oscillatory (WENO5-Z)</p></td>
+</tr>
+<tr class="row-even"><td><p>mp5</p></td>
+<td><p>5</p></td>
+<td><p>Monotonicity-preserving 5th-order</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="docutils container" id="tab-hydro-riemann">
+<table class="docutils align-default" id="id2">
+<caption><span class="caption-text">Riemann solvers (<code class="docutils literal notranslate"><span class="pre">riemann</span></code>).</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<thead>
+<tr class="row-odd"><th class="head"><p><strong>Option</strong></p></th>
+<th class="head"><p><strong>Description</strong></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>hll</p></td>
+<td><p>HLL solver; robust but more diffusive than HLLC</p></td>
+</tr>
+<tr class="row-odd"><td><p>hllc</p></td>
+<td><p>HLLC (contact-restoring) solver; default</p></td>
+</tr>
+<tr class="row-even"><td><p>chllc</p></td>
+<td><p>Carbuncle-corrected HLLC (Minoshima &amp; Miyoshi 2021)</p></td>
+</tr>
+<tr class="row-odd"><td><p>lhllc</p></td>
+<td><p>Low-Mach and carbuncle-corrected HLLC (experimental)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>When material strength is enabled, a strength-aware Riemann solver
+that accounts for the deviatoric stress contribution is selected
+automatically.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>All parameters below reside in the <code class="docutils literal notranslate"><span class="pre">&lt;hydro&gt;</span></code> block unless otherwise noted.</p>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;hydro&gt;</span></code> block.</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>recon</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">plm</span></code></p></td>
+<td><p>Reconstruction method (the table below).</p></td>
+</tr>
+<tr class="row-odd"><td><p>vfrac_recon</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">=recon</span></code></p></td>
+<td><p>Reconstruction method used for volume fractions.</p></td>
+</tr>
+<tr class="row-even"><td><p>riemann</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hllc</span></code></p></td>
+<td><p>Riemann solver (the table below).</p></td>
+</tr>
+<tr class="row-odd"><td><p>cfl</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.8</span></code></p></td>
+<td><p>Courant–Friedrichs–Lewy number for time-step control.</p></td>
+</tr>
+<tr class="row-even"><td><p>lm_correction</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Apply Thornber low-Mach correction (experimental).</p></td>
+</tr>
+<tr class="row-odd"><td><p>amr_interface</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Refine on material interfaces when AMR is active.</p></td>
+</tr>
+<tr class="row-even"><td><p>vol_frac_thresh</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-12</span></code></p></td>
+<td><p>Volume fraction below which a material is removed.</p></td>
+</tr>
+<tr class="row-odd"><td><p>mass_frac_thresh</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-12</span></code></p></td>
+<td><p>Mass fraction below which a material is excluded from PTE.</p></td>
+</tr>
+<tr class="row-even"><td><p>temp_floor</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Minimum allowed temperature (K).</p></td>
+</tr>
+<tr class="row-odd"><td><p>track_total_kinetic_energy</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Record total kinetic energy in the history file.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Whether the hydro solver runs at all, and which extra terms it
+evaluates, is governed by the package toggles in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code>
+block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>). In particular, <code class="docutils literal notranslate"><span class="pre">hydro</span></code>
+enables the solver itself; <code class="docutils literal notranslate"><span class="pre">strength</span></code> adds the deviatoric stress
+<span class="math notranslate nohighlight">\(\mathsf{s}\)</span> and its transport (Chapter <a class="reference internal" href="strength.html#chap-strength"><span class="std std-ref">Material Strength</span></a>);
+<code class="docutils literal notranslate"><span class="pre">gravity</span></code> adds a gravitational body force
+(Chapter <a class="reference internal" href="gravity.html#chap-gravity"><span class="std std-ref">Gravity</span></a>); and <code class="docutils literal notranslate"><span class="pre">ionization</span></code> augments the
+equation-of-state closure.</p>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The hydro packqage registers the bulk fields listed in the table
+below. The two independent, conserved fields (<code class="docutils literal notranslate"><span class="pre">momentum</span></code> and
+<code class="docutils literal notranslate"><span class="pre">total_material_energy</span></code>) are transported with fluxes; the remaining
+bulk fields are derived and single-copy. Per-material fields are
+registered by the materials package (Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>).</p>
+<table class="wraptable docutils align-default" id="tab-hydro-fields">
+<caption><span class="caption-text">Fields registered by the hydro package.</span><a class="headerlink" href="#tab-hydro-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccbulk::rho</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Conserved, Derived, OneCopy; bulk density <span class="math notranslate nohighlight">\(\rho=\sum_m\bar\rho_m\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::momentum</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho\vec{v}\)</span></p></td>
+<td><p>3</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Vector, WithFluxes; bulk momentum.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::total_material_energy</p></td>
+<td><p><span class="math notranslate nohighlight">\(E\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, WithFluxes; bulk total energy density <span class="math notranslate nohighlight">\(E=u+\tfrac{1}{2}\rho|\vec{v}|^2\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::velocity</p></td>
+<td><p><span class="math notranslate nohighlight">\(\vec{v}\)</span></p></td>
+<td><p>3</p></td>
+<td><p>Cell, Intensive, Vector, Derived, OneCopy, FillGhost; bulk velocity.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::pressure</p></td>
+<td><p><span class="math notranslate nohighlight">\(p\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy, FillGhost; bulk pressure.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::temperature</p></td>
+<td><p><span class="math notranslate nohighlight">\(T\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; temperature.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::internal_energy</p></td>
+<td><p><span class="math notranslate nohighlight">\(u\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; bulk volumetric internal energy <span class="math notranslate nohighlight">\(u=\sum_m\bar\rho_m e_m\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::bulk_modulus</p></td>
+<td><p><span class="math notranslate nohighlight">\(B\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; bulk modulus.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::max_signal</p></td>
+<td><p>—</p></td>
+<td><p>3</p></td>
+<td><p>Cell, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; per-direction maximum signal speeds.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::face_signal</p></td>
+<td><p>—</p></td>
+<td><p>—</p></td>
+<td><p>Face, Derived, Flux, OneCopy, CellMemAligned; face-centered signal speeds.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A minimal hydro configuration using PLM reconstruction and the HLLC solver:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"hydro"</span><span class="p">,</span> <span class="n">recon</span><span class="o">=</span><span class="s2">"plm"</span><span class="p">,</span> <span class="n">riemann</span><span class="o">=</span><span class="s2">"hllc"</span><span class="p">,</span> <span class="n">cfl</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">strength</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">ionization</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="materials.html" class="btn btn-neutral float-left" title="Materials and Equations of State" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="strength.html" class="btn btn-neutral float-right" title="Material Strength" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="hydro.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

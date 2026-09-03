@@ -1,0 +1,1015 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Developer’s guide &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Contributing" href="contributing.html" />
+    <link rel="prev" title="Diagnostics" href="packages/diagnostics.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="packages/diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Developer’s guide</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#performance-portability-concerns">Performance portability concerns</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#parthenon">Parthenon</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#mesh-and-meshblocks">Mesh and MeshBlocks</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#block-adaptive-refinement">Block-Adaptive Refinement</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#data-model-containers-and-packs">Data Model: Containers and Packs</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#variables-and-metadata">Variables and Metadata</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#mpi-decomposition-and-load-balancing">MPI Decomposition and Load Balancing</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#singularity-eos">singularity-eos</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#the-eos-object">The EOS Object</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#accessor-calls">Accessor Calls</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#pressuretemperature-equilibrium">Pressure–Temperature Equilibrium</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#singularity-opac">singularity-opac</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#opacity-objects-are-per-material">Opacity Objects Are Per-Material</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#opacity-calls">Opacity Calls</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#loop-abstractions">Loop Abstractions</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#two-entry-points-two-backends">Two Entry Points, Two Backends</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#the-entry-idiom-looptype-and-getindexspace">The Entry Idiom: <code class="docutils literal notranslate"><span class="pre">LoopType</span></code> and <code class="docutils literal notranslate"><span class="pre">GetIndexSpace</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#loopconstraint-and-the-inner-access-tag">LoopConstraint and the Inner-Access Tag</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#loop-order-tags">Loop-Order Tags</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#what-the-loops-become-cpu-versus-gpu">What the Loops Become: CPU versus GPU</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#gpu-build-kokkos-to-boiv">GPU build (<code class="docutils literal notranslate"><span class="pre">kokkos</span></code> <span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">boiv</span></code>).</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#cpu-build-raw-to-bvoi">CPU build (<code class="docutils literal notranslate"><span class="pre">raw</span></code> <span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">bvoi</span></code>).</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#two-kernels-in-practice">Two Kernels in Practice</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="#a-flat-map-fillinteriorderived">A flat map: <code class="docutils literal notranslate"><span class="pre">FillInteriorDerived</span></code>.</a></li>
+<li class="toctree-l4"><a class="reference internal" href="#a-producer-consumer-pipeline-calculatefluxes">A producer/consumer pipeline: <code class="docutils literal notranslate"><span class="pre">CalculateFluxes</span></code>.</a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="#reductions">Reductions</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Developer’s guide</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/src/programmer_guide.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="developer-s-guide">
+<span id="chap-parthenon"></span><h1>Developer’s guide<a class="headerlink" href="#developer-s-guide" title="Link to this heading"></a></h1>
+<section id="performance-portability-concerns">
+<h2>Performance portability concerns<a class="headerlink" href="#performance-portability-concerns" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">riot</span></code> is performance portable, meaning it is designed to
+run not only on CPUs, but GPUs from a variety of manufacturers,
+powered by a variety of device-side development tools such as Cuda,
+OpenMP, and OpenACC. This implies several constraints on code
+style. Here we briefly discuss a few things one should be aware of.</p>
+<ul class="simple">
+<li><p><strong>`portability decorators:</strong> Functions that should be run on device
+needs to be decorated with one of the following macros:
+<code class="docutils literal notranslate"><span class="pre">KOKKOS_FUNCTION</span></code>, <code class="docutils literal notranslate"><span class="pre">KOKKOS_INLINE_FUNCTION</span></code>,
+<code class="docutils literal notranslate"><span class="pre">KOKKOS_FORCEINLINE_FUNCTION</span></code>. These macros are imported from the
+Kokkos library and resolve to the appropriate decorations for a
+given device-side backend such as Cuda so the code compiles
+correctly. Code that doesn’t need to run on device does not need
+these decorations.</p></li>
+<li><p><strong>Relocatable device code:</strong> It is common in C++ to split code
+between a header file and an implementation file. Functionality that
+is to be called from within loops run on device should not be split
+in this way. Not all accelerator languages support this and the ones
+that do take a performance hit. Instead implement that functionality
+only in a header file and decorate it with
+<code class="docutils literal notranslate"><span class="pre">KOKKOS_INLINE_FUNCTION</span></code> or <code class="docutils literal notranslate"><span class="pre">KOKKOS_FORCEINLINE_FUNCTION</span></code>.</p></li>
+<li><p><strong>Host and device pointers:</strong> Usually accelerators have different
+memory spaces than the CPU they are attached to. So you need to be
+aware that data needs to be copied to an accelerator device to be
+used. If it is not properly copied, the code will likely crash with
+a segfault. In general scalar data such as a single variable (e.g.,
+<code class="docutils literal notranslate"><span class="pre">int</span> <span class="pre">x</span></code>) can be easily and automatically copied to device and you
+don’t need to worry about managing it. Arrays and pointers, however,
+are a different story. If you create an array or point to some
+memory on CPU, then you are pointing to a location in memory on your
+CPU. If you try to access it from your accelerator, your code will
+not behave properly. You need to manually copy data from host to
+device in this case.</p></li>
+<li><p><strong>Real:</strong> The <code class="docutils literal notranslate"><span class="pre">Real</span></code> datatype is either a single precision or
+double precision floating point number, depending on how
+<code class="docutils literal notranslate"><span class="pre">Parthenon</span></code> is configured. For most floating point numbers use
+the <code class="docutils literal notranslate"><span class="pre">Real</span></code> type. However, be conscious that sometimes you will
+specifically need a single or double precision number, in which case
+you should specify the type as built into the language.</p></li>
+</ul>
+</section>
+<section id="parthenon">
+<h2>Parthenon<a class="headerlink" href="#parthenon" title="Link to this heading"></a></h2>
+<figure class="align-center">
+<a class="reference internal image-reference" href="../_images/amr_mesh_standalone.png"><img alt="A block-structured AMR mesh" src="../_images/amr_mesh_standalone.png" style="width: 800px;" />
+</a>
+</figure>
+<p>Parthenon owns everything about <em>where</em> the solution lives: the mesh,
+its decomposition into blocks, the distribution of those blocks across
+MPI ranks, and the machinery that keeps neighboring blocks
+consistent. RIOT supplies only the physics that runs on top. A RIOT
+user rarely calls a Parthenon function directly, but every simulation
+is configured through Parthenon’s <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/*&gt;</span></code> input blocks, and
+every field in the manual’s <em>Registered Fields</em> tables is a Parthenon
+variable tagged with Parthenon metadata. This chapter collects the
+concepts and inputs that most often matter. For more details, see the
+<a class="reference external" href="https://parthenon-hpc-lab.github.io/parthenon/develop/index.html">Parthenon documentation</a></p>
+<section id="mesh-and-meshblocks">
+<h3>Mesh and MeshBlocks<a class="headerlink" href="#mesh-and-meshblocks" title="Link to this heading"></a></h3>
+<p>The <em>Mesh</em> is the whole simulation domain. It is decomposed into
+<em>MeshBlocks</em>: logically-rectangular bricks of cells, all of identical
+logical size, that tile the domain (the figure below). All computation
+happens block by block. The global cell counts are set in the
+<code class="docutils literal notranslate"><span class="pre">&lt;parthenon/mesh&gt;</span></code> block (<code class="docutils literal notranslate"><span class="pre">nx1</span></code>, <code class="docutils literal notranslate"><span class="pre">nx2</span></code>, <code class="docutils literal notranslate"><span class="pre">nx3</span></code>) and the
+per-block cell counts in the <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/meshblock&gt;</span></code> block. The mesh
+must be evenly divisible by the block size in every direction, and
+each block must be at least four cells wide per active dimension. For
+example, a <span class="math notranslate nohighlight">\(256\times256\)</span> mesh with <span class="math notranslate nohighlight">\(64\times64\)</span> blocks is
+tiled into <span class="math notranslate nohighlight">\(16\)</span> MeshBlocks.</p>
+<p>Each block is padded with <em>ghost</em> (halo) cells on every side —
+<code class="docutils literal notranslate"><span class="pre">nghost</span></code> per side, default <code class="docutils literal notranslate"><span class="pre">2</span></code> — so that stencil operations near a
+block edge can read valid neighbor data. Ghost cells are filled either
+by a physical boundary condition at the domain edge or by
+communication from the adjacent block; at a coarse–fine interface this
+exchange also prolongates (coarse <span class="math notranslate nohighlight">\(\to\)</span> fine) and restricts
+(fine <span class="math notranslate nohighlight">\(\to\)</span> coarse). Loop bounds are expressed through
+Parthenon’s <code class="docutils literal notranslate"><span class="pre">IndexRange</span></code> abstraction, selecting the <code class="docutils literal notranslate"><span class="pre">interior</span></code>
+(excluding ghosts) or <code class="docutils literal notranslate"><span class="pre">entire</span></code> (including ghosts) region of a block.</p>
+</section>
+<section id="block-adaptive-refinement">
+<h3>Block-Adaptive Refinement<a class="headerlink" href="#block-adaptive-refinement" title="Link to this heading"></a></h3>
+<p>Refinement in Parthenon is <em>block based</em>: to add resolution, a block
+is split into <span class="math notranslate nohighlight">\(2^{d}\)</span> children (<span class="math notranslate nohighlight">\(d\)</span> = dimensionality),
+each with the <em>same</em> cell count but half the cell size, one refinement
+level finer. Refinement nests recursively, and Parthenon enforces
+well-nesting so that neighboring blocks differ by at most one
+level. Every block, at any level, is identified by a
+<code class="docutils literal notranslate"><span class="pre">LogicalLocation</span></code> — its integer coordinate in the fully-refined grid
+at its level — which Parthenon orders along a space-filling (Morton)
+curve for load balancing.</p>
+<p>The refinement strategy is chosen by <code class="docutils literal notranslate"><span class="pre">refinement</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">&lt;parthenon/mesh&gt;</span></code> block: <code class="docutils literal notranslate"><span class="pre">none</span></code> (default, uniform mesh),
+<code class="docutils literal notranslate"><span class="pre">static</span></code> (fixed refined regions, declared in
+<code class="docutils literal notranslate"><span class="pre">&lt;parthenon/static_refinement*&gt;</span></code> blocks), or <code class="docutils literal notranslate"><span class="pre">adaptive</span></code> (AMR
+driven by runtime criteria in <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/refinement*&gt;</span></code> blocks). The
+maximum depth is set by <code class="docutils literal notranslate"><span class="pre">numlevel</span></code>.</p>
+</section>
+<section id="data-model-containers-and-packs">
+<h3>Data Model: Containers and Packs<a class="headerlink" href="#data-model-containers-and-packs" title="Link to this heading"></a></h3>
+<p>Parthenon exposes its field data in three layers, and RIOT kernels
+operate over the outermost one:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">MeshBlockData</span></code></dt><dd><p>A container holding all <em>variables</em> (fields) on a single block for one
+integration stage. Field storage lives here as <code class="docutils literal notranslate"><span class="pre">ParArray</span></code>s (thin wrappers
+over <code class="docutils literal notranslate"><span class="pre">Kokkos::View</span></code>s).</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">MeshData</span></code></dt><dd><p>A lightweight aggregator pointing at the <code class="docutils literal notranslate"><span class="pre">MeshBlockData</span></code> of <em>many</em> blocks
+(a <em>partition</em>, or “pack”) on the same stage.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">SparsePack</span></code></dt><dd><p>The on-device view spanning a partition’s blocks, indexable inside a kernel as
+<code class="docutils literal notranslate"><span class="pre">pack(b, var, k, j, i)</span></code> (block <span class="math notranslate nohighlight">\(b\)</span>, variable, cell <span class="math notranslate nohighlight">\((k,j,i)\)</span>),
+with fluxes via <code class="docutils literal notranslate"><span class="pre">pack.flux(b, dir, var, k, j, i)</span></code>.</p>
+</dd>
+</dl>
+<p>Blocks are grouped into packs so that one kernel launch processes many
+blocks: launch overhead is fixed per kernel (of order microseconds on
+a GPU), so packing amortizes it across all the blocks in the
+partition. The partition size is controlled by <code class="docutils literal notranslate"><span class="pre">pack_size</span></code> (or,
+equivalently, <code class="docutils literal notranslate"><span class="pre">packs_per_rank</span></code>). RIOT’s loop abstractions
+(Chapter <a class="reference internal" href="#chap-loops"><span class="std std-ref">Loop Abstractions</span></a>) are built on exactly this pack-of-blocks
+structure.</p>
+</section>
+<section id="variables-and-metadata">
+<h3>Variables and Metadata<a class="headerlink" href="#variables-and-metadata" title="Link to this heading"></a></h3>
+<p>Every field is a Parthenon <em>Variable</em> tagged with a set of
+<code class="docutils literal notranslate"><span class="pre">Metadata</span></code> flags that tell Parthenon how to allocate, communicate,
+and refine it. These are the flags that appear (abbreviated) in every
+<em>Registered Fields</em> table in this manual. The most important, grouped
+by role, are given in the table below.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 22.7%" />
+<col style="width: 77.3%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Flag</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Cell</p></td>
+<td><p>Cell-centered field (vs. <code class="docutils literal notranslate"><span class="pre">Face</span></code>, <code class="docutils literal notranslate"><span class="pre">Edge</span></code>, <code class="docutils literal notranslate"><span class="pre">Node</span></code>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Independent</p></td>
+<td><p>Part of the evolved state; written to restarts and prolongated/restricted on remesh.</p></td>
+</tr>
+<tr class="row-even"><td><p>Derived</p></td>
+<td><p>Reconstructible from the independent state each step (the default).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Conserved</p></td>
+<td><p>A conserved quantity (transported in flux-divergence form).</p></td>
+</tr>
+<tr class="row-even"><td><p>Intensive</p></td>
+<td><p>An intensive quantity (not scaled by cell volume on refinement).</p></td>
+</tr>
+<tr class="row-odd"><td><p>WithFluxes</p></td>
+<td><p>Auto-creates an associated flux field for this variable.</p></td>
+</tr>
+<tr class="row-even"><td><p>FillGhost</p></td>
+<td><p>Ghost zones are communicated between blocks each step.</p></td>
+</tr>
+<tr class="row-odd"><td><p>OneCopy</p></td>
+<td><p>Shared across integration stages; allocated once.</p></td>
+</tr>
+<tr class="row-even"><td><p>Sparse</p></td>
+<td><p>May be allocated only on the blocks where it is needed (Section <a class="reference internal" href="introduction.html#sec-sparsity"><span class="std std-ref">Sparsity</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>Restart</p></td>
+<td><p>Must be present in restart files.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="mpi-decomposition-and-load-balancing">
+<h3>MPI Decomposition and Load Balancing<a class="headerlink" href="#mpi-decomposition-and-load-balancing" title="Link to this heading"></a></h3>
+<p>MeshBlocks are distributed across MPI ranks; each rank owns a subset
+of the global block list. By default Parthenon balances by block
+<em>count</em> (round-robin along the Morton ordering). A cost-weighted mode
+is available by setting <code class="docutils literal notranslate"><span class="pre">balancer</span></code> = <code class="docutils literal notranslate"><span class="pre">manual</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">&lt;parthenon/loadbalancing&gt;</span></code> block and assigning per-block
+costs. When adaptive refinement changes the block layout, Parthenon
+automatically migrates blocks (and their <code class="docutils literal notranslate"><span class="pre">Independent</span></code> /
+<code class="docutils literal notranslate"><span class="pre">FillGhost</span></code> fields) between ranks and rebalances.</p>
+</section>
+<section id="input-parameters">
+<h3>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h3>
+<p>The parameters most RIOT users set are collected below. The
+authoritative defaults are those read in the Parthenon source; the
+table lists the ones a typical run touches.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Key parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/mesh&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>nx1, nx2, nx3</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Number of cells on the base mesh in each direction (<code class="docutils literal notranslate"><span class="pre">nx2</span></code>/<code class="docutils literal notranslate"><span class="pre">nx3</span></code> <span class="math notranslate nohighlight">\(=1\)</span> reduces the dimensionality).</p></td>
+</tr>
+<tr class="row-odd"><td><p>x1min …x3max</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Physical extent of the domain in each direction.</p></td>
+</tr>
+<tr class="row-even"><td><p>nghost</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Ghost cells per side of every block.</p></td>
+</tr>
+<tr class="row-odd"><td><p>refinement</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">none</span></code></p></td>
+<td><p>Refinement mode: <code class="docutils literal notranslate"><span class="pre">none</span></code>, <code class="docutils literal notranslate"><span class="pre">static</span></code>, or <code class="docutils literal notranslate"><span class="pre">adaptive</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>numlevel</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Maximum number of refinement levels.</p></td>
+</tr>
+<tr class="row-odd"><td><p>pack_size</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1</span></code></p></td>
+<td><p>MeshBlocks per pack (<span class="math notranslate nohighlight">\(&lt;1\)</span> packs the whole rank into one).</p></td>
+</tr>
+<tr class="row-even"><td><p>ix1_bc …ox3_bc</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">outflow</span></code></p></td>
+<td><p>Boundary conditions per face: <code class="docutils literal notranslate"><span class="pre">outflow</span></code>, <code class="docutils literal notranslate"><span class="pre">periodic</span></code>, <code class="docutils literal notranslate"><span class="pre">reflecting</span></code>, or <code class="docutils literal notranslate"><span class="pre">user</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/meshblock&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>nx1, nx2, nx3</p></td>
+<td><p>int</p></td>
+<td><p><em>mesh size</em></p></td>
+<td><p>Logical size of one MeshBlock per direction; must evenly divide the mesh, be <span class="math notranslate nohighlight">\(\geq 4\)</span>, and (for SMR/AMR) be even.</p></td>
+</tr>
+</tbody>
+</table>
+<p>For adaptive runs, each <code class="docutils literal notranslate"><span class="pre">&lt;parthenon/refinement</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code>
+block declares one tagging criterion: <code class="docutils literal notranslate"><span class="pre">method</span></code> (<code class="docutils literal notranslate"><span class="pre">magnitude</span></code>,
+<code class="docutils literal notranslate"><span class="pre">derivative_order_1</span></code>, or <code class="docutils literal notranslate"><span class="pre">derivative_order_2</span></code>), the <code class="docutils literal notranslate"><span class="pre">field</span></code> to
+test, and the thresholds <code class="docutils literal notranslate"><span class="pre">refine_tol</span></code> (default <code class="docutils literal notranslate"><span class="pre">0.5</span></code>) and
+<code class="docutils literal notranslate"><span class="pre">derefine_tol</span></code> (default <code class="docutils literal notranslate"><span class="pre">0.05</span></code>), up to <code class="docutils literal notranslate"><span class="pre">max_level</span></code>.</p>
+</section>
+<section id="example">
+<h3>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h3>
+<p>A <span class="math notranslate nohighlight">\(256\times256\)</span> two-dimensional mesh tiled into
+<span class="math notranslate nohighlight">\(64\times64\)</span> blocks, with two levels of adaptive refinement
+triggered on the density field:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/mesh"</span><span class="p">,</span> <span class="n">nx1</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">x1min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">x1max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+                             <span class="n">nx2</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">x2min</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">x2max</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+                             <span class="n">nx3</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+                             <span class="n">refinement</span><span class="o">=</span><span class="s2">"adaptive"</span><span class="p">,</span> <span class="n">numlevel</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/meshblock"</span><span class="p">,</span> <span class="n">nx1</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">nx2</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">nx3</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"parthenon/refinement0"</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="s2">"derivative_order_1"</span><span class="p">,</span>
+                                    <span class="n">field</span><span class="o">=</span><span class="s2">"ccbulk::rho"</span><span class="p">,</span>
+                                    <span class="n">refine_tol</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">derefine_tol</span><span class="o">=</span><span class="mf">0.05</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+<section id="singularity-eos">
+<span id="chap-singularity-eos"></span><h2>singularity-eos<a class="headerlink" href="#singularity-eos" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> is the equation-of-state library that supplies
+RIOT’s material thermodynamics (Chapter <a class="reference internal" href="packages/materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>). It
+provides both the single-material EOS evaluations and the
+pressure–temperature-equilibrium (PTE) solver that closes mixed
+cells. This chapter describes the two facets of its API that a RIOT
+developer meets: the EOS object and its accessor calls, and the PTE
+closure. For more details see the <a class="reference external" href="https://lanl.github.io/singularity-eos/main/index.html">Singularity-EOS documentation</a></p>
+<section id="the-eos-object">
+<h3>The EOS Object<a class="headerlink" href="#the-eos-object" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> uses <em>value semantics</em>, not runtime
+polymorphism. An EOS is a <code class="docutils literal notranslate"><span class="pre">singularity::Variant</span></code> — a tagged union
+over the concrete EOS types (<code class="docutils literal notranslate"><span class="pre">IdealGas</span></code>, <code class="docutils literal notranslate"><span class="pre">Gruneisen</span></code>, the tabular
+<code class="docutils literal notranslate"><span class="pre">Spiner</span></code> models, <code class="docutils literal notranslate"><span class="pre">IdealElectrons</span></code>, …). RIOT assembles its own
+variant, <code class="docutils literal notranslate"><span class="pre">RiotEOS::EOS</span></code> (in <code class="docutils literal notranslate"><span class="pre">microphysics/eos_riot.hpp</span></code>), from
+this type list plus the ionization “<span class="math notranslate nohighlight">\(Z\)</span>-split” modifiers, and
+stores one EOS object per material in a <code class="docutils literal notranslate"><span class="pre">ParArray1D&lt;RiotEOS::EOS&gt;</span></code>.</p>
+<p>Because the variant is a plain value with no virtual table, it is
+<em>host/device portable</em>: every accessor is marked
+<code class="docutils literal notranslate"><span class="pre">PORTABLE_INLINE_FUNCTION</span></code> and is callable inside a Kokkos
+kernel. An EOS built on the host is relocated to the device with
+<code class="docutils literal notranslate"><span class="pre">GetOnDevice()</span></code> (which moves any table memory into device memory)
+and then captured by value into a <code class="docutils literal notranslate"><span class="pre">KOKKOS_LAMBDA</span></code>. To avoid paying
+the variant dispatch on every call, RIOT uses
+<code class="docutils literal notranslate"><span class="pre">EvaluateDevice(functor)</span></code>, which resolves the concrete type once and
+hands it to a functor that then makes many scalar calls.</p>
+</section>
+<section id="accessor-calls">
+<h3>Accessor Calls<a class="headerlink" href="#accessor-calls" title="Link to this heading"></a></h3>
+<p>Every thermodynamic quantity is exposed through two entry points — one
+taking <span class="math notranslate nohighlight">\((\rho,T)\)</span> and one taking <span class="math notranslate nohighlight">\((\rho,e)\)</span> — reflecting
+the two natural independent-variable pairs. The most common calls are
+listed in the table below. Each also accepts an optional trailing
+<code class="docutils literal notranslate"><span class="pre">lambda</span></code> argument: a per-call scratch/state indexer used mainly by
+tabular EOS to cache the last <span class="math notranslate nohighlight">\((\log\rho,\log T)\)</span> bracket (and,
+in RIOT, to inject the ionization state <span class="math notranslate nohighlight">\(\bar Z\)</span>). RIOT probes
+<code class="docutils literal notranslate"><span class="pre">eos.NeedsLambda&lt;...&gt;()</span></code> at initialization to decide whether those
+cache fields must be allocated at all.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 52.3%" />
+<col style="width: 47.7%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Accessor</p></th>
+<th class="head"><p>Returns</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>PressureFrom…</p></td>
+<td><p>Pressure <span class="math notranslate nohighlight">\(p\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>InternalEnergyFromDensityTemperature</p></td>
+<td><p>Specific internal energy <span class="math notranslate nohighlight">\(e\)</span> from <span class="math notranslate nohighlight">\((\rho,T)\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>TemperatureFromDensityInternalEnergy</p></td>
+<td><p>Temperature <span class="math notranslate nohighlight">\(T\)</span> from <span class="math notranslate nohighlight">\((\rho,e)\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>SpecificHeatFrom…</p></td>
+<td><p>Specific heat <span class="math notranslate nohighlight">\(c_v\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>BulkModulusFrom…</p></td>
+<td><p>Bulk modulus <span class="math notranslate nohighlight">\(B\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>GruneisenParamFrom…</p></td>
+<td><p>Grüneisen parameter <span class="math notranslate nohighlight">\(\Gamma\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>DensityEnergyFromPressureTemperature</p></td>
+<td><p>Inverse: <span class="math notranslate nohighlight">\((\rho,e)\)</span> from <span class="math notranslate nohighlight">\((p,T)\)</span> (by reference).</p></td>
+</tr>
+<tr class="row-odd"><td><p>FillEos</p></td>
+<td><p>Fills a requested subset of <span class="math notranslate nohighlight">\(\{p,e,c_v,B,\dots\}\)</span> in one call.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The two “off-axis” conversions — <span class="math notranslate nohighlight">\((\rho,e)\to T\)</span> via
+<code class="docutils literal notranslate"><span class="pre">TemperatureFromDensityInternalEnergy</span></code> and <span class="math notranslate nohighlight">\((\rho,T)\to e\)</span> via
+<code class="docutils literal notranslate"><span class="pre">InternalEnergyFromDensityTemperature</span></code> — are the workhorses that let
+a package move between the state it holds and the state an EOS
+prefers. <code class="docutils literal notranslate"><span class="pre">PreferredInput()</span></code> reports which pair a given EOS evaluates
+most cheaply.</p>
+</section>
+<section id="pressuretemperature-equilibrium">
+<h3>Pressure–Temperature Equilibrium<a class="headerlink" href="#pressuretemperature-equilibrium" title="Link to this heading"></a></h3>
+<p>A cell containing more than one material is closed by requiring all
+materials to share a common pressure and temperature at fixed total
+volume and energy — the PTE conditions of
+Chapter <a class="reference internal" href="packages/hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>. <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> provides this in
+<code class="docutils literal notranslate"><span class="pre">closure/mixed_cell_models.hpp</span></code> as a family of Newton solvers, each
+templated on caller-supplied per-material <em>indexers</em> so it can operate
+directly on RIOT’s Parthenon data layout. The solvers differ in which
+variables are held fixed (the table below).</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 29.5%" />
+<col style="width: 70.5%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Solver</p></th>
+<th class="head"><p>Independent variables / use</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>PTESolverRhoT</p></td>
+<td><p>Temperature and volume fractions; enforces energy sum and pressure equality. RIOT’s primary solver.</p></td>
+</tr>
+<tr class="row-odd"><td><p>PTESolverFixedT</p></td>
+<td><p>Temperature held fixed; RIOT’s backup solver.</p></td>
+</tr>
+<tr class="row-even"><td><p>PTESolverFixedP</p></td>
+<td><p>Pressure held fixed.</p></td>
+</tr>
+<tr class="row-odd"><td><p>PTESolverPT</p></td>
+<td><p>Solves in <span class="math notranslate nohighlight">\((p,T)\)</span> space; two equations regardless of material count.</p></td>
+</tr>
+<tr class="row-even"><td><p>PTESolverRhoU</p></td>
+<td><p>Per-material density and energy (<span class="math notranslate nohighlight">\(2N\)</span> equations).</p></td>
+</tr>
+</tbody>
+</table>
+<p>The free function <code class="docutils literal notranslate"><span class="pre">singularity::PTESolver(system)</span></code> drives the
+iteration: initialize, then repeatedly check convergence, build the
+Jacobian, solve the dense linear system, bound and line-search the
+step, and renormalize volume fractions. Results are written <em>in place</em>
+into the per-material indexers (equilibrated <span class="math notranslate nohighlight">\(\rho_m\)</span>,
+<span class="math notranslate nohighlight">\(f_m\)</span>, <span class="math notranslate nohighlight">\(e_m\)</span>, <span class="math notranslate nohighlight">\(T_m\)</span>, <span class="math notranslate nohighlight">\(p_m\)</span>); the returned
+<code class="docutils literal notranslate"><span class="pre">SolverStatus</span></code> carries only convergence and iteration
+metadata. Solver behavior is tuned through a <code class="docutils literal notranslate"><span class="pre">MixParams</span></code> struct,
+which RIOT populates from the PTE input parameters of
+Chapter <a class="reference internal" href="packages/materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>.</p>
+<p>RIOT drives all of this from <code class="docutils literal notranslate"><span class="pre">Closure::ApplyMixedCellClosure</span></code>
+(<code class="docutils literal notranslate"><span class="pre">microphysics/pte_closure.cpp</span></code>). For each cell it gathers the
+materials whose mass fraction exceeds a threshold, and, when more than
+one participates, calls <code class="docutils literal notranslate"><span class="pre">PTESolverRhoT</span></code>; on failure it falls back to
+<code class="docutils literal notranslate"><span class="pre">PTESolverFixedT</span></code> and, if necessary, progressively drops the
+lightest material until a single-material closure remains. Mixed cells
+of ideal gases take a separate analytic path
+(<code class="docutils literal notranslate"><span class="pre">ApplyIdealGasClosure</span></code>) that partitions volume fractions in closed
+form without a Newton solve.</p>
+</section>
+</section>
+<section id="singularity-opac">
+<span id="chap-singularity-opac"></span><h2>singularity-opac<a class="headerlink" href="#singularity-opac" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">singularity-opac</span></code> is the opacity library that supplies the
+absorption and scattering coefficients used by RIOT’s radiation
+packages. It is a sibling of <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> and shares its
+design: concrete opacity models are wrapped in a value-semantic
+variant, every accessor is host/device portable, and a device-resident
+copy is obtained with <code class="docutils literal notranslate"><span class="pre">GetOnDevice()</span></code>. RIOT uses the library’s
+<em>photon</em> opacities (in <code class="docutils literal notranslate"><span class="pre">singularity-opac/photons/</span></code>), and
+specifically its <em>multigroup</em> (frequency-binned) tabulated means.</p>
+<section id="opacity-objects-are-per-material">
+<h3>Opacity Objects Are Per-Material<a class="headerlink" href="#opacity-objects-are-per-material" title="Link to this heading"></a></h3>
+<p>Opacities in RIOT are a <em>material</em> property, exactly as the EOS is,
+and they are <em>multigroup</em> throughout: the object RIOT stores for each
+material is a <em>tabulated group-mean</em> opacity, and a gray run is simply
+the single-group special case. The photon family splits
+absorption/emission from scattering; RIOT enrolls the tabulated mean
+variants in <code class="docutils literal notranslate"><span class="pre">microphysics/opacity_models.hpp</span></code>:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">RiotOpacity::MeanOpacA</span></code> (an alias for singularity-opac’s <code class="docutils literal notranslate"><span class="pre">MeanOpacity</span></code>, absorption), and</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">RiotOpacity::MeanOpacS</span></code> (<code class="docutils literal notranslate"><span class="pre">MeanSOpacity</span></code>, scattering).</p></li>
+</ul>
+<p>For <em>each</em> material the <code class="docutils literal notranslate"><span class="pre">&lt;material</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">/opac&gt;</span></code> block
+selects an underlying absorption and scattering model through
+<code class="docutils literal notranslate"><span class="pre">opac_a</span></code> and <code class="docutils literal notranslate"><span class="pre">opac_s</span></code> (<code class="docutils literal notranslate"><span class="pre">none</span></code>, <code class="docutils literal notranslate"><span class="pre">constant</span></code>, <code class="docutils literal notranslate"><span class="pre">powerlaw</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">table</span></code>). At initialization <code class="docutils literal notranslate"><span class="pre">materials.cpp</span></code> builds the group-mean
+table for that material — either by <em>integrating</em> the chosen
+monochromatic model (<code class="docutils literal notranslate"><span class="pre">Gray</span></code>/<code class="docutils literal notranslate"><span class="pre">PowerLaw</span></code> for absorption,
+<code class="docutils literal notranslate"><span class="pre">GrayS</span></code>/<code class="docutils literal notranslate"><span class="pre">ThomsonS</span></code> for scattering) over each frequency group, or
+by reading a pre-tabulated SP5 (HDF5) file — moves it to the device
+with <code class="docutils literal notranslate"><span class="pre">GetOnDevice()</span></code>, and stores it in a <em>per-material</em> device array
+<code class="docutils literal notranslate"><span class="pre">ParArray1D&lt;RiotOpacity::MeanOpacA&gt;</span></code> (and the matching <code class="docutils literal notranslate"><span class="pre">MeanOpacS</span></code>
+array), both of length <code class="docutils literal notranslate"><span class="pre">num_opac</span></code>. All materials share one global
+group structure (<span class="math notranslate nohighlight">\(N_g\)</span> groups and their frequency bounds), which
+<code class="docutils literal notranslate"><span class="pre">materials.cpp</span></code> checks for consistency across the table-based
+materials.</p>
+<p>A radiation kernel loops over the materials in a cell and, for
+material <span class="math notranslate nohighlight">\(m\)</span>, fetches <code class="docutils literal notranslate"><span class="pre">opac_a(opac_id)</span></code> — where <code class="docutils literal notranslate"><span class="pre">opac_id</span> <span class="pre">=</span>
+<span class="pre">opac_from_matid(mat_id)</span> <span class="pre">+</span> <span class="pre">phase_id</span></code> — and evaluates it with <em>that
+material’s</em> own state <span class="math notranslate nohighlight">\((\rho_m,\,T_m)\)</span>. The coefficient returned
+is therefore the opacity of a single material, not a cell-averaged
+bulk value; the radiation package is what combines the per-material
+coefficients (Chapter <a class="reference internal" href="packages/radiation_transport.html#chap-radtransport"><span class="std std-ref">Radiation Transport</span></a>).</p>
+</section>
+<section id="opacity-calls">
+<h3>Opacity Calls<a class="headerlink" href="#opacity-calls" title="Link to this heading"></a></h3>
+<p>The two accessors RIOT calls are the group-mean absorption and
+scattering coefficients, both with units of inverse length. Because
+the opacity is multigroup, the third argument is an integer <em>group
+index</em> <span class="math notranslate nohighlight">\(g\in[0,N_g)\)</span> — <em>not</em> a frequency — and each call returns
+the mean coefficient for that group at the material’s density and
+temperature:</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\alpha_{a,m}^{(g)} &amp;= \texttt{AbsorptionCoefficient}(\rho_m,\,T_m,\,g), \\
+\alpha_{s,m}^{(g)} &amp;= \texttt{ScatteringCoefficient}(\rho_m,\,T_m,\,g).\end{split}\]</div>
+<p>An optional fourth argument, <code class="docutils literal notranslate"><span class="pre">gmode</span></code>, selects the averaging weight
+from the <code class="docutils literal notranslate"><span class="pre">OpacityAveraging</span></code> enum {<code class="docutils literal notranslate"><span class="pre">Rosseland</span></code>, <code class="docutils literal notranslate"><span class="pre">Planck</span></code>}
+(default <code class="docutils literal notranslate"><span class="pre">Rosseland</span></code>); named wrappers
+(<code class="docutils literal notranslate"><span class="pre">Rosseland­Group­Absorption­Coefficient</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Planck­Group­Absorption­Coefficient</span></code>) fix it explicitly. The mean
+tables were produced from the underlying monochromatic model at build
+time (a <code class="docutils literal notranslate"><span class="pre">Gray</span></code> model gives a coefficient <span class="math notranslate nohighlight">\(\rho_m\kappa\)</span>
+independent of frequency; <code class="docutils literal notranslate"><span class="pre">PowerLaw</span></code> scales with <span class="math notranslate nohighlight">\(\rho_m\)</span>,
+<span class="math notranslate nohighlight">\(T_m\)</span>, and <span class="math notranslate nohighlight">\(\nu\)</span>), so no continuous frequency appears in
+the call — the group index carries all of the spectral dependence.</p>
+<p>The group structure is queried through the same objects: <code class="docutils literal notranslate"><span class="pre">ngroups()</span></code>
+returns <span class="math notranslate nohighlight">\(N_g\)</span>, <code class="docutils literal notranslate"><span class="pre">Get­Group­Bounds()</span></code> returns the <span class="math notranslate nohighlight">\(N_g+1\)</span>
+group edges, and <code class="docutils literal notranslate"><span class="pre">Group­Of­Nu(nu)</span></code> maps a frequency to its group
+index. A typical absorption-coefficient loop — accumulating a
+volume-fraction-weighted cell coefficient for each group — looks like:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">ngroups</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">g</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">          </span><span class="c1">// frequency group</span>
+<span class="w">  </span><span class="n">Real</span><span class="w"> </span><span class="n">aa</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span><span class="p">;</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nmat</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">            </span><span class="c1">// materials in the cell</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">opac_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">opac_from_matid</span><span class="p">(</span><span class="n">mat_id</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">phase_id</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">Real</span><span class="w"> </span><span class="n">aam</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">rho_m</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0.0</span><span class="p">)</span>
+<span class="w">        </span><span class="o">?</span><span class="w"> </span><span class="n">opac_a</span><span class="p">(</span><span class="n">opac_id</span><span class="p">).</span><span class="n">AbsorptionCoefficient</span><span class="p">(</span><span class="n">rho_m</span><span class="p">,</span><span class="w"> </span><span class="n">temp</span><span class="p">,</span><span class="w"> </span><span class="n">g</span><span class="p">)</span><span class="w">  </span><span class="c1">// group index g</span>
+<span class="w">        </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0</span><span class="p">;</span>
+<span class="w">    </span><span class="n">aa</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">vfrac_m</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">aam</span><span class="p">;</span><span class="w">                      </span><span class="c1">// combine over materials</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>RIOT’s radiation solver (Chapter <a class="reference internal" href="packages/radiation_transport.html#chap-radtransport"><span class="std std-ref">Radiation Transport</span></a>) is written
+to be multigroup: it loops over the runtime group count <span class="math notranslate nohighlight">\(N_g\)</span>
+and evaluates each material’s opacity at the current group index,
+exactly as above. A gray run is just the <span class="math notranslate nohighlight">\(N_g=1\)</span> configuration
+of that same code path — only <span class="math notranslate nohighlight">\(N_g\)</span> and the group bounds change
+— so no separate gray API is needed.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Units caveat:</strong> RIOT configures <code class="docutils literal notranslate"><span class="pre">singularity-opac</span></code> in CGS throughout and restricts itself to the coefficient calls above to avoid any unit-system mismatch with the diffusion module. Where RIOT needs a temperature derivative of the opacity it computes it itself.</p>
+</div>
+</section>
+</section>
+<section id="loop-abstractions">
+<span id="chap-loops"></span><h2>Loop Abstractions<a class="headerlink" href="#loop-abstractions" title="Link to this heading"></a></h2>
+<p>Most performance-critical RIOT physics kernels are written once, in
+terms of two abstractions — <code class="docutils literal notranslate"><span class="pre">RiotLoop::outer</span></code> and
+<code class="docutils literal notranslate"><span class="pre">RiotLoop::inner</span></code> — and the <em>same</em> source compiles into efficient
+code on both CPUs and GPUs. This chapter explains what those
+abstractions are, the <code class="docutils literal notranslate"><span class="pre">RiotUtils::LoopType</span></code> entry point through
+which a kernel actually spins one up, how the <code class="docutils literal notranslate"><span class="pre">LoopConstraint</span></code> hints
+and loop-order tags steer them, their reduction counterparts, and,
+most importantly, what they all become on each machine. (<code class="docutils literal notranslate"><span class="pre">RiotLoop</span></code>
+is an alias for Parthenon’s <code class="docutils literal notranslate"><span class="pre">loop_abstraction</span></code> namespace; the two
+names are interchangeable.)</p>
+<p>Not every loop uses this machinery. Problem generators
+(Chapter <a class="reference internal" href="packages/regions.html#chap-regions"><span class="std std-ref">Regions</span></a>) and a handful of boundary sweeps are
+written directly with Parthenon’s <code class="docutils literal notranslate"><span class="pre">par_for</span></code> (and <code class="docutils literal notranslate"><span class="pre">par_for_outer</span></code>/
+<code class="docutils literal notranslate"><span class="pre">par_for_inner</span></code>), because they either run once at setup — where
+performance portability of a hand-written index space buys little — or
+have an iteration shape (e.g. a runtime-selected block-face plane)
+that the interior-sweep contract of <code class="docutils literal notranslate"><span class="pre">RiotLoop::inner</span></code> does not
+express. Those cases are the exception; the abstractions below are the
+rule for the physics update.</p>
+<section id="two-entry-points-two-backends">
+<h3>Two Entry Points, Two Backends<a class="headerlink" href="#two-entry-points-two-backends" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">RiotLoop::outer</span></code> launches a parallel loop over a partition of
+MeshBlocks; its lambda receives an index range and a block
+index. <code class="docutils literal notranslate"><span class="pre">RiotLoop::inner</span></code> runs <em>inside</em> that lambda, iterating the
+cells <span class="math notranslate nohighlight">\((k,j,i)\)</span> of the current block. A kernel is therefore an
+<code class="docutils literal notranslate"><span class="pre">outer</span></code> over blocks containing one or more <code class="docutils literal notranslate"><span class="pre">inner</span></code> loops over
+cells, with <code class="docutils literal notranslate"><span class="pre">TeamBarrier()</span></code> calls separating any producer <code class="docutils literal notranslate"><span class="pre">inner</span></code>
+loop from a consumer that reads its results.</p>
+<p>The key design point is that the backend is chosen <em>at compile
+time</em>. Each index space carries a static <code class="docutils literal notranslate"><span class="pre">backend_v</span></code> constant:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">enum</span><span class="w"> </span><span class="k">class</span><span class="w"> </span><span class="nc">loop_backend</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">raw</span><span class="p">,</span><span class="w"> </span><span class="n">kokkos</span><span class="w"> </span><span class="p">};</span>
+<span class="c1">// host == device build -&gt; plain C++ loops ("raw");  GPU build -&gt; Kokkos launch</span>
+<span class="k">constexpr</span><span class="w"> </span><span class="n">loop_backend</span><span class="w"> </span><span class="n">default_loop_backend_v</span><span class="w"> </span><span class="o">=</span>
+<span class="w">    </span><span class="n">std</span><span class="o">::</span><span class="n">is_same_v</span><span class="o">&lt;</span><span class="n">DevExecSpace</span><span class="p">,</span><span class="w"> </span><span class="n">HostExecSpace</span><span class="o">&gt;</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">loop_backend</span><span class="o">::</span><span class="n">raw</span>
+<span class="w">                                                </span><span class="o">:</span><span class="w"> </span><span class="n">loop_backend</span><span class="o">::</span><span class="n">kokkos</span><span class="p">;</span>
+</pre></div>
+</div>
+<p>Both <code class="docutils literal notranslate"><span class="pre">outer</span></code> and <code class="docutils literal notranslate"><span class="pre">inner</span></code> are one-line <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">constexpr</span></code> dispatchers
+on this constant, so one path is compiled away entirely. Together with
+the loop-order tag (Section <a class="reference internal" href="#chap-loops"><span class="std std-ref">Loop Abstractions</span></a>, below), this determines
+the concrete form: the same kernel body becomes nested <code class="docutils literal notranslate"><span class="pre">for</span></code> loops
+on a CPU build and a Kokkos <code class="docutils literal notranslate"><span class="pre">parallel_for</span></code> launch on a GPU build.</p>
+</section>
+<section id="the-entry-idiom-looptype-and-getindexspace">
+<span id="sec-loop-entry"></span><h3>The Entry Idiom: <code class="docutils literal notranslate"><span class="pre">LoopType</span></code> and <code class="docutils literal notranslate"><span class="pre">GetIndexSpace</span></code><a class="headerlink" href="#the-entry-idiom-looptype-and-getindexspace" title="Link to this heading"></a></h3>
+<p>A kernel does not hand <code class="docutils literal notranslate"><span class="pre">RiotLoop::outer</span></code> a raw index space; it
+builds one through <code class="docutils literal notranslate"><span class="pre">RiotUtils::LoopType</span></code>, the alias that bundles the
+loop-order tag, inner-access tag, and any <code class="docutils literal notranslate"><span class="pre">LoopConstraint</span></code> hints
+into a single type. The type exposes a <code class="docutils literal notranslate"><span class="pre">GetIndexSpace</span></code> factory and
+the matching outer-body parameter type <code class="docutils literal notranslate"><span class="pre">idx_range_t</span></code>, so the same
+alias names both the space and the lambda signature. The canonical
+opening of a RIOT kernel is:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">lt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotUtils</span><span class="o">::</span><span class="n">LoopType</span><span class="o">&lt;&gt;</span><span class="p">;</span><span class="w">                 </span><span class="c1">// default constraints</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">idx_space</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">lt</span><span class="o">::</span><span class="n">GetIndexSpace</span><span class="p">(</span><span class="n">IndexDomain</span><span class="o">::</span><span class="n">interior</span><span class="p">,</span><span class="w"> </span><span class="cm">/*halo=*/</span><span class="mi">0</span><span class="p">,</span>
+<span class="w">                                   </span><span class="n">v</span><span class="p">.</span><span class="n">GetNBlocks</span><span class="p">(),</span><span class="w"> </span><span class="n">md</span><span class="p">,</span><span class="w"> </span><span class="n">TE</span><span class="o">::</span><span class="n">CC</span><span class="p">);</span>
+<span class="n">RiotLoop</span><span class="o">::</span><span class="n">outer</span><span class="p">(</span><span class="n">idx_space</span><span class="p">,</span>
+<span class="w">  </span><span class="n">KOKKOS_LAMBDA</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">lt</span><span class="o">::</span><span class="n">idx_range_t</span><span class="w"> </span><span class="o">&amp;</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">pv</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">make_pack_view</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">);</span>
+<span class="w">    </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... per-cell work ... */</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="p">});</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">GetIndexSpace</span></code> takes the Parthenon index domain
+(<code class="docutils literal notranslate"><span class="pre">interior</span></code>/<code class="docutils literal notranslate"><span class="pre">entire</span></code>), a <em>halo</em> inset/extension (0 for a plain
+interior sweep; positive to widen the producer range as in
+Section <a class="reference internal" href="#sec-loops-practice"><span class="std std-ref">Two Kernels in Practice</span></a>), the block count of the pack, the
+<code class="docutils literal notranslate"><span class="pre">MeshData</span></code> (or <code class="docutils literal notranslate"><span class="pre">MeshBlockData</span></code>), and the topological element
+(<code class="docutils literal notranslate"><span class="pre">CC</span></code> for cell-centered). Constraints are supplied as template
+arguments to the alias —
+e.g. <code class="docutils literal notranslate"><span class="pre">RiotUtils::LoopType&lt;LoopConstraint::NoGhost&gt;</span></code> — which is where
+the hints of the next section are actually applied.</p>
+</section>
+<section id="loopconstraint-and-the-inner-access-tag">
+<h3>LoopConstraint and the Inner-Access Tag<a class="headerlink" href="#loopconstraint-and-the-inner-access-tag" title="Link to this heading"></a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">RiotLoop::LoopConstraint</span></code> values are compile-time hints, passed as
+template arguments to the index space, that let RIOT pick the most
+efficient way to hand cell indices to the <code class="docutils literal notranslate"><span class="pre">inner</span></code> lambda:</p>
+<dl class="simple">
+<dt>Default</dt><dd><p>The inner body receives an opaque <em>memory</em> index — the flat offset into the
+field’s storage. This inlines to <code class="docutils literal notranslate"><span class="pre">var[idx]</span></code> and vectorizes cleanly; it is the
+fast path.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">LoopConstraint::NoGhost</span></code></dt><dd><p>Guarantees the loop touches no ghost zones, so a <em>logical-flat</em> index (dense
+over the interior) can be used.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">LoopConstraint::DifferentMemSpaces</span></code></dt><dd><p>Signals that fields of different centering (for example, face- and
+cell-centered) appear in the same kernel and cannot share one flat index; the
+body then receives <em>logical coordinates</em> <span class="math notranslate nohighlight">\((k,j,i)\)</span>.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">LoopConstraint::SingleBlock</span></code></dt><dd><p>Declares that the loop covers exactly one block. Unlike the two above, this
+does not change the index form; it changes the loop order
+(Section <a class="reference internal" href="#chap-loops"><span class="std std-ref">Loop Abstractions</span></a> below), forcing the point-wise <code class="docutils literal notranslate"><span class="pre">boiv</span></code> tag on both
+backends so the block’s cells parallelize across threads rather than launching
+a single idle team.</p>
+</dd>
+</dl>
+<p>In all cases the body may instead be written to take explicit <code class="docutils literal notranslate"><span class="pre">(int</span>
+<span class="pre">k,</span> <span class="pre">int</span> <span class="pre">j,</span> <span class="pre">int</span> <span class="pre">i)</span></code> arguments; the abstraction supplies whichever form
+the body declares, and <code class="docutils literal notranslate"><span class="pre">idx_range.GetKJI(kji)</span></code> recovers coordinates
+from an opaque index when only a few are needed (e.g. to store a
+flux).</p>
+</section>
+<section id="loop-order-tags">
+<h3>Loop-Order Tags<a class="headerlink" href="#loop-order-tags" title="Link to this heading"></a></h3>
+<p>The nesting order of the block, per-block “variable” work, and the
+cell iteration is named by a <code class="docutils literal notranslate"><span class="pre">loop_tag</span></code>. The letters stand for
+<strong>b</strong>lock, <strong>v</strong>ariable, <strong>o</strong>uter cell-chunk, and <strong>i</strong>nner
+cell (the table below). RIOT does not pick a tag by hand: it selects
+one <em>by backend</em>, in <code class="docutils literal notranslate"><span class="pre">RiotUtils::GetLoopTag</span></code>
+(<code class="docutils literal notranslate"><span class="pre">riot_utils/riot_loops.hpp</span></code>). On a GPU build it uses <code class="docutils literal notranslate"><span class="pre">boiv</span></code> —
+point-wise parallelism, one cell per thread — which is the performant
+device shape; on a CPU build it uses <code class="docutils literal notranslate"><span class="pre">bvoi</span></code> — one block per
+<code class="docutils literal notranslate"><span class="pre">outer</span></code> step with a vectorized inner sweep. A loop carrying the
+<code class="docutils literal notranslate"><span class="pre">SingleBlock</span></code> constraint (Section <a class="reference internal" href="#chap-loops"><span class="std std-ref">Loop Abstractions</span></a>) overrides this
+and uses <code class="docutils literal notranslate"><span class="pre">boiv</span></code> on <em>both</em> backends, so the lone block’s cells still
+spread across threads. The intermediate <code class="docutils literal notranslate"><span class="pre">bovi</span></code> tag exists in the
+abstraction but RIOT does not currently select it.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 11.4%" />
+<col style="width: 34.1%" />
+<col style="width: 54.5%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Tag</p></th>
+<th class="head"><p>Order</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>bvoi</p></td>
+<td><p>block <span class="math notranslate nohighlight">\(\to\)</span> var <span class="math notranslate nohighlight">\(\to\)</span> outer <span class="math notranslate nohighlight">\(\to\)</span> inner</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">outer</span></code> spans blocks only; <code class="docutils literal notranslate"><span class="pre">inner</span></code> covers the whole cell range of a block. The CPU path RIOT uses.</p></td>
+</tr>
+<tr class="row-odd"><td><p>bovi</p></td>
+<td><p>block <span class="math notranslate nohighlight">\(\to\)</span> outer <span class="math notranslate nohighlight">\(\to\)</span> var <span class="math notranslate nohighlight">\(\to\)</span> inner</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">outer</span></code> spans blocks and cell-chunks; <code class="docutils literal notranslate"><span class="pre">inner</span></code> runs over one chunk. Available but unused by RIOT.</p></td>
+</tr>
+<tr class="row-even"><td><p>boiv</p></td>
+<td><p>block <span class="math notranslate nohighlight">\(\to\)</span> outer <span class="math notranslate nohighlight">\(\to\)</span> inner <span class="math notranslate nohighlight">\(\to\)</span> var</p></td>
+<td><p>Point-wise limit (chunk size <span class="math notranslate nohighlight">\(1\)</span>); the inner range carries <span class="math notranslate nohighlight">\((k,j,i)\)</span> directly. The GPU path RIOT uses (and the <code class="docutils literal notranslate"><span class="pre">SingleBlock</span></code> path on both backends).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="what-the-loops-become-cpu-versus-gpu">
+<h3>What the Loops Become: CPU versus GPU<a class="headerlink" href="#what-the-loops-become-cpu-versus-gpu" title="Link to this heading"></a></h3>
+<p>The two backends must cover exactly the same logical cells; they differ only in how blocks and cells map to hardware. The transforms for the two tags RIOT actually selects — <code class="docutils literal notranslate"><span class="pre">boiv</span></code> on GPU and <code class="docutils literal notranslate"><span class="pre">bvoi</span></code> on CPU — are sketched below in pseudocode.</p>
+<section id="gpu-build-kokkos-to-boiv">
+<h4>GPU build (<code class="docutils literal notranslate"><span class="pre">kokkos</span></code> <span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">boiv</span></code>).<a class="headerlink" href="#gpu-build-kokkos-to-boiv" title="Link to this heading"></a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">outer</span></code> becomes a <em>flat</em> Kokkos <code class="docutils literal notranslate"><span class="pre">RangePolicy</span></code> over the product of blocks and cells; each work item is a single cell, and one GPU thread owns it. <code class="docutils literal notranslate"><span class="pre">inner</span></code> executes that cell’s body. No Kokkos team is formed, so <code class="docutils literal notranslate"><span class="pre">TeamBarrier()</span></code> is a no-op and any registered per-point scratch is private to the thread’s cell:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// RiotLoop::outer  -&gt;  flat RangePolicy over (block x cell); one cell per thread</span>
+<span class="n">total</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">nblocks</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">cells_per_block</span><span class="p">;</span>
+<span class="n">parallel_for</span><span class="p">(</span><span class="n">RangePolicy</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">total</span><span class="p">),</span>
+<span class="w">  </span><span class="p">[</span><span class="o">=</span><span class="p">]</span><span class="w"> </span><span class="p">(</span><span class="n">int64</span><span class="w"> </span><span class="n">flat</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">b</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="n">flat</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">cells_per_block</span><span class="p">;</span><span class="w">         </span><span class="c1">// work item -&gt; block</span>
+<span class="w">    </span><span class="n">local</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">flat</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="n">cells_per_block</span><span class="p">;</span><span class="w">         </span><span class="c1">// work item -&gt; cell in block</span>
+<span class="w">    </span><span class="p">(</span><span class="n">k</span><span class="p">,</span><span class="n">j</span><span class="p">,</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">logical_indexer</span><span class="p">(</span><span class="n">local</span><span class="p">);</span>
+<span class="w">    </span><span class="n">idx_range</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">InnerIndexRange</span><span class="p">(...,</span><span class="w"> </span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// RiotLoop::inner  -&gt;  this thread's single cell</span>
+<span class="w">    </span><span class="n">body</span><span class="p">(</span><span class="w"> </span><span class="n">idx_range</span><span class="w"> </span><span class="p">);</span>
+
+<span class="w">    </span><span class="cm">/* TeamBarrier() is a no-op: no team, one cell per thread */</span>
+<span class="w">  </span><span class="p">});</span>
+</pre></div>
+</div>
+</section>
+<section id="cpu-build-raw-to-bvoi">
+<h4>CPU build (<code class="docutils literal notranslate"><span class="pre">raw</span></code> <span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">bvoi</span></code>).<a class="headerlink" href="#cpu-build-raw-to-bvoi" title="Link to this heading"></a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">outer</span></code> becomes a plain <code class="docutils literal notranslate"><span class="pre">for</span></code> loop over blocks only; <code class="docutils literal notranslate"><span class="pre">inner</span></code> becomes the nested <span class="math notranslate nohighlight">\(k,j\)</span> loops with a single vectorizable <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">omp</span> <span class="pre">simd</span></code> sweep over <span class="math notranslate nohighlight">\(i\)</span> across the whole block. <code class="docutils literal notranslate"><span class="pre">TeamBarrier()</span></code> is a no-op because one host thread walks the block in order:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="c1">// RiotLoop::outer  -&gt;  ordinary loop over blocks</span>
+<span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nblocks</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">idx_range</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">InnerIndexRange</span><span class="p">(...,</span><span class="w"> </span><span class="n">b</span><span class="p">);</span>
+
+<span class="w">  </span><span class="c1">// RiotLoop::inner  -&gt;  nested k,j loops with a vectorized simd sweep over i</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ks</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">ke</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">k</span><span class="p">)</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">js</span><span class="p">;</span><span class="w"> </span><span class="n">j</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">je</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">j</span><span class="p">)</span>
+<span class="w">      </span><span class="cp">#pragma omp simd</span>
+<span class="w">      </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">is</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">ie</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="n">body</span><span class="p">(</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="p">);</span>
+
+<span class="w">  </span><span class="cm">/* TeamBarrier() is a no-op here */</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The mapping is summarized in the table below.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 22.7%" />
+<col style="width: 38.6%" />
+<col style="width: 38.6%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Construct</p></th>
+<th class="head"><p>GPU (<code class="docutils literal notranslate"><span class="pre">kokkos</span></code>, <code class="docutils literal notranslate"><span class="pre">boiv</span></code>)</p></th>
+<th class="head"><p>CPU (<code class="docutils literal notranslate"><span class="pre">raw</span></code>, <code class="docutils literal notranslate"><span class="pre">bvoi</span></code>)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>RiotLoop::outer</p></td>
+<td><p>flat <code class="docutils literal notranslate"><span class="pre">RangePolicy</span></code> over blocks <span class="math notranslate nohighlight">\(\times\)</span> cells; one cell per thread</p></td>
+<td><p>plain <code class="docutils literal notranslate"><span class="pre">for</span></code> over blocks</p></td>
+</tr>
+<tr class="row-odd"><td><p>parallel unit</p></td>
+<td><p>one GPU thread per cell</p></td>
+<td><p>single host thread per block</p></td>
+</tr>
+<tr class="row-even"><td><p>RiotLoop::inner</p></td>
+<td><p>the thread’s single cell</p></td>
+<td><p>nested <span class="math notranslate nohighlight">\(k,j\)</span> loops with <code class="docutils literal notranslate"><span class="pre">#pragma</span> <span class="pre">omp</span> <span class="pre">simd</span></code> over <span class="math notranslate nohighlight">\(i\)</span></p></td>
+</tr>
+<tr class="row-odd"><td><p>registered scratch</p></td>
+<td><p>per-thread (one cell)</p></td>
+<td><p>ordinary stack/heap buffer</p></td>
+</tr>
+<tr class="row-even"><td><p>TeamBarrier()</p></td>
+<td><p>no-op (no team)</p></td>
+<td><p>no-op</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="two-kernels-in-practice">
+<span id="sec-loops-practice"></span><h3>Two Kernels in Practice<a class="headerlink" href="#two-kernels-in-practice" title="Link to this heading"></a></h3>
+<section id="a-flat-map-fillinteriorderived">
+<h4>A flat map: <code class="docutils literal notranslate"><span class="pre">FillInteriorDerived</span></code>.<a class="headerlink" href="#a-flat-map-fillinteriorderived" title="Link to this heading"></a></h4>
+<p>The simplest use is a block <span class="math notranslate nohighlight">\(\to\)</span> cell map with no scratch, halo, or barriers — here reconstructing the bulk density from per-material cell-volume-averaged densities and then the bulk velocities and internal energy:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">outer</span><span class="p">(</span><span class="n">idx_space</span><span class="p">,</span><span class="w"> </span><span class="n">KOKKOS_LAMBDA</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">pv</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">make_pack_view</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">);</span>
+<span class="w">  </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">.</span><span class="n">GetSize</span><span class="p">(</span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="n">ccmat</span><span class="o">::</span><span class="n">rho</span><span class="p">());</span>
+
+<span class="w">  </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">pv</span><span class="p">(</span><span class="n">ccbulk</span><span class="o">::</span><span class="n">rho</span><span class="p">(),</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.0</span><span class="p">;</span><span class="w"> </span><span class="p">});</span>
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nmat</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">                 </span><span class="c1">// the "v" (material) level</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">sp</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">make_sparse_pack_view</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">);</span>
+<span class="w">    </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="n">pv</span><span class="p">(</span><span class="n">ccbulk</span><span class="o">::</span><span class="n">rho</span><span class="p">(),</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">max</span><span class="p">(</span><span class="n">sp</span><span class="p">(</span><span class="n">ccmat</span><span class="o">::</span><span class="n">rho</span><span class="p">(),</span><span class="w"> </span><span class="n">kji</span><span class="p">),</span><span class="w"> </span><span class="mf">0.0</span><span class="p">);</span>
+<span class="w">    </span><span class="p">});</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="n">Real</span><span class="w"> </span><span class="n">irho</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="n">pv</span><span class="p">(</span><span class="n">ccbulk</span><span class="o">::</span><span class="n">rho</span><span class="p">(),</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mf">1.</span><span class="n">e</span><span class="mi">-100</span><span class="p">);</span>
+<span class="w">    </span><span class="n">pv</span><span class="p">(</span><span class="n">ccbulk</span><span class="o">::</span><span class="n">velocity</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pv</span><span class="p">(</span><span class="n">ccbulk</span><span class="o">::</span><span class="n">momentum</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">irho</span><span class="p">;</span>
+<span class="w">    </span><span class="cm">/* ... internal energy from total energy ... */</span>
+<span class="w">  </span><span class="p">});</span>
+<span class="p">});</span>
+</pre></div>
+</div>
+</section>
+<section id="a-producer-consumer-pipeline-calculatefluxes">
+<h4>A producer/consumer pipeline: <code class="docutils literal notranslate"><span class="pre">CalculateFluxes</span></code>.<a class="headerlink" href="#a-producer-consumer-pipeline-calculatefluxes" title="Link to this heading"></a></h4>
+<p>The hydro flux kernel uses the full machinery: typed per-point <em>scratch</em>, a <em>halo</em>-widened producer range (so the flux loop can read reconstructed states at <span class="math notranslate nohighlight">\(kji-\delta\)</span>), an intermediate material loop, and <code class="docutils literal notranslate"><span class="pre">TeamBarrier()</span></code> between stages:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">outer</span><span class="p">(</span><span class="n">idx_space</span><span class="p">,</span><span class="w"> </span><span class="n">KOKKOS_LAMBDA</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">halo_range</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">idx_range</span><span class="p">.</span><span class="n">AddHalo</span><span class="o">&lt;</span><span class="n">halo</span><span class="o">&gt;</span><span class="p">();</span><span class="w">     </span><span class="c1">// widen by one cell in sweep dir</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">bulk_minus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">GetTypeIndexedPerPointScratch</span><span class="o">&lt;</span><span class="n">Real</span><span class="p">,</span><span class="w"> </span><span class="n">bulk_recon_types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">halo_range</span><span class="p">);</span>
+<span class="w">  </span><span class="k">auto</span><span class="w"> </span><span class="n">bulk_plus</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="n">GetTypeIndexedPerPointScratch</span><span class="o">&lt;</span><span class="n">Real</span><span class="p">,</span><span class="w"> </span><span class="n">bulk_recon_types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">halo_range</span><span class="p">);</span>
+<span class="w">  </span><span class="n">ReconCells</span><span class="p">(</span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">make_pack_view</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">),</span><span class="w"> </span><span class="n">halo_range</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+
+<span class="w">  </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">nmat</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">                 </span><span class="c1">// reconstruct each material</span>
+<span class="w">    </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">halo_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... limit vfrac ... */</span><span class="w"> </span><span class="p">});</span>
+<span class="w">    </span><span class="n">halo_range</span><span class="p">.</span><span class="n">TeamBarrier</span><span class="p">();</span><span class="w">                       </span><span class="c1">// sync producers -&gt; consumers</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="w">  </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">kji</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">  </span><span class="c1">// HLLC Riemann solve on faces</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">kji_L</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kji</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">delta</span><span class="p">,</span><span class="w"> </span><span class="n">kji_R</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">kji</span><span class="p">;</span>
+<span class="w">    </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">idx_range</span><span class="p">.</span><span class="n">GetKJI</span><span class="p">(</span><span class="n">kji</span><span class="p">);</span>
+<span class="w">    </span><span class="n">v</span><span class="p">.</span><span class="n">flux</span><span class="p">(</span><span class="n">b</span><span class="p">,</span><span class="w"> </span><span class="kt">DIR</span><span class="p">,</span><span class="w"> </span><span class="n">ccbulk</span><span class="o">::</span><span class="n">momentum</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span><span class="w"> </span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="cm">/* ... */</span><span class="p">;</span>
+<span class="w">  </span><span class="p">});</span>
+<span class="p">});</span>
+</pre></div>
+</div>
+<p>Both kernels are written against the identical <code class="docutils literal notranslate"><span class="pre">outer</span></code>/<code class="docutils literal notranslate"><span class="pre">inner</span></code> API; the abstraction lowers each to the flat one-cell-per-thread launch on a GPU or the nested-<code class="docutils literal notranslate"><span class="pre">simd</span></code> form on a CPU, with no change to the physics source.</p>
+</section>
+</section>
+<section id="reductions">
+<span id="sec-loops-reductions"></span><h3>Reductions<a class="headerlink" href="#reductions" title="Link to this heading"></a></h3>
+<p>Kernels that must <em>combine</em> a value across all cells — a time-step minimum, a total mass or energy, a refinement flag — use the reduction counterparts <code class="docutils literal notranslate"><span class="pre">RiotLoop::outer_reduce</span></code> and <code class="docutils literal notranslate"><span class="pre">RiotLoop::inner_reduce</span></code>. These mirror <code class="docutils literal notranslate"><span class="pre">outer</span></code>/ <code class="docutils literal notranslate"><span class="pre">inner</span></code> exactly, but the index space is built through <code class="docutils literal notranslate"><span class="pre">RiotUtils::ReductionType</span></code> instead of <code class="docutils literal notranslate"><span class="pre">LoopType</span></code>. It takes the Kokkos reducer as its first template argument (followed by any <code class="docutils literal notranslate"><span class="pre">LoopConstraint</span></code> hints), exposes the same <code class="docutils literal notranslate"><span class="pre">GetIndexSpace</span></code> factory and <code class="docutils literal notranslate"><span class="pre">idx_range_t</span></code>, and additionally names the reduced type <code class="docutils literal notranslate"><span class="pre">value_t</span></code>. <code class="docutils literal notranslate"><span class="pre">outer_reduce</span></code> <em>returns</em> the reduced value; the <code class="docutils literal notranslate"><span class="pre">inner_reduce</span></code> body takes a trailing accumulator reference to update. A time-step estimate reads:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">using</span><span class="w"> </span><span class="n">rt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotUtils</span><span class="o">::</span><span class="n">ReductionType</span><span class="o">&lt;</span><span class="n">Kokkos</span><span class="o">::</span><span class="n">Min</span><span class="o">&lt;</span><span class="n">Real</span><span class="o">&gt;&gt;</span><span class="p">;</span>
+<span class="k">auto</span><span class="w"> </span><span class="n">idx_space</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">rt</span><span class="o">::</span><span class="n">GetIndexSpace</span><span class="p">(</span><span class="n">IndexDomain</span><span class="o">::</span><span class="n">interior</span><span class="p">,</span><span class="w"> </span><span class="cm">/*halo=*/</span><span class="mi">0</span><span class="p">,</span>
+<span class="w">                                   </span><span class="n">v</span><span class="p">.</span><span class="n">GetNBlocks</span><span class="p">(),</span><span class="w"> </span><span class="n">md</span><span class="p">,</span><span class="w"> </span><span class="n">TE</span><span class="o">::</span><span class="n">CC</span><span class="p">);</span>
+<span class="k">const</span><span class="w"> </span><span class="n">Real</span><span class="w"> </span><span class="n">min_dt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">outer_reduce</span><span class="p">(</span><span class="n">idx_space</span><span class="p">,</span>
+<span class="w">  </span><span class="n">KOKKOS_LAMBDA</span><span class="p">(</span><span class="k">const</span><span class="w"> </span><span class="n">rt</span><span class="o">::</span><span class="n">idx_range_t</span><span class="w"> </span><span class="o">&amp;</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">pv</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">make_pack_view</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="n">v</span><span class="p">);</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="o">&amp;</span><span class="n">coords</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">.</span><span class="n">GetCoordinates</span><span class="p">(</span><span class="n">b</span><span class="p">);</span>
+<span class="w">    </span><span class="n">RiotLoop</span><span class="o">::</span><span class="n">inner_reduce</span><span class="p">(</span><span class="n">idx_range</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="o">&amp;</span><span class="p">](</span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="n">idx</span><span class="p">,</span><span class="w"> </span><span class="n">Real</span><span class="w"> </span><span class="o">&amp;</span><span class="n">ldt</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="k">const</span><span class="w"> </span><span class="k">auto</span><span class="w"> </span><span class="p">[</span><span class="n">k</span><span class="p">,</span><span class="w"> </span><span class="n">j</span><span class="p">,</span><span class="w"> </span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">idx_range</span><span class="p">.</span><span class="n">GetKJI</span><span class="p">(</span><span class="n">idx</span><span class="p">);</span>
+<span class="w">      </span><span class="n">ldt</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">min</span><span class="p">(</span><span class="n">ldt</span><span class="p">,</span><span class="w"> </span><span class="cm">/* ... local CFL time from pv/coords ... */</span><span class="p">);</span>
+<span class="w">    </span><span class="p">});</span>
+<span class="w">  </span><span class="p">});</span>
+</pre></div>
+</div>
+<p>The reducer choice is arbitrary: <code class="docutils literal notranslate"><span class="pre">Kokkos::Min&lt;Real&gt;</span></code> for a time step, <code class="docutils literal notranslate"><span class="pre">Kokkos::Sum&lt;Real&gt;</span></code> for a conserved-quantity total, <code class="docutils literal notranslate"><span class="pre">Kokkos::Max&lt;int&gt;</span></code> for a refinement flag. <code class="docutils literal notranslate"><span class="pre">ReductionType</span></code> is kept separate from <code class="docutils literal notranslate"><span class="pre">LoopType</span></code> deliberately, so a reduction may select a different loop-order tag than the plain map path if that proves faster; a caller never sees the difference beyond the alias name. As with the map API, the choice of reducer and constraints is the only thing that changes between backends — the body is written once.</p>
+</section>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="packages/diagnostics.html" class="btn btn-neutral float-left" title="Diagnostics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="contributing.html" class="btn btn-neutral float-right" title="Contributing" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="programmer_guide.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../main/index.html">main</a></dd>
+      <dd><a href="../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

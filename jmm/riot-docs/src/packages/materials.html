@@ -1,0 +1,654 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Materials and Equations of State &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Hydrodynamics" href="hydro.html" />
+    <link rel="prev" title="Building riot" href="../building.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Materials and Equations of State</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#per-material-and-bulk-quantities">Per-Material and Bulk Quantities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#equation-of-state-models">Equation-of-State Models</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#defining-materials">Defining Materials</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#multi-material-closure-controls">Multi-Material Closure Controls</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#frequency-group-structure">Frequency Group Structure</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#opacity-models">Opacity Models</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Materials and Equations of State</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/materials.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="materials-and-equations-of-state">
+<span id="chap-materials"></span><h1>Materials and Equations of State<a class="headerlink" href="#materials-and-equations-of-state" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">materials</span></code> package defines the materials present in a simulation and assigns each one an equation of state (EOS). It registers the per-material fields used by the multi-material hydrodynamics of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a> (per-material densities, volume fractions, internal energies, and the material-averaged thermodynamic state) and configures the pressure–temperature equilibrium (PTE) solver used to close mixed cells. It also owns the optional per-material data consumed by other packages: strength models, opacities, ionization electron states, and burn isotopes.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>The materials package does not itself advance a transport equation; it supplies the thermodynamic closure for the conservation laws solved elsewhere. Each material <span class="math notranslate nohighlight">\(m\)</span> carries an equation of state that provides the pressure and specific internal energy as functions of the material-averaged density <span class="math notranslate nohighlight">\(\rho_m\)</span> and temperature <span class="math notranslate nohighlight">\(T\)</span>,</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}p_m &amp; = p_m(\rho_m, T) \\
+e_m &amp; = e_m(\rho_m, T)\end{split}\]</div>
+<p>supplied through the <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> library. These relations close the per-material system and, together with the Amagat volume-additive constraint and the PTE conditions of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>, determine the equilibrium state of a mixed cell:</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}p_m(\rho_m,T) &amp; = p \\
+T_m &amp; = T \\
+\sum_m f_m &amp; = 1 \\
+u &amp; = \sum_m \bar\rho_m\,e_m(\rho_m,T)\end{split}\]</div>
+<p>for all materials <span class="math notranslate nohighlight">\(m\)</span>, where <span class="math notranslate nohighlight">\(u\)</span> is the bulk volumetric internal energy (internal energy per unit cell volume). For a cell containing a single material the EOS is evaluated directly; for a mixed cell the closure is solved by <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code>. A mixed cell whose materials are all ideal gases admits a closed-form solution and bypasses the iterative solver unless <code class="docutils literal notranslate"><span class="pre">use_general_pte</span></code> is set.</p>
+</section>
+<section id="per-material-and-bulk-quantities">
+<span id="sec-permat-bulk"></span><h2>Per-Material and Bulk Quantities<a class="headerlink" href="#per-material-and-bulk-quantities" title="Link to this heading"></a></h2>
+<p>The multi-material design of RIOT rests on a consistent distinction between three kinds of field, identified throughout the source (and this manual) by their namespace prefix. This section defines that distinction and the aggregation rules once; every subsequent chapter refers back to it. The prefixes are abbreviations of the fully-qualified namespaces in <code class="docutils literal notranslate"><span class="pre">src/variables.hpp</span></code>:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">ccbulk::</span></code> (<code class="docutils literal notranslate"><span class="pre">cell_variables::cell_averaged::bulk</span></code>)</dt><dd><p>Cell-averaged <em>bulk</em> quantities: a single value per cell that describes the
+cell as a whole. The materials in a cell share one common velocity
+<code class="docutils literal notranslate"><span class="pre">ccbulk::velocity</span></code>; the other bulk fields are aggregates that every material
+contributes to. For example, the bulk density <code class="docutils literal notranslate"><span class="pre">ccbulk::rho</span></code> is the sum of the
+per-material <code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>, and the bulk momentum <code class="docutils literal notranslate"><span class="pre">ccbulk::momentum</span></code> is that
+bulk density times the common velocity. RIOT evolves the bulk momentum and
+total energy (<code class="docutils literal notranslate"><span class="pre">ccbulk::total_material_energy</span></code>) directly.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">ccmat::</span></code> (<code class="docutils literal notranslate"><span class="pre">cell_variables::cell_averaged::mat</span></code>)</dt><dd><p>Cell-averaged <em>per-material</em> quantities. These are averaged over the whole
+cell volume, so a material that only partly fills a cell contributes in
+proportion to its volume fraction.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">cm::</span></code> (<code class="docutils literal notranslate"><span class="pre">cell_variables::material_averaged</span></code>)</dt><dd><p><em>Material-averaged</em> per-material quantities: the intrinsic (physical) value a
+material carries within the sub-volume it actually occupies.</p>
+</dd>
+</dl>
+<p>The distinction between <code class="docutils literal notranslate"><span class="pre">ccmat::</span></code> and <code class="docutils literal notranslate"><span class="pre">cm::</span></code> is fundamental. Consider a cell of volume <span class="math notranslate nohighlight">\(V\)</span> and a material <span class="math notranslate nohighlight">\(m\)</span> within it that has mass <span class="math notranslate nohighlight">\(M_m\)</span> and occupies volume <span class="math notranslate nohighlight">\(V_m\)</span>. Its <em>volume fraction</em> is <span class="math notranslate nohighlight">\(f_m = V_m/V\)</span> (field <code class="docutils literal notranslate"><span class="pre">ccmat::volume_fraction</span></code>), with <span class="math notranslate nohighlight">\(\sum_m f_m = 1\)</span>. Then:</p>
+<ul class="simple">
+<li><p><span class="math notranslate nohighlight">\(\rho_m = M_m/V_m\)</span> — the <em>physical density</em> of the material, i.e. its mass divided by the volume it actually occupies (field <code class="docutils literal notranslate"><span class="pre">cm::rho</span></code>). This is the density passed to the equation of state.</p></li>
+<li><p><span class="math notranslate nohighlight">\(\bar\rho_m = M_m/V\)</span> — the <em>cell-volume-averaged density</em> of the material, i.e. its mass divided by the <em>whole</em> cell volume rather than the sub-volume it occupies (field <code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>).</p></li>
+</ul>
+<p>The two are related through the volume fraction,</p>
+<div class="math notranslate nohighlight">
+\[\bar\rho_m = \rho_m\,\frac{V_m}{V} = f_m\,\rho_m\]</div>
+<p>so <code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code> is always <span class="math notranslate nohighlight">\(\le\)</span> <code class="docutils literal notranslate"><span class="pre">cm::rho</span></code>, with equality only when the material fills the cell (<span class="math notranslate nohighlight">\(f_m = 1\)</span>). The material-averaged pressure, temperature, specific internal energy, bulk modulus, and so on (<span class="math notranslate nohighlight">\(p_m\)</span>, <span class="math notranslate nohighlight">\(T_m\)</span>, <span class="math notranslate nohighlight">\(e_m\)</span>, <span class="math notranslate nohighlight">\(B_m\)</span>, …) are likewise <code class="docutils literal notranslate"><span class="pre">cm::</span></code> quantities, evaluated from the equation of state at the physical density <span class="math notranslate nohighlight">\(\rho_m\)</span>.</p>
+<p>RIOT integrates conservation laws for the cell-volume-averaged material densities <span class="math notranslate nohighlight">\(\bar\rho_m\)</span> (<code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>, one per material) together with the bulk momentum and total energy (<code class="docutils literal notranslate"><span class="pre">ccbulk::</span></code>); a single velocity <span class="math notranslate nohighlight">\(\vec{v}\)</span> is common to all materials in a cell. After each update, the bulk quantities are reconstructed from the per-material states. The aggregation rules actually used (in <code class="docutils literal notranslate"><span class="pre">multiphysics/fill_shared_derived.cpp</span></code>) fall into two kinds:</p>
+<ul>
+<li><p><strong>Direct sums.</strong> Because <code class="docutils literal notranslate"><span class="pre">ccmat::</span></code> densities are already per-unit-cell-volume,
+the bulk density and bulk volumetric internal energy <span class="math notranslate nohighlight">\(u\)</span> (internal energy
+per unit cell volume) are direct sums over materials:</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\rho &amp; = \sum_m \bar\rho_m \\
+u &amp; = \sum_m \bar\rho_m\,e_m\end{split}\]</div>
+</li>
+<li><p><strong>Equilibrium closure.</strong> The bulk pressure <span class="math notranslate nohighlight">\(p\)</span> and temperature <span class="math notranslate nohighlight">\(T\)</span>
+are <em>not</em> averages: they are the common values returned by the
+pressure–temperature-equilibrium (PTE) solve, <span class="math notranslate nohighlight">\(p_m(\rho_m,T)=p\)</span> and
+<span class="math notranslate nohighlight">\(T_m=T\)</span> for all <span class="math notranslate nohighlight">\(m\)</span> (Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>).</p></li>
+</ul>
+<p>The bulk velocity follows from the conserved momentum, <span class="math notranslate nohighlight">\(\vec{v}= (\rho\vec{v})/\rho\)</span>.</p>
+<p>This pattern — <em>per-material fields evolved or closed independently,
+then aggregated to a bulk field that feeds the hydrodynamics</em> — recurs
+in the strength, ionization, and burn packages, and each of those
+chapters states its own aggregation explicitly.</p>
+</section>
+<section id="equation-of-state-models">
+<h2>Equation-of-State Models<a class="headerlink" href="#equation-of-state-models" title="Link to this heading"></a></h2>
+<p>Each material selects an EOS through the <code class="docutils literal notranslate"><span class="pre">eos_type</span></code> parameter. The
+available models and the parameters each requires are listed in the
+table below. All EOS blocks additionally accept <code class="docutils literal notranslate"><span class="pre">mean_atomic_mass</span></code>
+(default <code class="docutils literal notranslate"><span class="pre">2.0</span></code>) and <code class="docutils literal notranslate"><span class="pre">mean_atomic_number</span></code> (default <code class="docutils literal notranslate"><span class="pre">1.0</span></code>).</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Equation-of-state models.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.8%" />
+<col style="width: 38.5%" />
+<col style="width: 30.8%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p><code class="docutils literal notranslate"><span class="pre">eos_type</span></code></p></th>
+<th class="head"><p>Model</p></th>
+<th class="head"><p>Required parameters</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IdealGas</span></code></p></td>
+<td><p>Ideal gas (<span class="math notranslate nohighlight">\(\gamma\)</span>-law)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Gamma</span></code>, <code class="docutils literal notranslate"><span class="pre">Cv</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Gruneisen</span></code></p></td>
+<td><p>Mie–Grüneisen</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">C0</span></code>, <code class="docutils literal notranslate"><span class="pre">s1</span></code>, <code class="docutils literal notranslate"><span class="pre">s2</span></code>, <code class="docutils literal notranslate"><span class="pre">s3</span></code>, <code class="docutils literal notranslate"><span class="pre">G0</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>, <code class="docutils literal notranslate"><span class="pre">rho0</span></code>, <code class="docutils literal notranslate"><span class="pre">T0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">P0</span></code>, <code class="docutils literal notranslate"><span class="pre">Cv</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SpinerEOSDependsRhoT</span></code></p></td>
+<td><p>Tabular (SESAME), <span class="math notranslate nohighlight">\((\rho,T)\)</span> independent</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">filename</span></code>, <code class="docutils literal notranslate"><span class="pre">sesame_id</span></code>, or <code class="docutils literal notranslate"><span class="pre">sesame_name</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">SpinerEOSDependsRhoSie</span></code></p></td>
+<td><p>Tabular (SESAME), <span class="math notranslate nohighlight">\((\rho,e)\)</span> independent</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">filename</span></code>, <code class="docutils literal notranslate"><span class="pre">sesame_id</span></code>, or <code class="docutils literal notranslate"><span class="pre">sesame_name</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">IdealElectrons</span></code></p></td>
+<td><p>Ideal electron gas (ionization)</p></td>
+<td><p>—</p></td>
+</tr>
+</tbody>
+</table>
+<p>The analytic models (<code class="docutils literal notranslate"><span class="pre">IdealGas</span></code>, <code class="docutils literal notranslate"><span class="pre">Gruneisen</span></code>) are provided
+directly by <code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code>. The tabular <code class="docutils literal notranslate"><span class="pre">Spiner</span></code> models read an
+HDF5 (SESAME/SP5) table selected either by numeric <code class="docutils literal notranslate"><span class="pre">sesame_id</span></code>
+(which takes precedence) or by <code class="docutils literal notranslate"><span class="pre">sesame_name</span></code>, and accept the
+optional flags <code class="docutils literal notranslate"><span class="pre">reproducibility_mode</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>) and
+<code class="docutils literal notranslate"><span class="pre">use_subtable</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>).</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<section id="defining-materials">
+<h3>Defining Materials<a class="headerlink" href="#defining-materials" title="Link to this heading"></a></h3>
+<p>Materials are defined by contiguous, zero-based blocks
+<code class="docutils literal notranslate"><span class="pre">&lt;material0&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;material1&gt;</span></code>, …. The number of materials is set
+implicitly by how many such blocks are present; they must be numbered
+contiguously starting from <code class="docutils literal notranslate"><span class="pre">0</span></code>. Each block selects an EOS and,
+optionally, enables strength, ionization, opacity, isotopes, or
+multiple phases.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Per-material parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;material</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>label</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Descriptive name for the material.</p></td>
+</tr>
+<tr class="row-odd"><td><p>eos_type</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>EOS model (the table below); required.</p></td>
+</tr>
+<tr class="row-even"><td><p>eos</p></td>
+<td><p>string</p></td>
+<td><p><em>this block</em></p></td>
+<td><p>Name of a separate block holding the EOS parameters; if absent, they are read from this material block.</p></td>
+</tr>
+<tr class="row-odd"><td><p>nphase</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Number of phases for a multi-phase material.</p></td>
+</tr>
+<tr class="row-even"><td><p>max_mat_level</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Maximum AMR level to enforce within this material (<span class="math notranslate nohighlight">\(-1\)</span> = finest).</p></td>
+</tr>
+<tr class="row-odd"><td><p>max_bnd_level</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Maximum AMR level to enforce around its interfaces.</p></td>
+</tr>
+<tr class="row-even"><td><p>strong</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable material strength (Chapter <a class="reference internal" href="strength.html#chap-strength"><span class="std std-ref">Material Strength</span></a>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>strength_model</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Strength-model block (required if <code class="docutils literal notranslate"><span class="pre">strong</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>electron_eos</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Electron-EOS block (required if ionization is on).</p></td>
+</tr>
+<tr class="row-odd"><td><p>opac</p></td>
+<td><p>string</p></td>
+<td><p><em>this block</em></p></td>
+<td><p>Name of a separate block holding the opacity models (Section <a class="reference internal" href="#sec-mat-opacity"><span class="std std-ref">Opacity Models</span></a>); if absent, they are read from this material block. Multi-phase materials use <code class="docutils literal notranslate"><span class="pre">opac0</span></code>, <code class="docutils literal notranslate"><span class="pre">opac1</span></code>, …instead.</p></td>
+</tr>
+<tr class="row-even"><td><p>isotope<span class="math notranslate nohighlight">\(K\)</span></p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>ZAID of the <span class="math notranslate nohighlight">\(K\)</span>th isotope (burn runs).</p></td>
+</tr>
+<tr class="row-odd"><td><p>isotope<span class="math notranslate nohighlight">\(K\)</span>_mfrac</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0</span></code></p></td>
+<td><p>Initial mass fraction of the <span class="math notranslate nohighlight">\(K\)</span>th isotope.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="multi-material-closure-controls">
+<h3>Multi-Material Closure Controls<a class="headerlink" href="#multi-material-closure-controls" title="Link to this heading"></a></h3>
+<p>The global <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block and PTE controls tune how mixed cells
+are closed and diagnosed. The PTE tolerances apply when the general
+(iterative) solver is active; where the default column reads <em>library</em>
+below, the parameter is left unset and takes whatever default the
+<code class="docutils literal notranslate"><span class="pre">singularity-eos</span></code> library assigns it.</p>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block.</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>use_general_pte</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Use the iterative PTE solver even for cells of all ideal gases.</p></td>
+</tr>
+<tr class="row-odd"><td><p>track_pte_statistics</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Report PTE-solver convergence diagnostics.</p></td>
+</tr>
+<tr class="row-even"><td><p>pte_stats_mode</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">averaged_light</span></code></p></td>
+<td><p>Statistics mode: <code class="docutils literal notranslate"><span class="pre">instantaneous</span></code>, <code class="docutils literal notranslate"><span class="pre">averaged</span></code>, or <code class="docutils literal notranslate"><span class="pre">averaged_light</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>pte_max_iter_per_mat</p></td>
+<td><p>int</p></td>
+<td><p><em>library</em></p></td>
+<td><p>Maximum PTE iterations per material.</p></td>
+</tr>
+<tr class="row-even"><td><p>pte_rel_tolerance_p</p></td>
+<td><p>Real</p></td>
+<td><p><em>library</em></p></td>
+<td><p>Relative pressure-residual tolerance.</p></td>
+</tr>
+<tr class="row-odd"><td><p>pte_rel_tolerance_e</p></td>
+<td><p>Real</p></td>
+<td><p><em>library</em></p></td>
+<td><p>Relative energy-residual tolerance.</p></td>
+</tr>
+<tr class="row-even"><td><p>pte_abs_tolerance_p</p></td>
+<td><p>Real</p></td>
+<td><p><em>library</em></p></td>
+<td><p>Absolute pressure-residual tolerance.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="frequency-group-structure">
+<span id="sec-mat-group-structure"></span><h3>Frequency Group Structure<a class="headerlink" href="#frequency-group-structure" title="Link to this heading"></a></h3>
+<p>For radiation runs the materials package <em>owns</em> the frequency group
+structure — the number of groups <span class="math notranslate nohighlight">\(N_\nu\)</span> and the <span class="math notranslate nohighlight">\(N_\nu+1\)</span>
+group boundaries (in Hz) — and supplies it to the radiation packages
+(Chapter <a class="reference internal" href="radiation_transport.html#chap-radtransport"><span class="std std-ref">Radiation Transport</span></a>). It lives here, rather than in the
+radiation package, because the opacities are a material property
+(Section <a class="reference internal" href="#sec-mat-opacity"><span class="std std-ref">Opacity Models</span></a>) and the transport must use exactly
+the group grid on which the opacities are tabulated. The structure is
+resolved at initialization from the first of the following that
+applies:</p>
+<ol class="arabic simple">
+<li><p><strong>Explicit input.</strong> If <code class="docutils literal notranslate"><span class="pre">group_bounds</span></code> is given in the <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block (a list of <span class="math notranslate nohighlight">\(N_\nu+1\)</span> ascending frequency edges in Hz), it sets the structure directly. An optional <code class="docutils literal notranslate"><span class="pre">ngroups</span></code> may be given but must equal <code class="docutils literal notranslate"><span class="pre">len(group_bounds)</span></code> <span class="math notranslate nohighlight">\(-\,1\)</span>.</p></li>
+<li><p><strong>Opacity tables.</strong> Otherwise, any tabular (<code class="docutils literal notranslate"><span class="pre">table</span></code>) opacity model is read and its built-in group structure adopted. All table-based materials must agree on the structure, or RIOT aborts.</p></li>
+<li><p><strong>Grey default.</strong> If neither is present — as in any non-radiating run — the structure defaults to a single group spanning <span class="math notranslate nohighlight">\([0,\infty)\)</span>.</p></li>
+</ol>
+<p>All materials in a simulation therefore share one common group grid,
+checked for consistency across every table-based material.</p>
+<table class="wraptable docutils align-default" id="id4">
+<caption><span class="caption-text">Group-structure parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block.</span><a class="headerlink" href="#id4" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>group_bounds</p></td>
+<td><p>list</p></td>
+<td><p><em>tables/grey</em></p></td>
+<td><p>Ascending frequency-group edges (Hz), length <span class="math notranslate nohighlight">\(N_\nu+1\)</span>. If omitted, taken from opacity tables, or a single grey group.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ngroups</p></td>
+<td><p>int</p></td>
+<td><p><em>derived</em></p></td>
+<td><p>Number of frequency groups; if given with <code class="docutils literal notranslate"><span class="pre">group_bounds</span></code> it must equal its length minus one.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="opacity-models">
+<span id="sec-mat-opacity"></span><h3>Opacity Models<a class="headerlink" href="#opacity-models" title="Link to this heading"></a></h3>
+<p>For radiation runs (Chapter <a class="reference internal" href="radiation_transport.html#chap-radtransport"><span class="std std-ref">Radiation Transport</span></a>) each material
+carries an <em>absorption</em> and a <em>scattering</em> opacity model, selected in
+its opacity block. By default this is the material block itself; the
+<code class="docutils literal notranslate"><span class="pre">opac</span></code> parameter (or <code class="docutils literal notranslate"><span class="pre">opac</span></code><span class="math notranslate nohighlight">\(N\)</span> per phase,
+Section <a class="reference internal" href="#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>) may redirect to a separately-named
+block so several materials can share one definition. The model is
+chosen with <code class="docutils literal notranslate"><span class="pre">opac_a</span></code> (absorption) and <code class="docutils literal notranslate"><span class="pre">opac_s</span></code> (scattering); both
+default to <code class="docutils literal notranslate"><span class="pre">none</span></code>. RIOT builds a <em>multigroup group-mean</em> opacity
+table for every material — either by integrating the chosen analytic
+model over each frequency group
+(Section <a class="reference internal" href="#sec-mat-group-structure"><span class="std std-ref">Frequency Group Structure</span></a>) or by reading a pre-tabulated
+SP5 (HDF5) file — so a grey run is simply the single-group case of the
+same machinery. All opacity input is interpreted in CGS.</p>
+<table class="wraptable docutils align-default">
+<colgroup>
+<col style="width: 18.6%" />
+<col style="width: 16.3%" />
+<col style="width: 65.1%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Option</p></th>
+<th class="head"><p>Applies to</p></th>
+<th class="head"><p>Model and parameters</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>none</p></td>
+<td><p>abs., scat.</p></td>
+<td><p>No opacity (zero coefficient). Default.</p></td>
+</tr>
+<tr class="row-odd"><td><p>constant</p></td>
+<td><p>abs., scat.</p></td>
+<td><p>Grey (frequency-independent) <span class="math notranslate nohighlight">\(\kappa\)</span>: <code class="docutils literal notranslate"><span class="pre">kappa_a</span></code> (absorption) or <code class="docutils literal notranslate"><span class="pre">kappa_s</span></code> (scattering).</p></td>
+</tr>
+<tr class="row-even"><td><p>powerlaw</p></td>
+<td><p>abs. only</p></td>
+<td><p>Power-law <span class="math notranslate nohighlight">\(\kappa = \kappa_0\,\rho^{a}\,T^{b}\,(\nu/\nu_{\text{ref}})^{c}\)</span>: <code class="docutils literal notranslate"><span class="pre">kappa0_a</span></code>, <code class="docutils literal notranslate"><span class="pre">kappa_Rhopower_a</span></code> (<span class="math notranslate nohighlight">\(a\)</span>), <code class="docutils literal notranslate"><span class="pre">kappa_Tpower_a</span></code> (<span class="math notranslate nohighlight">\(b\)</span>), <code class="docutils literal notranslate"><span class="pre">kappa_Nupower_a</span></code> (<span class="math notranslate nohighlight">\(c\)</span>), <code class="docutils literal notranslate"><span class="pre">kappa_Nuref_a</span></code> (<span class="math notranslate nohighlight">\(\nu_{\text{ref}}\)</span>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>table</p></td>
+<td><p>abs., scat.</p></td>
+<td><p>Pre-tabulated group-mean opacity read from an SP5 (HDF5) file: <code class="docutils literal notranslate"><span class="pre">opac_a_filename</span></code> / <code class="docutils literal notranslate"><span class="pre">opac_s_filename</span></code>. The file also carries the group structure, from which the run’s group grid can be inferred (Section <a class="reference internal" href="#sec-mat-group-structure"><span class="std std-ref">Frequency Group Structure</span></a>).</p></td>
+</tr>
+</tbody>
+</table>
+<p>For an analytic model (<code class="docutils literal notranslate"><span class="pre">constant</span></code>/<code class="docutils literal notranslate"><span class="pre">powerlaw</span></code>) RIOT generates the
+group-mean table at build time over a <span class="math notranslate nohighlight">\((\rho,T)\)</span> grid whose
+extent and resolution are set by the optional per-model parameters
+below (suffixed <code class="docutils literal notranslate"><span class="pre">_a</span></code> for absorption, <code class="docutils literal notranslate"><span class="pre">_s</span></code> for scattering); the
+defaults suffice when the model is density/temperature independent.</p>
+<table class="wraptable docutils align-default" id="id5">
+<caption><span class="caption-text">Optional table-generation parameters in an opacity block (<code class="docutils literal notranslate"><span class="pre">_a</span></code>/<code class="docutils literal notranslate"><span class="pre">_s</span></code> suffix).</span><a class="headerlink" href="#id5" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>lRhoMin, lRhoMax</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1.0</span></code>, <code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\log_{10}\)</span> density bounds of the generated mean table.</p></td>
+</tr>
+<tr class="row-odd"><td><p>lTMin, lTMax</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1.0</span></code>, <code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\log_{10}\)</span> temperature bounds of the generated mean table.</p></td>
+</tr>
+<tr class="row-even"><td><p>NRho, NT</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2</span></code>, <code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+<td><p>Number of density / temperature table entries.</p></td>
+</tr>
+<tr class="row-odd"><td><p>NNuPerGroup</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">64</span></code></p></td>
+<td><p>Frequency samples per group used in the group-mean integration.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The averaging weight (Rosseland vs. Planck) and the per-material
+evaluation inside a cell are described in
+Chapter <a class="reference internal" href="../programmer_guide.html#chap-singularity-opac"><span class="std std-ref">singularity-opac</span></a>; the way the per-material
+coefficients combine into the cell coefficients used by the transport
+solve is given in Section <a class="reference internal" href="radiation_transport.html#sec-rad-opacity"><span class="std std-ref">Multi-Material Opacities</span></a>.</p>
+</section>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The materials package registers the per-material fields listed in the
+table below. These are <em>sparse</em>: they are allocated only in cells
+where the material is present, controlled by <code class="docutils literal notranslate"><span class="pre">ccmat::rho</span></code>. Recall
+(Section <a class="reference internal" href="#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>) that <code class="docutils literal notranslate"><span class="pre">ccmat::</span></code> denotes a
+cell-volume-averaged per-material quantity while <code class="docutils literal notranslate"><span class="pre">cm::</span></code> denotes a
+material-averaged (physical) quantity, related by the volume fraction
+as in the equation above. Additional per-material fields are
+registered here when strength, ionization, or burn are active, and are
+documented in those chapters.</p>
+<table class="wraptable docutils align-default" id="tab-materials-fields">
+<caption><span class="caption-text">Core per-material fields registered by the materials package.</span><a class="headerlink" href="#tab-materials-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccmat::rho</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar\rho_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes; cell-volume-averaged material density, <span class="math notranslate nohighlight">\(M_m/V\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccmat::volume_fraction</p></td>
+<td><p><span class="math notranslate nohighlight">\(f_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy, FillGhost, ForceRemeshComm, Restart; volume fraction <span class="math notranslate nohighlight">\(V_m/V\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccmat::internal_energy</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar\rho_m e_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; cell-volume-averaged internal-energy density.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::rho</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; physical (material-averaged) density <span class="math notranslate nohighlight">\(M_m/V_m = \bar\rho_m/f_m\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>cm::sie</p></td>
+<td><p><span class="math notranslate nohighlight">\(e_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Sparse, Derived, OneCopy; specific internal energy.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::temperature</p></td>
+<td><p><span class="math notranslate nohighlight">\(T_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Sparse, Derived, OneCopy; material temperature.</p></td>
+</tr>
+<tr class="row-even"><td><p>cm::pressure</p></td>
+<td><p><span class="math notranslate nohighlight">\(p_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Sparse, Derived, OneCopy; material pressure.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::bulk_modulus</p></td>
+<td><p><span class="math notranslate nohighlight">\(B_m\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Sparse, Derived, OneCopy; material bulk modulus.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>Two ideal-gas materials with EOS parameters given inline:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material0"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"air"</span><span class="p">,</span>
+           <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">1.0e-3</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material1"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"heavy"</span><span class="p">,</span>
+           <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.66667</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">1.0e-3</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../building.html" class="btn btn-neutral float-left" title="Building riot" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="hydro.html" class="btn btn-neutral float-right" title="Hydrodynamics" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="materials.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,343 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Thermonuclear Burn &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Sparse Physics" href="sparse_physics.html" />
+    <link rel="prev" title="Radiation Diffusion (P1)" href="radiation_diffusion.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Thermonuclear Burn</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#reaction-rate">Reaction Rate</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#isotopic-composition">Isotopic Composition</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#energy-release">Energy Release</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#reaction-count">Reaction Count</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Thermonuclear Burn</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/tnburn.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="thermonuclear-burn">
+<span id="chap-tnburn"></span><h1>Thermonuclear Burn<a class="headerlink" href="#thermonuclear-burn" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">tnburn</span></code> package models thermonuclear (fusion) reactions. It evaluates temperature-dependent reaction rates for a user-specified network of two-body reactions, evolves the isotopic composition, and couples the released energy back into the fluid. Reactivities and reaction energetics are supplied through tabulated nuclear data.</p>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>Burn in RIOT is <em>per-material</em>: reactions take place among the isotopes of a single material <span class="math notranslate nohighlight">\(m\)</span>, driven by that material’s own isotope densities and phase/volume fractions. The isotope inventory is carried per material (the sparse field <code class="docutils literal notranslate"><span class="pre">ccmat::iso</span></code>), and the reactions modify per-material cell-volume-averaged densities that then aggregate to the bulk density as in Section <a class="reference internal" href="materials.html#sec-permat-bulk"><span class="std std-ref">Per-Material and Bulk Quantities</span></a>. The released energy, by contrast, is deposited directly into the bulk energy equation.</p>
+<section id="reaction-rate">
+<h3>Reaction Rate<a class="headerlink" href="#reaction-rate" title="Link to this heading"></a></h3>
+<p>Within material <span class="math notranslate nohighlight">\(m\)</span>, for a two-body reaction <span class="math notranslate nohighlight">\(r\)</span> consuming reactant isotopes <span class="math notranslate nohighlight">\(1\)</span> and <span class="math notranslate nohighlight">\(2\)</span>, the volumetric reaction rate is</p>
+<div class="math notranslate nohighlight">
+\[R_r = \frac{\bar\rho_1}{m_1}\,\frac{\bar\rho_2}{m_2}\,
+      \langle\sigma v\rangle_r(T)\,\frac{f_m^2}{f_{\text{vol},m}} ,\]</div>
+<p>where <span class="math notranslate nohighlight">\(\bar\rho_1,\bar\rho_2\)</span> are the reactant cell-volume-averaged densities within that material, <span class="math notranslate nohighlight">\(m_1,m_2\)</span> their atomic masses, <span class="math notranslate nohighlight">\(\langle\sigma v\rangle_r(T)\)</span> the temperature-dependent reactivity, <span class="math notranslate nohighlight">\(f_m\)</span> the phase fraction, and <span class="math notranslate nohighlight">\(f_{\text{vol},m}\)</span> the material volume fraction (the <span class="math notranslate nohighlight">\(1/f_{\text{vol},m}\)</span> factor converts cell-volume-averaged densities to physical, material-intrinsic number densities). The reactivity <span class="math notranslate nohighlight">\(\langle\sigma v\rangle_r(T)\)</span> is tabulated against <span class="math notranslate nohighlight">\(\log T\)</span> and interpolated at run time; reactions are gated on the volume fraction exceeding <code class="docutils literal notranslate"><span class="pre">vol_frac_thresh</span></code>.</p>
+</section>
+<section id="isotopic-composition">
+<h3>Isotopic Composition<a class="headerlink" href="#isotopic-composition" title="Link to this heading"></a></h3>
+<p>Each participating per-material isotope density is sourced by every reaction it takes part in. In flux-conservation form, with <span class="math notranslate nohighlight">\(\nu_{ir}\)</span> the (signed) stoichiometric coefficient of isotope <span class="math notranslate nohighlight">\(i\)</span> in reaction <span class="math notranslate nohighlight">\(r\)</span> (negative for reactants, positive for products),</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial \bar\rho_i}{\partial t} + \nabla\!\cdot\!\left(\bar\rho_i\vec{v}\right)
+  = \sum_r \nu_{ir}\,m_i\,R_r .\]</div>
+<p>Summing the isotope sources within a material gives the source on that material’s cell-volume-averaged density <span class="math notranslate nohighlight">\(\bar\rho_m\)</span>, and the bulk density follows by the cell-averaged sum <span class="math notranslate nohighlight">\(\rho=\sum_m\bar\rho_m\)</span>; the per-reaction net <span class="math notranslate nohighlight">\(\sum_i \nu_{ir}m_i\)</span> reflects the small mass defect converted to energy.</p>
+</section>
+<section id="energy-release">
+<h3>Energy Release<a class="headerlink" href="#energy-release" title="Link to this heading"></a></h3>
+<p>The reaction energetics enter the total-energy equation as a source that removes the reactant input energy and deposits the product kinetic energies (both tabulated against temperature),</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial E}{\partial t} + \nabla\!\cdot\!\left[\left(E + p\right)\vec{v}\right]
+  = \sum_r \left[
+      -R_r\,\varepsilon^{\text{in}}_r(T)
+      + \sum_p R_r\,\varepsilon^{\text{out}}_{r,p}(T)\,\mu_{r,p}
+    \right],\]</div>
+<p>where <span class="math notranslate nohighlight">\(\varepsilon^{\text{in}}_r\)</span> is the reactant input energy, <span class="math notranslate nohighlight">\(\varepsilon^{\text{out}}_{r,p}\)</span> the energy carried by product <span class="math notranslate nohighlight">\(p\)</span>, and <span class="math notranslate nohighlight">\(\mu_{r,p}\)</span> its multiplicity. A product may be flagged to escape the problem rather than deposit locally (see <code class="docutils literal notranslate"><span class="pre">deposit_locally_</span></code>), in which case its mass and energy are removed. The mass sources above additionally induce momentum and kinetic-energy sources <span class="math notranslate nohighlight">\(\vec{v}\,(\partial_t\rho)_{\text{TN}}\)</span> and <span class="math notranslate nohighlight">\(\tfrac{1}{2}|\vec{v}|^2(\partial_t\rho)_{\text{TN}}\)</span> so that the burned mass carries the local velocity.</p>
+</section>
+<section id="reaction-count">
+<h3>Reaction Count<a class="headerlink" href="#reaction-count" title="Link to this heading"></a></h3>
+<p>A per-reaction count density <span class="math notranslate nohighlight">\(Q_r\)</span> is advected as a conserved quantity sourced by the reaction rate,</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial Q_r}{\partial t} + \nabla\!\cdot\!\left(Q_r\vec{v}\right) = R_r ,\]</div>
+<p>providing an integrated diagnostic of the total number of reactions.</p>
+</section>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Thermonuclear burn is enabled with the <code class="docutils literal notranslate"><span class="pre">tn</span></code> toggle in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>). Sparse physics (Chapter <a class="reference internal" href="sparse_physics.html#chap-sparse-physics"><span class="std std-ref">Sparse Physics</span></a>) is not supported with burn, so <code class="docutils literal notranslate"><span class="pre">sparse_physics</span></code> must be set <code class="docutils literal notranslate"><span class="pre">false</span></code>.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block relevant to burn.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>tn</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable thermonuclear burn.</p></td>
+</tr>
+<tr class="row-odd"><td><p>sparse_physics</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Not supported with burn; set <code class="docutils literal notranslate"><span class="pre">false</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The reaction network is specified in the <code class="docutils literal notranslate"><span class="pre">&lt;tnburn&gt;</span></code> block by contiguous, zero-based <code class="docutils literal notranslate"><span class="pre">reaction</span></code><span class="math notranslate nohighlight">\(K\)</span> entries in NDI reaction notation. Products may be individually flagged to deposit locally or escape.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;tnburn&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>reaction<span class="math notranslate nohighlight">\(K\)</span></p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>The <span class="math notranslate nohighlight">\(K\)</span>th reaction, e.g. <code class="docutils literal notranslate"><span class="pre">d+t-&gt;n+a</span></code>; numbered from <code class="docutils literal notranslate"><span class="pre">0</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>deposit_locally_<span class="math notranslate nohighlight">\(Z\)</span></p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Deposit product with ZAID <span class="math notranslate nohighlight">\(Z\)</span> locally; if <code class="docutils literal notranslate"><span class="pre">false</span></code> it escapes the problem.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The nuclear data table (isotope masses, charges, reactivities, and energetics) is selected in the <code class="docutils literal notranslate"><span class="pre">&lt;isotope_data&gt;</span></code> block:</p>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;isotope_data&gt;</span></code> block.</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>filename</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">isotope_data.hdf5</span></code></p></td>
+<td><p>HDF5 nuclear-data file (produced by the <code class="docutils literal notranslate"><span class="pre">ndi2spiner</span></code> tool).</p></td>
+</tr>
+</tbody>
+</table>
+<p>Each burning material lists its isotopes by ZAID in its <code class="docutils literal notranslate"><span class="pre">&lt;material&gt;</span></code> block via <code class="docutils literal notranslate"><span class="pre">isotope</span></code><span class="math notranslate nohighlight">\(K\)</span> and initial mass fractions <code class="docutils literal notranslate"><span class="pre">isotope</span></code><span class="math notranslate nohighlight">\(K\)</span><code class="docutils literal notranslate"><span class="pre">_mfrac</span></code> (see Chapter <a class="reference internal" href="materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>).</p>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The burn package registers the per-reaction count fields in the table below; the isotope densities it evolves (<code class="docutils literal notranslate"><span class="pre">ccmat::iso</span></code>) are registered by the materials package when isotopes are present. All are sparse and carry the burn flag.</p>
+<table class="wraptable docutils align-default" id="tab-tnburn-fields">
+<caption><span class="caption-text">Fields registered by the thermonuclear burn package.</span><a class="headerlink" href="#tab-tnburn-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccmat::tn_reaction_density</p></td>
+<td><p><span class="math notranslate nohighlight">\(Q_r\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_{\text{rxn}}\)</span></p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Sparse, FillGhost, Advected, WithFluxes, BurnFlag; per-reaction count density.</p></td>
+</tr>
+<tr class="row-odd"><td><p>cm::tn_specific_reactions</p></td>
+<td><p>—</p></td>
+<td><p><span class="math notranslate nohighlight">\(N_{\text{rxn}}\)</span></p></td>
+<td><p>Cell, Derived, OneCopy, Sparse, BurnFlag; specific reaction rate.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccmat::iso</p></td>
+<td><p><span class="math notranslate nohighlight">\(\bar\rho_i\)</span></p></td>
+<td><p><span class="math notranslate nohighlight">\(N_{\text{iso}}\)</span></p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Sparse, FillGhost, WithFluxes, Advected, BurnFlag; isotope partial densities (via materials).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A deuterium–tritium material burning via the DT reaction, with neutrons removed from the problem:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">tn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sparse_physics</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"material0"</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"DT"</span><span class="p">,</span>
+           <span class="n">eos_type</span><span class="o">=</span><span class="s2">"IdealGas"</span><span class="p">,</span> <span class="n">Gamma</span><span class="o">=</span><span class="mf">1.4</span><span class="p">,</span> <span class="n">Cv</span><span class="o">=</span><span class="mf">3.0e12</span><span class="p">,</span>
+           <span class="n">isotope0</span><span class="o">=</span><span class="mi">1002</span><span class="p">,</span>   <span class="c1"># deuterium</span>
+           <span class="n">isotope1</span><span class="o">=</span><span class="mi">1003</span><span class="p">,</span>   <span class="c1"># tritium</span>
+           <span class="n">isotope2</span><span class="o">=</span><span class="mi">2004</span><span class="p">,</span>   <span class="c1"># helium-4 (alpha)</span>
+           <span class="n">isotope3</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># neutron</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"tnburn"</span><span class="p">,</span> <span class="n">reaction0</span><span class="o">=</span><span class="s2">"d+t-&gt;n+a"</span><span class="p">,</span>
+           <span class="n">deposit_locally_1</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># neutrons escape</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"isotope_data"</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s2">"isotope_data.hdf5"</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="radiation_diffusion.html" class="btn btn-neutral float-left" title="Radiation Diffusion (P1)" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="sparse_physics.html" class="btn btn-neutral float-right" title="Sparse Physics" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="tnburn.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

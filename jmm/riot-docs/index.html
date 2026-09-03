@@ -1,0 +1,408 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>block-adaptive, performance portable mutli-material radiation hydrodynamics &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="_static/doctools.js?v=9bcbadda"></script>
+      <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Building riot" href="src/building.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="#" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="src/building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="#">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="#" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">block-adaptive, performance portable mutli-material radiation hydrodynamics</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/index.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <figure class="align-left">
+<a class="reference internal image-reference" href="_images/riot_logo.png"><img alt="The riot logo" src="_images/riot_logo.png" style="width: 800px;" />
+</a>
+</figure>
+<section id="block-adaptive-performance-portable-mutli-material-radiation-hydrodynamics">
+<h1>block-adaptive, performance portable mutli-material radiation hydrodynamics<a class="headerlink" href="#block-adaptive-performance-portable-mutli-material-radiation-hydrodynamics" title="Link to this heading"></a></h1>
+<figure class="align-center">
+<a class="reference internal image-reference" href="_images/cover.png"><img alt="A double-shell ICF target simulated with riot" src="_images/cover.png" style="width: 70%;" />
+</a>
+</figure>
+<p>RIOT is a block adaptive mesh refinement (AMR) multi-material
+hydrodynamics code built atop the Parthenon performance-portability
+framework. Parthenon supplies the block-AMR infrastructure, load
+balancing, and communication machinery but contains no physics; RIOT
+supplies the hydrodynamics algorithm and the physics packages
+documented in this manual.</p>
+<section id="organization-of-the-documentation">
+<h2>Organization of the Documentation<a class="headerlink" href="#organization-of-the-documentation" title="Link to this heading"></a></h2>
+<p>Each physics package in RIOT is documented in its own chapter. Every
+chapter follows the same structure:</p>
+<ol class="arabic simple">
+<li><p>the <em>governing equations</em> solved by the package, and</p></li>
+<li><p>the <em>user-tunable input parameters</em> that control it.</p></li>
+</ol>
+<p>Input parameters are organized into <em>blocks</em>. The recommended way to
+write inputs is a Python script that calls <code class="docutils literal notranslate"><span class="pre">riot.input(block,</span> <span class="pre">…)</span></code>
+for each block (Chapter <a class="reference internal" href="src/packages/python_interface.html#chap-python"><span class="std std-ref">The Python Interface</span></a>); each call corresponds to
+one block of the underlying text input deck (a <code class="docutils literal notranslate"><span class="pre">.rin</span></code> file). The
+parameter tables in this manual list parameters by their block and
+name (e.g. <code class="docutils literal notranslate"><span class="pre">cfl</span></code> in the <code class="docutils literal notranslate"><span class="pre">&lt;hydro&gt;</span></code> block); in a Python script these
+are supplied as keyword arguments:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"hydro"</span><span class="p">,</span> <span class="n">recon</span><span class="o">=</span><span class="s2">"plm"</span><span class="p">,</span>   <span class="c1"># reconstruction method</span>
+                    <span class="n">riemann</span><span class="o">=</span><span class="s2">"hllc"</span><span class="p">,</span>  <span class="c1"># Riemann solver</span>
+                    <span class="n">cfl</span><span class="o">=</span><span class="mf">0.8</span><span class="p">)</span>         <span class="c1"># CFL number</span>
+</pre></div>
+</div>
+<p>The same block in the equivalent text input deck reads:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">&lt;</span><span class="n">hydro</span><span class="o">&gt;</span>
+<span class="n">recon</span>   <span class="o">=</span> <span class="n">plm</span>      <span class="c1"># reconstruction method</span>
+<span class="n">riemann</span> <span class="o">=</span> <span class="n">hllc</span>     <span class="c1"># Riemann solver</span>
+<span class="n">cfl</span>     <span class="o">=</span> <span class="mf">0.8</span>      <span class="c1"># CFL number</span>
+</pre></div>
+</div>
+<p>Each package chapter also includes a <em>Registered Fields</em> table listing
+the Parthenon fields that package creates, the symbol each maps to in
+the governing equations, its component count, and its metadata.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>For readability, the metadata column of every <em>Registered Fields</em>
+table lists the salient flags (e.g. Independent, Conserved,
+WithFluxes, Sparse, Derived) rather than the complete flag set
+passed in the source.</p>
+</div>
+</section>
+<section id="running-riot">
+<h2>Running RIOT<a class="headerlink" href="#running-riot" title="Link to this heading"></a></h2>
+<p>After building RIOT, run the executable from <code class="docutils literal notranslate"><span class="pre">build/src</span></code>. Supply an input
+deck with <code class="docutils literal notranslate"><span class="pre">-i</span></code> and, optionally, select an output directory with <code class="docutils literal notranslate"><span class="pre">-d</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span><span class="w"> </span>build/src
+./riot<span class="w"> </span>-i<span class="w"> </span>input.rin<span class="w"> </span>-d<span class="w"> </span>/path/to/output/
+mpiexec<span class="w"> </span>-n<span class="w"> </span><span class="m">4</span><span class="w"> </span>./riot<span class="w"> </span>-i<span class="w"> </span>input.rin<span class="w"> </span>-d<span class="w"> </span>/path/to/output/
+</pre></div>
+</div>
+<p>The second command runs the same problem using four MPI ranks. See
+<a class="reference internal" href="src/building.html"><span class="doc">Building riot</span></a> for prerequisites, configuration, and installation details.</p>
+</section>
+<section id="enabling-physics-the-physics-block">
+<span id="sec-physics-block"></span><h2>Enabling Physics: the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> Block<a class="headerlink" href="#enabling-physics-the-physics-block" title="Link to this heading"></a></h2>
+<p>Which packages are active in a run is controlled by boolean toggles in
+the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block. Hydrodynamics is on by default; the remaining
+packages are off by default and are enabled here. Each package’s own
+parameters live in its own block, documented in the corresponding
+chapter.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Package toggles in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>hydro</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Enable hydrodynamics.</p></td>
+</tr>
+<tr class="row-odd"><td><p>strength</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable material strength.</p></td>
+</tr>
+<tr class="row-even"><td><p>ionization</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable partial ionization.</p></td>
+</tr>
+<tr class="row-odd"><td><p>levelsets</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable level-set interface tracking.</p></td>
+</tr>
+<tr class="row-even"><td><p>scalars</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable passive scalars.</p></td>
+</tr>
+<tr class="row-odd"><td><p>mix</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable the BHR RANS subgrid mixing model.</p></td>
+</tr>
+<tr class="row-even"><td><p>tn</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable thermonuclear burn.</p></td>
+</tr>
+<tr class="row-odd"><td><p>radiation_transport</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable radiation transport.</p></td>
+</tr>
+<tr class="row-even"><td><p>multigroup_diffusion</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable P1 radiation diffusion.</p></td>
+</tr>
+<tr class="row-odd"><td><p>gravity</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable a constant gravitational acceleration.</p></td>
+</tr>
+<tr class="row-even"><td><p>prescribed_sources</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable prescribed energy sources.</p></td>
+</tr>
+<tr class="row-odd"><td><p>lasers</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable laser ray tracing and energy deposition.</p></td>
+</tr>
+<tr class="row-even"><td><p>tracers</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Enable Lagrangian tracer particles.</p></td>
+</tr>
+<tr class="row-odd"><td><p>fixed_fluid</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Hold the fluid fixed (no hydro update).</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="sparsity">
+<span id="sec-sparsity"></span><h2>Sparsity<a class="headerlink" href="#sparsity" title="Link to this heading"></a></h2>
+<p>Many of RIOT’s per-material fields (cell-volume-averaged densities,
+volume fractions, and the derived material state of
+Chapter <a class="reference internal" href="src/packages/materials.html#chap-materials"><span class="std std-ref">Materials and Equations of State</span></a>) are registered as Parthenon <em>sparse</em>
+fields. A sparse field is allocated only on the mesh blocks where it
+is actually needed — for a material, only on blocks where that
+material is present — rather than everywhere in the domain. In a
+multi-material simulation where each material occupies a limited
+region, this saves substantial memory, since a block that contains
+none of a given material carries no storage for it. As materials move
+through the mesh, Parthenon allocates a material’s fields on blocks it
+enters and deallocates them on blocks it has left.</p>
+<p>The deallocation step is controlled by <code class="docutils literal notranslate"><span class="pre">sparse_dealloc</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block. When <code class="docutils literal notranslate"><span class="pre">true</span></code> (the default), the fields of a
+material that is no longer present on a block are freed, reclaiming
+memory; when <code class="docutils literal notranslate"><span class="pre">false</span></code>, once-allocated fields persist for the rest of
+the run.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Sparsity parameter in the <code class="docutils literal notranslate"><span class="pre">&lt;materials&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>sparse_dealloc</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code></p></td>
+<td><p>Free a material’s fields on blocks it has left.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading"></a></h2>
+<p>RIOT consumes several external libraries as submodules:</p>
+<ul class="simple">
+<li><p><strong>Parthenon</strong> — block-AMR framework (mesh, communication, load balancing).</p></li>
+<li><p><strong>singularity-eos</strong> — equation-of-state library.</p></li>
+<li><p><strong>singularity-opac</strong> — opacity library.</p></li>
+</ul>
+<p>These are summarized briefly in their own chapter. It also relies on
+<code class="docutils literal notranslate"><span class="pre">Catch2</span></code> for unit tests and <code class="docutils literal notranslate"><span class="pre">kokkos-kernels</span></code> for device-side
+linear solvers.</p>
+<div class="toctree-wrapper compound">
+<p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="src/building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/packages/diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="src/contributing.html">Contributing</a></li>
+</ul>
+</div>
+</section>
+</section>
+<section id="indices-and-tables">
+<h1>Indices and tables<a class="headerlink" href="#indices-and-tables" title="Link to this heading"></a></h1>
+<ul class="simple">
+<li><p><a class="reference internal" href="genindex.html"><span class="std std-ref">Index</span></a></p></li>
+<li><p><a class="reference internal" href="py-modindex.html"><span class="std std-ref">Module Index</span></a></p></li>
+<li><p><a class="reference internal" href="search.html"><span class="std std-ref">Search Page</span></a></p></li>
+</ul>
+</section>
+<section id="acknowledgements">
+<span id="chap-acknowledgements"></span><h1>Acknowledgements<a class="headerlink" href="#acknowledgements" title="Link to this heading"></a></h1>
+<p>The first draft of this documentation was prepared with the assistance
+of Claude Opus, Anthropic’s large language model. The model was used
+to survey the RIOT source tree and its submodules, to draft the
+governing equations, parameter tables, and prose of the preceding
+chapters, and to produce the figures and example input decks. OpenAI
+ChatGPT via Codex was also used to assist in additional revisions.</p>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="src/building.html" class="btn btn-neutral float-right" title="Building riot" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="index.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../main/index.html">main</a></dd>
+      <dd><a href="../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

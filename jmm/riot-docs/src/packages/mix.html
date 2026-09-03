@@ -1,0 +1,462 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Turbulent Mixing (BHR) &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Radiation Transport" href="radiation_transport.html" />
+    <link rel="prev" title="Tracer Particles" href="tracers.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Turbulent Mixing (BHR)</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#governing-equations">Governing Equations</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#turbulent-viscosity">Turbulent Viscosity</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#transport-equations">Transport Equations</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#feedback-on-the-mean-flow">Feedback on the Mean Flow</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#numerical-method">Numerical Method</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Turbulent Mixing (BHR)</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/mix.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="turbulent-mixing-bhr">
+<span id="chap-mix"></span><h1>Turbulent Mixing (BHR)<a class="headerlink" href="#turbulent-mixing-bhr" title="Link to this heading"></a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">mix</span></code> package models unresolved, subgrid turbulent mixing with
+the Besnard–Harlow–Rauenzahn (BHR) second-moment RANS closure —
+specifically the “BHR-3.1” variant. It is intended for
+variable-density mixing driven by Rayleigh–Taylor, Richtmyer–Meshkov,
+and Kelvin–Helmholtz instabilities, where the mixing layer is not
+resolved on the mesh. The package transports a set of turbulence
+moments, feeds their Reynolds stress and turbulent mass flux back onto
+the mean flow, and diffuses mass and energy across the mixing layer.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p><strong>Cartesian only:</strong> The BHR source terms and fluxes assume Cartesian gradients and divergences (no metric or curvature  terms); the package aborts at initialization under cylindrical or spherical coordinates. It requires hydrodynamics.</p>
+</div>
+<section id="governing-equations">
+<h2>Governing Equations<a class="headerlink" href="#governing-equations" title="Link to this heading"></a></h2>
+<p>Unlike a one-equation (<span class="math notranslate nohighlight">\(K\)</span>) or two-equation
+(<span class="math notranslate nohighlight">\(K\)</span>–<span class="math notranslate nohighlight">\(\varepsilon\)</span>) model, BHR-3.1 is a <em>second-moment</em>
+closure: it transports the full turbulent Reynolds stress tensor
+together with the correlations that drive variable-density mixing. The
+evolved turbulence moments are, per cell (all <em>bulk</em> quantities),</p>
+<ul class="simple">
+<li><p><strong>Reynolds stress tensor:</strong> six independent components, field
+<code class="docutils literal notranslate"><span class="pre">ccbulk::reynolds_stress</span></code>.</p></li>
+<li><p><strong>Mass flux:</strong> the density–velocity correlation that drives variable-density
+mixing, field <code class="docutils literal notranslate"><span class="pre">ccbulk::bhr_a</span></code>.</p></li>
+<li><p><strong>Density–specific-volume correlation:</strong> <span class="math notranslate nohighlight">\(b=-\overline{\rho'\,(1/\rho)'}\)</span>,
+field <code class="docutils literal notranslate"><span class="pre">ccbulk::bhr_b</span></code>.</p></li>
+<li><p><strong>Turbulent length scales:</strong> a transport scale <span class="math notranslate nohighlight">\(S_T\)</span> and a dissipation
+scale <span class="math notranslate nohighlight">\(S_D\)</span>, fields <code class="docutils literal notranslate"><span class="pre">ccbulk::bhr_ST</span></code> and <code class="docutils literal notranslate"><span class="pre">ccbulk::bhr_SD</span></code>.</p></li>
+</ul>
+<p>The turbulent kinetic energy is not evolved separately; it is the
+half-trace of the Reynolds stress,</p>
+<div class="math notranslate nohighlight">
+\[K=\tfrac{1}{2}(R_{xx}+R_{yy}+R_{zz}).\]</div>
+<p>Each moment is carried in density-weighted conservative form
+(e.g. <span class="math notranslate nohighlight">\(\rho R_{ij}\)</span>, <code class="docutils literal notranslate"><span class="pre">ccbulk::rho_reynolds_stress</span></code>) and
+advected with the flow; the primitive form is recovered by dividing by
+the bulk density.</p>
+<section id="turbulent-viscosity">
+<h3>Turbulent Viscosity<a class="headerlink" href="#turbulent-viscosity" title="Link to this heading"></a></h3>
+<p>The closure defines an eddy viscosity from the transport length scale
+and the turbulent kinetic energy,</p>
+<div class="math notranslate nohighlight">
+\[\mu_t = c_\mu\,\rho\,S_T\,\sqrt{K},\]</div>
+<p>which sets the gradient-diffusion coefficient for every turbulent
+transport term below.</p>
+</section>
+<section id="transport-equations">
+<h3>Transport Equations<a class="headerlink" href="#transport-equations" title="Link to this heading"></a></h3>
+<p>Let <span class="math notranslate nohighlight">\(q\)</span> stand for any of the turbulence moments
+<span class="math notranslate nohighlight">\(\{R_{ij},\,a_i,\,b,\,S_T,\,S_D\}\)</span>. Each is transported in
+density-weighted conservative form: the conserved quantity <span class="math notranslate nohighlight">\(\rho
+q\)</span> is advected with the mean flow and evolved by an algebraic source
+<span class="math notranslate nohighlight">\(\mathcal{S}_q\)</span> and a turbulent gradient-diffusion term,</p>
+<div class="math notranslate nohighlight">
+\[\frac{\partial \left(\rho\,q\right)}{\partial t} + \nabla\!\cdot\!\left(\rho\,q\,\vec{v}\right)
+  = \mathcal{S}_q
+    + \nabla\!\cdot\!\left(\frac{\mu_t}{\sigma_q}\,\nabla q\right),\]</div>
+<p>where the eddy viscosity <span class="math notranslate nohighlight">\(\mu_t\)</span> is given above and
+<span class="math notranslate nohighlight">\(\sigma_q\)</span> is a quantity-specific Schmidt/Prandtl number
+(<code class="docutils literal notranslate"><span class="pre">sigma_k</span></code> for <span class="math notranslate nohighlight">\(R_{ij}\)</span>, <code class="docutils literal notranslate"><span class="pre">sigma_a</span></code> for <span class="math notranslate nohighlight">\(a_i\)</span>,
+<code class="docutils literal notranslate"><span class="pre">sigma_b</span></code> for <span class="math notranslate nohighlight">\(b\)</span>, <code class="docutils literal notranslate"><span class="pre">sigma_epsilon</span></code> for <span class="math notranslate nohighlight">\(S_T\)</span>,
+<code class="docutils literal notranslate"><span class="pre">sigma_visc</span></code> for <span class="math notranslate nohighlight">\(S_D\)</span>). The diffusion term is applied
+direction-by-direction. What distinguishes the moments is the
+algebraic source <span class="math notranslate nohighlight">\(\mathcal{S}_q\)</span>, which combines production,
+redistribution, and dissipation. Writing <span class="math notranslate nohighlight">\(\vec{a}\)</span> for the mass
+flux, <span class="math notranslate nohighlight">\(\nabla p\)</span> for the pressure gradient, and using the
+production term <span class="math notranslate nohighlight">\(\rho\,R_{ij}\partial_j u_i\)</span> and the buoyancy
+term <span class="math notranslate nohighlight">\(\vec{a}\!\cdot\!\nabla p\)</span>, the sources are:</p>
+<ul class="simple">
+<li><p><strong>Reynolds stress :math:`R_{ij}`</strong>: production from the mean shear and from the buoyancy correlation <span class="math notranslate nohighlight">\(a_i\partial_i p\)</span>, pressure–strain redistribution toward isotropy, and a dissipation <span class="math notranslate nohighlight">\(\propto \rho\sqrt{K}\,R_{ij}/S_D\)</span>. A realizability limiter prevents the pressure–strain terms from driving a diagonal component negative.</p></li>
+<li><p><strong>Mass flux :math:`a_i`</strong>: buoyant production <span class="math notranslate nohighlight">\(\propto b\,\partial_i p\)</span>, a <span class="math notranslate nohighlight">\(R_{ij}\partial_j\rho\)</span> term, self-advection, and dissipation <span class="math notranslate nohighlight">\(\propto \rho\sqrt{K}\,a_i/S_D\)</span>.</p></li>
+<li><p><strong>Density correlation :math:`b`</strong>: production from <span class="math notranslate nohighlight">\(\vec{a}\!\cdot\!\nabla\rho\)</span> and dissipation <span class="math notranslate nohighlight">\(\propto \rho\,b\,\sqrt{K}/S_D\)</span>.</p></li>
+<li><p><strong>Length scales :math:`S_T`, :math:`S_D`</strong>: each grows or decays with the local production-to-dissipation balance and the dilatation <span class="math notranslate nohighlight">\(\nabla\!\cdot\!\vec{u}\)</span>. <span class="math notranslate nohighlight">\(S_T\)</span> uses the coefficient set <span class="math notranslate nohighlight">\(\{c_1,c_2,c_3,c_4\}\)</span> and <span class="math notranslate nohighlight">\(S_D\)</span> the corresponding “v” set <span class="math notranslate nohighlight">\(\{c_{1v},c_{2v},c_{3v},c_{4v}\}\)</span>.</p></li>
+</ul>
+<p>In each case the dissipation carries the length scale <span class="math notranslate nohighlight">\(S_D\)</span> in
+its denominator, and the algebraic source enters <span class="math notranslate nohighlight">\(\mathcal{S}_q\)</span>
+in the equation above alongside the gradient-diffusion term.</p>
+</section>
+<section id="feedback-on-the-mean-flow">
+<h3>Feedback on the Mean Flow<a class="headerlink" href="#feedback-on-the-mean-flow" title="Link to this heading"></a></h3>
+<p>The turbulence acts back on the resolved (bulk) hydrodynamics of
+Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a> through additional interface fluxes, applied
+in three stages:</p>
+<ol class="arabic simple">
+<li><p>The Reynolds stress <span class="math notranslate nohighlight">\(\rho R_{ij}\)</span> is added to the bulk momentum flux, and
+the corresponding turbulent transport of energy (<span class="math notranslate nohighlight">\(\rho\,\vec{v}\!\cdot\!R\)</span>)
+together with the pressure work of the mass flux (<span class="math notranslate nohighlight">\(-p\,a_n\)</span>) is added to
+the total-energy flux.</p></li>
+<li><p>The eddy viscosity diffuses turbulent kinetic energy and per-material enthalpy
+into the energy flux, and deposits a per-material <em>diffusive mass flux</em> into a
+dedicated face register.</p></li>
+<li><p>That diffusive mass flux is then folded into each material’s density flux and
+used to advect <em>every</em> other per-material conserved quantity, so the turbulent
+mass diffusion transports all co-moving material quantities consistently, not
+just mass.</p></li>
+</ol>
+</section>
+</section>
+<section id="numerical-method">
+<h2>Numerical Method<a class="headerlink" href="#numerical-method" title="Link to this heading"></a></h2>
+<p>The BHR fluxes are computed after the hydrodynamic fluxes and before
+flux correction, in the fixed order <code class="docutils literal notranslate"><span class="pre">ComputeStressFluxes</span></code>
+<span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">ComputeViscousFluxes</span></code> <span class="math notranslate nohighlight">\(\to\)</span> <code class="docutils literal notranslate"><span class="pre">ComputeAnonFluxes</span></code>
+(the last consumes the diffusive mass flux the second deposits). The
+algebraic and gradient-diffusion moment sources are accumulated by
+<code class="docutils literal notranslate"><span class="pre">CalculateMixSource</span></code> and summed into the stage update alongside the
+other packages’ sources. After each update the primitive moments are
+recovered and floored: the Reynolds-stress diagonal is kept positive,
+the length scales non-negative, and <span class="math notranslate nohighlight">\(b\)</span> clamped to
+<span class="math notranslate nohighlight">\([0,\rho]\)</span>. The stable time step is the minimum of a hyperbolic
+limit (<span class="math notranslate nohighlight">\(|\vec{a}|/\Delta x\)</span>), a parabolic diffusion limit set by
+<span class="math notranslate nohighlight">\(\mu_t\)</span> and the smallest Schmidt number, and a homogeneous
+source-decay limit.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<p>Turbulent mixing is enabled with <code class="docutils literal notranslate"><span class="pre">mix</span></code> <code class="docutils literal notranslate"><span class="pre">=</span> <span class="pre">true</span></code> in the
+<code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block (Section <a class="reference internal" href="../introduction.html#sec-physics-block"><span class="std std-ref">Enabling Physics: the &lt;physics&gt; Block</span></a>); <code class="docutils literal notranslate"><span class="pre">hydro</span></code> must
+also be enabled. The model coefficients and initial conditions live in
+the <code class="docutils literal notranslate"><span class="pre">&lt;mix&gt;</span></code> block. The defaults below are the standard BHR-3.1
+calibration; most problems change only the initial conditions <code class="docutils literal notranslate"><span class="pre">K0</span></code>
+and <code class="docutils literal notranslate"><span class="pre">S0</span></code>.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Closure coefficients in the <code class="docutils literal notranslate"><span class="pre">&lt;mix&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>c_1, c_2, c_3, c_4</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.6</span></code>, <code class="docutils literal notranslate"><span class="pre">1.77</span></code>, <code class="docutils literal notranslate"><span class="pre">0.0</span></code>, <code class="docutils literal notranslate"><span class="pre">1.1</span></code></p></td>
+<td><p>Transport length-scale (<span class="math notranslate nohighlight">\(S_T\)</span>) source coefficients.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_1v, c_2v, c_3v, c_4v</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.3</span></code>, <code class="docutils literal notranslate"><span class="pre">1.77</span></code>, <code class="docutils literal notranslate"><span class="pre">0.0</span></code>, <code class="docutils literal notranslate"><span class="pre">1.24</span></code></p></td>
+<td><p>Dissipation length-scale (<span class="math notranslate nohighlight">\(S_D\)</span>) source coefficients.</p></td>
+</tr>
+<tr class="row-even"><td><p>c_a1, c_a3, c_ap, c_au</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">2.8</span></code>, <code class="docutils literal notranslate"><span class="pre">1.0</span></code>, <code class="docutils literal notranslate"><span class="pre">0.1</span></code>, <code class="docutils literal notranslate"><span class="pre">0.4</span></code></p></td>
+<td><p>Mass-flux (<span class="math notranslate nohighlight">\(a_i\)</span>) dissipation, divergence, buoyancy, and advection coefficients.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_b2</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.8</span></code></p></td>
+<td><p>Density-correlation (<span class="math notranslate nohighlight">\(b\)</span>) dissipation coefficient.</p></td>
+</tr>
+<tr class="row-even"><td><p>c_r1, c_r2, c_r4</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.3</span></code>, <code class="docutils literal notranslate"><span class="pre">0.6</span></code>, <code class="docutils literal notranslate"><span class="pre">1.8</span></code></p></td>
+<td><p>Reynolds-stress pressure–strain, production, and return-to-isotropy coefficients.</p></td>
+</tr>
+<tr class="row-odd"><td><p>c_mu</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.28</span></code></p></td>
+<td><p>Eddy-viscosity coefficient, <span class="math notranslate nohighlight">\(\mu_t=c_\mu\rho S_T\sqrt{K}\)</span>.</p></td>
+</tr>
+<tr class="row-even"><td><p>sigma_k, sigma_a, sigma_b, sigma_c</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></td>
+<td><p>Schmidt/Prandtl numbers for diffusion of the Reynolds stress, mass flux, density correlation, and mass/enthalpy.</p></td>
+</tr>
+<tr class="row-odd"><td><p>sigma_visc</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.6</span></code></p></td>
+<td><p>Schmidt number for <span class="math notranslate nohighlight">\(S_D\)</span> diffusion.</p></td>
+</tr>
+<tr class="row-even"><td><p>sigma_epsilon</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.1</span></code></p></td>
+<td><p>Schmidt number for <span class="math notranslate nohighlight">\(S_T\)</span> diffusion.</p></td>
+</tr>
+</tbody>
+</table>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Initial conditions in the <code class="docutils literal notranslate"><span class="pre">&lt;mix&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>K0</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.01</span></code></p></td>
+<td><p>Initial (and floor) turbulent kinetic energy.</p></td>
+</tr>
+<tr class="row-odd"><td><p>S0</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0.0001</span></code></p></td>
+<td><p>Initial turbulent length scale.</p></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<div><p>The coefficients <code class="docutils literal notranslate"><span class="pre">c_a2</span></code>, <code class="docutils literal notranslate"><span class="pre">c_ar</span></code> are read for completeness but are not referenced by the current source terms.</p>
+</div></blockquote>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>The package registers the turbulence moments in the table below, each
+as a conserved density-weighted field (advected with fluxes) paired
+with a derived primitive field. All are <em>bulk</em> fields. A sparse
+per-material face field holds the turbulent diffusive mass flux that
+couples the three flux stages.</p>
+<table class="wraptable docutils align-default" id="tab-mix-fields">
+<caption><span class="caption-text">Fields registered by the mix package.</span><a class="headerlink" href="#tab-mix-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ccbulk::rho_reynolds_stress</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho R_{ij}\)</span></p></td>
+<td><p>6</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved Reynolds stress.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::reynolds_stress</p></td>
+<td><p><span class="math notranslate nohighlight">\(R_{ij}\)</span></p></td>
+<td><p>6</p></td>
+<td><p>Cell, Intensive, Vector, Derived, OneCopy; primitive Reynolds stress.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::rho_bhr_a</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho a_i\)</span></p></td>
+<td><p>3</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, Vector, FillGhost, Advected, WithFluxes; conserved mass flux.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::bhr_a</p></td>
+<td><p><span class="math notranslate nohighlight">\(a_i\)</span></p></td>
+<td><p>3</p></td>
+<td><p>Cell, Intensive, Vector, Derived, OneCopy; primitive mass flux.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::rho_bhr_b</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho b\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved density correlation.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::rho_bhr_ST</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho S_T\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved transport length scale.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::rho_bhr_SD</p></td>
+<td><p><span class="math notranslate nohighlight">\(\rho S_D\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Independent, Intensive, Conserved, FillGhost, Advected, WithFluxes; conserved dissipation length scale.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::bhr_b, bhr_ST, bhr_SD</p></td>
+<td><p><span class="math notranslate nohighlight">\(b, S_T, S_D\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Intensive, Derived, OneCopy; primitive <span class="math notranslate nohighlight">\(b\)</span> and length scales.</p></td>
+</tr>
+<tr class="row-even"><td><p>fm::diffusive_fluxes</p></td>
+<td><p>—</p></td>
+<td><p>1/mat</p></td>
+<td><p>Face, OneCopy, Sparse, CellMemAligned; per-material turbulent diffusive mass flux.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>Enable BHR mixing with the default calibration, seeding a small
+initial turbulent kinetic energy and length scale:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"physics"</span><span class="p">,</span> <span class="n">hydro</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">mix</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"mix"</span><span class="p">,</span> <span class="n">K0</span><span class="o">=</span><span class="mf">1.0e-4</span><span class="p">,</span> <span class="n">S0</span><span class="o">=</span><span class="mf">1.0e-3</span><span class="p">)</span>   <span class="c1"># initial TKE and length scale</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="tracers.html" class="btn btn-neutral float-left" title="Tracer Particles" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="radiation_transport.html" class="btn btn-neutral float-right" title="Radiation Transport" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jmm/riot-docs
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="../../../re-git-ci/index.html">jmm/re-git-ci</a></dd>
+      <dd><a href="mix.html">jmm/riot-docs</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
