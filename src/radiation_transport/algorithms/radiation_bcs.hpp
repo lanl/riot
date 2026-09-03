@@ -23,11 +23,14 @@
 // Parthenon headers
 #include <bvals/boundary_conditions_generic.hpp>
 #include <parthenon/package.hpp>
+#include <utils/string_utils.hpp>
 
 // Riot headers
 #include "radiation_transport/angular_grids/geodesic_grid.hpp"
 #include "radiation_transport/angular_grids/latlon_grid.hpp"
 #include "radiation_transport/transport_utils/transport_utils.hpp"
+#include "riot_utils/riot_utils.hpp"
+#include "riot_utils/table_utils.hpp"
 
 using namespace parthenon::package::prelude;
 
@@ -101,9 +104,21 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
   static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
   auto vr = descr[coarse].GetPack(mbd.get());
   if (vr.GetMaxNumberOfVars() > 0) {
-    const Real trad = rad_pkg->Param<Real>("drive_trad");
-    const auto unit_utils = rad_pkg->Param<UnitUtils>("unit_utils");
-    const auto fbnd = *(rad_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
+    using RiotTables::Uniform1D;
+    const bool from_table = rad_pkg->Param<bool>("drive_from_table");
+    auto unit_utils = rad_pkg->Param<UnitUtils>("unit_utils");
+    Real trad = 0.0, time_bc = 0.0;
+    ParArray1D<Real> fbnd, tmin, tmax;
+    ParArray1D<Uniform1D> eg;
+    if (from_table) {
+      eg = rad_pkg->Param<ParArray1D<Uniform1D>>("d.drive_eg");
+      tmin = rad_pkg->Param<ParArray1D<Real>>("d.drive_eg_tmin");
+      tmax = rad_pkg->Param<ParArray1D<Real>>("d.drive_eg_tmax");
+      time_bc = rad_pkg->Param<Real>("time");
+    } else {
+      trad = rad_pkg->Param<Real>("drive_trad");
+      fbnd = *(rad_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
+    }
     pmb->par_for_bndry(
         "DriveBC-intensity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
@@ -111,7 +126,11 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
           RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
             const Real ee =
-                (trad > 0) ? Emissivity(gg, trad, fbnd, ngroups, unit_utils) : 0.0;
+                from_table ? std::max(eg(gg).interpToReal(std::max(
+                                          tmin(gg), std::min(tmax(gg), time_bc))),
+                                      0.0)
+                           : ((trad > 0) ? Emissivity(gg, trad, fbnd, ngroups, unit_utils)
+                                         : 0.0);
             for (int aa = 0; aa < nangles; ++aa) {
               vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) =
                   std::max(ee, vr(0, ccrad::intensity(GAI(nangles, gg, aa)), kr, jr, ir));
@@ -165,13 +184,57 @@ namespace BCOption {
 
 //----------------------------------------------------------------------------------------
 //! \fn void AddDriveParams
-//! \brief
-inline void AddDriveParams(ParameterInput *pin, Params &params) {
-  // Extract custom BC parameters
-  params.Add("drive_trad",
-             pin->GetOrAddReal(drive_block, "trad_bc", 0.0,
-                               "Specifies the uniform radiation temperature (in K) for "
-                               "the drive boundary condition."));
+//! \brief Read the drive-BC parameters.  "constant" mode drives a uniform radiation
+//! temperature trad_bc; "table" mode reads a time series of group radiation energy
+//! densities E_g(t) [erg/cm^3] from drive_filename (col 0 = time [s], cols 1..ngroups =
+//! E_g), one Uniform1D per group evaluated at the solver's current update time.
+inline void AddDriveParams(StateDescriptor *rad_pkg, ParameterInput *pin,
+                           Params &params) {
+  const std::string source =
+      pin->GetOrAddString(drive_block, "drive_source", "constant",
+                          "Drive BC source: \"constant\" (trad_bc) or \"table\" "
+                          "(E_g time series from drive_filename)");
+  const bool from_table = (source == "table");
+  PARTHENON_REQUIRE(from_table || source == "constant",
+                    "radiation_transport/drive/drive_source must be "
+                    "\"constant\" or \"table\".");
+  params.Add("drive_from_table", from_table);
+
+  if (from_table) {
+    const int ngroups = rad_pkg->Param<int>("ngroups");
+    const std::string fname = pin->GetString(
+        drive_block, "drive_filename",
+        "Path to the drive E_g(t) table (col 0 = time [s], cols 1..ngroups = group "
+        "radiation energy density [erg/cm^3]).");
+    const auto table = parthenon::string_utils::ParseAsciiTable<Real>(fname);
+    const int nrows = table.extent(0);
+    const int ncols = table.extent(1);
+    PARTHENON_REQUIRE(ncols == ngroups + 1,
+                      "Drive table must have ngroups+1 columns (time + one per group).");
+
+    std::vector<RiotTables::Uniform1D> eg_d_vec;
+    std::vector<Real> tmin_h, tmax_h;
+    parthenon::HostArray2D<Real> col("drive_eg_col", nrows, 2);
+    for (int g = 0; g < ngroups; ++g) {
+      for (int r = 0; r < nrows; ++r) {
+        col(r, 0) = table(r, 0);
+        col(r, 1) = table(r, g + 1);
+      }
+      auto eg_h = RiotTables::UniformlyResampleTimeSeries(col);
+      eg_d_vec.push_back(eg_h.getOnDevice());
+      tmin_h.push_back(eg_h.range(0).min());
+      tmax_h.push_back(eg_h.range(0).max());
+    }
+    params.Add("d.drive_eg", RiotUtils::VectorToDevice(eg_d_vec, "drive_eg"));
+    params.Add("d.drive_eg_tmin", RiotUtils::VectorToDevice(tmin_h, "drive_eg_tmin"));
+    params.Add("d.drive_eg_tmax", RiotUtils::VectorToDevice(tmax_h, "drive_eg_tmax"));
+  } else {
+    params.Add("drive_trad",
+               pin->GetOrAddReal(drive_block, "trad_bc", 0.0,
+                                 "Uniform radiation temperature (in K) for the drive "
+                                 "boundary condition (constant mode)."));
+  }
+
   params.Add("drive_force_upwind_flux_bc",
              pin->GetOrAddBoolean(
                  drive_block, "force_upwind_flux_bc", true,
@@ -227,7 +290,7 @@ inline void EnrollRadiationBC(StateDescriptor *rad_pkg, ParameterInput *pin,
 
   // Enroll custom BC params
   if (drive_bc_enrolled) {
-    BCOption::AddDriveParams(pin, params);
+    BCOption::AddDriveParams(rad_pkg, pin, params);
   }
 }
 
