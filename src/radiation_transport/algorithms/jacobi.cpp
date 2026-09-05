@@ -80,13 +80,33 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   auto MetadataJacobi = jacobi_pkg->GetMetadataFlag();
   auto MetadataOperatorSplit = Metadata::GetUserFlag("OperatorSplit");
 
-  // Jacobi Parameters
+  // Jacobi iteration limit
   params.Add("niter_limit",
              pin->GetOrAddInteger(input_block, "niter_limit", 1000,
                                   "Maximum #iter permitted for Jacobi integration"));
-  params.Add("err_thr",
-             pin->GetOrAddReal(input_block, "err_thr", 1.0e-8,
-                               "Residual error threshold for Jacobi integration"));
+
+  // Global residual error threshold
+  const Real err_thr = pin->GetOrAddReal(
+      input_block, "err_thr", 1.0e-8, "Residual error threshold for Jacobi integration");
+  params.Add("err_thr", err_thr);
+
+  // Optional additional per-group convergence check
+  params.Add(
+      "per_group_residual",
+      pin->GetOrAddBoolean(input_block, "per_group_residual", false,
+                           "Additionally require every group's own relative residual to "
+                           "reach err_thr_group (so a low-energy but important group is "
+                           "not masked by the global residual)."));
+  params.Add("err_thr_group",
+             pin->GetOrAddReal(input_block, "err_thr_group", err_thr,
+                               "Per-group residual threshold when per_group_residual is "
+                               "true (defaults to err_thr)."));
+  params.Add("per_group_residual_floor",
+             pin->GetOrAddReal(input_block, "per_group_residual_floor", 1.0e-3,
+                               "Floor a group's residual denominator at this fraction of "
+                               "the total (all-group) denominator so a ~negligible group "
+                               "cannot hold the solve hostage."));
+
   // Minimum-iterations
   // NOTE(): Set default to angular-mesh ~graph-diameter
   const int nlevel = params.Get<int>("nlevel");
@@ -155,19 +175,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                  "package.  0: Report no diagnostics, 1: Only report at final Jacobi "
                  "iteration, 2: Report every Jacobi iteration, 3: Report every Jacobi "
                  "iteration and temperature root find failures"));
+
+  // Reducer for residual
+  parthenon::AllReduce<HostArray1D<Real>> residual_reducer;
+  const int nres = 2 * (ngroups + 1);
+  residual_reducer.val = HostArray1D<Real>("Jacobi_pkg Residual Reducer", nres);
+  for (int i = 0; i < residual_reducer.val.size(); ++i)
+    residual_reducer.val(i) = 0.0;
+  params.Add("jresidual_reducer", residual_reducer, true);
+
+  // Solver mutable params
   params.Add("current_residual", std::numeric_limits<Real>::max(), true);
   params.Add("current_iter", std::numeric_limits<int>::max(), true);
   params.Add("solve_diverged", false, true);
   params.Add("best_residual", std::numeric_limits<Real>::max(), true);
   params.Add("nstall", 0, true);
   params.Add("time", 0.0, Params::Mutability::Restart);
-
-  // Reducer for residual
-  parthenon::AllReduce<HostArray1D<Real>> residual_reducer;
-  residual_reducer.val = HostArray1D<Real>("Jacobi_pkg Residual Reducer", 2);
-  for (int i = 0; i < residual_reducer.val.size(); ++i)
-    residual_reducer.val(i) = 0.0;
-  params.Add("jresidual_reducer", residual_reducer, true);
+  params.Add("current_residual_group", std::numeric_limits<Real>::max(), true);
 
   // Radiation specific intensity I
   std::string control_field = ccrad::intensity::name();
@@ -658,22 +682,34 @@ TaskStatus CheckConvergence(HostArray1D<Real> *presidual, MeshData<Real> *riter,
   auto vo = desc_o.GetPack(rout);
 
   // Residual reductions
+  // NOTE(@pdmullen): When moving to the (optional) per group residual model, we must
+  // track each individual group's ||\Delta I_g|| and ||I_g||.  We below opt for a for
+  // loop that launches ngroup reductions (beware kernel launch latency).  Alternative
+  // strategies might invoke:
+  //
+  //   - Hierarchical reductions (outer: blocks * ngroups)... enough threadblocks?
+  //   - Single kernel with atomics?
+  //   - Single reduction to a compile-time-sized ~2*MAX_GROUPS array.  Register pressure?
   using rt =
       RiotFlatReduce::ReductionType<RiotUtils::GlobalSum<Real, Kokkos::HostSpace, 2>>;
-  auto idx_space =
-      rt::GetIndexSpace(IndexDomain::interior, vo.GetNBlocks(), ngroups * nangles, rout);
-  const auto res = rt::five_d(
-      "JacobiResidual", idx_space,
-      KOKKOS_LAMBDA(const int b, const int n, const int k, const int j, const int i,
-                    RiotUtils::array_type<Real, 2> &rsum) {
-        rsum.my_array[0] += std::abs(vi(b, n, k, j, i) - vo(b, n, k, j, i));
-        rsum.my_array[1] += vo(b, n, k, j, i);
-      });
-  Kokkos::fence();
-
   auto &residual = *presidual;
-  residual(0) += res.my_array[0];
-  residual(1) += res.my_array[1];
+  for (int gg = 0; gg < ngroups; ++gg) {
+    auto gspace =
+        rt::GetIndexSpace(IndexDomain::interior, vo.GetNBlocks(), nangles, rout);
+    const auto gres = rt::five_d(
+        "JacobiResidualGroup", gspace,
+        KOKKOS_LAMBDA(const int b, const int aa, const int k, const int j, const int i,
+                      RiotUtils::array_type<Real, 2> &rsum) {
+          const int n = GAI(nangles, gg, aa);
+          rsum.my_array[0] += std::abs(vi(b, n, k, j, i) - vo(b, n, k, j, i));
+          rsum.my_array[1] += vo(b, n, k, j, i);
+        });
+    Kokkos::fence();
+    residual(2 + 2 * gg) += gres.my_array[0];
+    residual(3 + 2 * gg) += gres.my_array[1];
+    residual(0) += gres.my_array[0];
+    residual(1) += gres.my_array[1];
+  }
 
   return TaskStatus::complete;
 }
@@ -692,6 +728,20 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
   const Real current_residual = v(0) / (std::max(v(1), 1.0e-100) + (v(1) <= 1.0e-100));
   jacobi_pkg->UpdateParam("current_residual", current_residual);
 
+  // Optional per-group residual
+  if (jacobi_pkg->Param<bool>("per_group_residual")) {
+    const int ngroups = jacobi_pkg->Param<int>("ngroups");
+    const Real floor_frac = jacobi_pkg->Param<Real>("per_group_residual_floor");
+    const Real denom_floor = floor_frac * std::max(v(1), 1.0e-100);
+    Real residual_group = 0.0;
+    for (int gg = 0; gg < ngroups; ++gg) {
+      const Real num_g = v(2 + 2 * gg);
+      const Real denom_g = std::max(v(3 + 2 * gg), denom_floor);
+      residual_group = std::max(residual_group, num_g / denom_g);
+    }
+    jacobi_pkg->UpdateParam("current_residual_group", residual_group);
+  }
+
   // Divergence detection
   const Real best_residual = jacobi_pkg->Param<Real>("best_residual");
   const int ndiverge_limit = jacobi_pkg->Param<int>("ndiverge_limit");
@@ -705,8 +755,9 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
   if (diverged) jacobi_pkg->UpdateParam("solve_diverged", true);
 
   // zero residuals in prep for next iteration
-  v(0) = 0.0;
-  v(1) = 0.0;
+  for (int r = 0; r < v.size(); ++r) {
+    v(r) = 0.0;
+  }
 
   return TaskStatus::complete;
 }
@@ -727,13 +778,21 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
   const int niter_min = jacobi_pkg->Param<int>("niter_min");
   const int verbose = jacobi_pkg->Param<int>("verbose");
 
+  // Convergence requires the global residual and, if enabled, every group's own residual
+  // (the max over groups) to clear their thresholds
+  bool residual_met = (residual <= err_thr);
+  if (jacobi_pkg->Param<bool>("per_group_residual")) {
+    residual_met = residual_met && (jacobi_pkg->Param<Real>("current_residual_group") <=
+                                    jacobi_pkg->Param<Real>("err_thr_group"));
+  }
+
   // Iterate or finalize
   const int niter_done = iter_counter - 1;
   if (jacobi_pkg->Param<bool>("solve_diverged")) {
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
       printf("(Jacobi) Diverged! iter: %d err: %24.16e\n", niter_done, residual);
     return TaskStatus::complete;
-  } else if (residual <= err_thr && niter_done >= niter_min) {
+  } else if (residual_met && niter_done >= niter_min) {
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
       printf("(Jacobi) Converged! iter: %d err: %24.16e\n", niter_done, residual);
     return TaskStatus::complete;
@@ -743,9 +802,13 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
     return TaskStatus::complete;
   } else {
     if (i == 0 && Globals::my_rank == 0 && verbose == 2) {
-      if (residual <= err_thr) {
+      if (residual_met) {
         printf("(Jacobi) iter: %d err: %24.16e (residual met, but niter_min: %d)\n",
                niter_done, residual, niter_min);
+      } else if (residual <= err_thr) {
+        printf(
+            "(Jacobi) iter: %d err: %24.16e (global met; per-group residual: %24.16e)\n",
+            niter_done, residual, jacobi_pkg->Param<Real>("current_residual_group"));
       } else {
         printf("(Jacobi) iter: %d err: %24.16e\n", niter_done, residual);
       }
