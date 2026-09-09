@@ -44,7 +44,7 @@ jobs:
             # throw warnings as error to make sure docs properly build
             make multiversion SPHINXOPTS="-W --keep-going -n"
         - name: Deploy
-          if: ${{ (github.event.pull_request.head.repo.full_name == github.repository) || (github.ref == 'refs/heads/develop') }}
+          if: ${{ (github.event.pull_request.head.repo.full_name == github.repository) || (github.ref == 'refs/heads/main') }}
           uses: peaceiris/actions-gh-pages@v4
           with:
             github_token: ${{ secrets.GITHUB_TOKEN }}
