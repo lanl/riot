@@ -234,8 +234,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       if (do_ionization) {
         TaskID plasma_viscosity_flx = tl.AddTask(
             hydro_flx | mix_flx, Ionization::ComputePlasmaViscousFluxes, mu0.get());
-        TaskID plasma_diffusion_flx = tl.AddTask(
-            hydro_flx | mix_flx | plasma_viscosity_flx, Ionization::ComputePlasmaDiffusionFluxes, mu0.get());
+        TaskID plasma_diffusion_flx =
+            tl.AddTask(hydro_flx | mix_flx | plasma_viscosity_flx,
+                       Ionization::ComputePlasmaDiffusionFluxes, mu0.get());
         plasma_transport_flx = plasma_viscosity_flx | plasma_diffusion_flx;
       }
 

@@ -59,7 +59,7 @@ def make_input():
             "c.c.bulk.electron_number_density",
         ],
         file_type="hdf5",  # Tabular data dump
-        #dt=1e-4,  # time increment between outputs
+        # dt=1e-4,  # time increment between outputs
         dn=1000,  # time increment between outputs
         ghost_zones=False,
     )
