@@ -6,10 +6,8 @@ RIOT is a performance portable, multiphysics code targeting high
 energy density physics, astrophysics, and related phenomena. It
 builds on an ecosystem of open source capabilities, linked to below.
 
-Preliminary documentation is available at
-[https://lanl.github.io/riot](https://lanl.github.io/riot). It will be
-further fleshed out soon. Some example inputs are provided as a
-jumping off point.
+Documentation is available at
+[https://lanl.github.io/riot](https://lanl.github.io/riot). Some example inputs are also provided as a jumping off point.
 
 # Physics
 - Hydrodynamics

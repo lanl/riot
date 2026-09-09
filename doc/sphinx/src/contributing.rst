@@ -183,57 +183,6 @@ projects, ideally submit issues on the relevant GitHub pages. However,
 if you can't figure out where an issue belongs, no big deal. Submit
 where you can and we'll engage with you to figure out how to proceed.
 
-
-Notes for Contributors on navigating/developing code features
--------------------------------------------------------------
-
-Performance portability concerns
-`````````````````````````````````
-
-``riot`` is performance portable, meaning it is designed to
-run not only on CPUs, but GPUs from a variety of manufacturers,
-powered by a variety of device-side development tools such as Cuda,
-OpenMP, and OpenACC. This implies several constraints on code
-style. Here we briefly discuss a few things one should be aware of.
-
-* **`portability decorators:** Functions that should be run on device
-  needs to be decorated with one of the following macros:
-  ``KOKKOS_FUNCTION``, ``KOKKOS_INLINE_FUNCTION``,
-  ``KOKKOS_FORCEINLINE_FUNCTION``. These macros are imported from the
-  Kokkos library and resolve to the appropriate decorations for a
-  given device-side backend such as Cuda so the code compiles
-  correctly. Code that doesn't need to run on device does not need
-  these decorations.
-
-* **Relocatable device code:** It is common in C++ to split code
-  between a header file and an implementation file. Functionality that
-  is to be called from within loops run on device should not be split
-  in this way. Not all accelerator languages support this and the ones
-  that do take a performance hit. Instead implement that functionality
-  only in a header file and decorate it with
-  ``KOKKOS_INLINE_FUNCTION`` or ``KOKKOS_FORCEINLINE_FUNCTION``.
-
-* **Host and device pointers:** Usually accelerators have different
-  memory spaces than the CPU they are attached to. So you need to be
-  aware that data needs to be copied to an accelerator device to be
-  used. If it is not properly copied, the code will likely crash with
-  a segfault. In general scalar data such as a single variable (e.g.,
-  ``int x``) can be easily and automatically copied to device and you
-  don't need to worry about managing it. Arrays and pointers, however,
-  are a different story. If you create an array or point to some
-  memory on CPU, then you are pointing to a location in memory on your
-  CPU. If you try to access it from your accelerator, your code will
-  not behave properly. You need to manually copy data from host to
-  device in this case.
-
-* **Real:** The ``Real`` datatype is either a single precision or
-  double precision floating point number, depending on how
-  ``Parthenon`` is configured. For most floating point numbers use
-  the ``Real`` type. However, be conscious that sometimes you will
-  specifically need a single or double precision number, in which case
-  you should specify the type as built into the language.
-
-
 How to Make a Release
 ----------------------
 
@@ -309,25 +258,26 @@ If you would like to have git automatically push to the CI system when
 you type ``git push``, you can do so. The following procedure is
 recommended:
 
-```bash
-git remote add ci <git ssh path to ci repo>
-git remote add all git@github.com:lanl/riot.git
-git remote set-url --add --push all git@github.com:lanl/riot.git
-git remote set-url --add --push all <git ssh path to ci repo>
-git config remote.pushDefault all
-```
+.. code-block:: bash
+
+   git remote add ci <git ssh path to ci repo>
+   git remote add all git@github.com:lanl/riot.git
+   git remote set-url --add --push all git@github.com:lanl/riot.git
+   git remote set-url --add --push all <git ssh path to ci repo>
+   git config remote.pushDefault all
 
 With these changes,
-```bash
-git pull
-# pulls from github
 
-git push
-# pushes to both github and the CI machine via "all"
+.. code-block:: bash
 
-git push origin
-# pushes only to github
+   git pull
+   # pulls from github
 
-git push ci
-# pushes only to the CI machine
-```
+   git push
+   # pushes to both github and the CI machine via "all"
+
+   git push origin
+   # pushes only to github
+
+   git push ci
+   # pushes only to the CI machine
