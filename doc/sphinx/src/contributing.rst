@@ -249,6 +249,41 @@ right sidebar on GitHub, and draft a new release. Set the tag to
 ``[release number]``. You can let github automatically draft a release
 note by summarizing MRs.
 
+Updating regression-test gold files
+------------------------------------
+
+Regression-test reference data is distributed separately from the source tree
+as a GitHub Release asset. This procedure is for maintainers updating that
+data. The GitHub Release is created manually so that only a maintainer with
+repository release permissions needs GitHub credentials.
+
+#. From ``tst/scripts/gold/files``, bundle the updated gold files and update
+   the CMake version and checksum pin. Optionally provide the directory from a
+   test run to refresh existing gold files:
+
+   .. code-block:: bash
+
+      ./bundle_goldfiles.sh --update-cmake [test-run-directory]
+
+   This produces ``riot_regression_gold_<version>.tgz`` and updates
+   ``RIOT_REGRESSION_GOLD_VER`` and ``RIOT_REGRESSION_GOLD_HASH`` in the
+   top-level ``CMakeLists.txt``. Do not rename or regenerate this archive after
+   running the command, because its exact contents and filename determine the
+   pinned checksum.
+
+#. On GitHub, create a release tagged ``regression-gold-<version>`` and upload
+   that exact ``riot_regression_gold_<version>.tgz`` archive as its release
+   asset. Publish the release only after confirming the tag and asset filename.
+
+#. Commit the updated top-level ``CMakeLists.txt``,
+   ``tst/scripts/gold/files/current_version``, and
+   ``tst/scripts/gold/files/README.md``. The archive and extracted gold files
+   are release artifacts and should not be committed to the source repository.
+
+#. Verify the release from a clean checkout by configuring with
+   ``-DRIOT_ENABLE_REGRESSION_TESTS=ON``. CMake should download the asset and
+   verify its SHA-512 checksum before extracting it.
+
 Continuous Integration
 ----------------------
 
@@ -260,5 +295,39 @@ instance. The GitHub actions are configured via the files located in the
 Our GitLab CI is configured via the ``.gitlab-ci.yml`` file. To
 trigger the GitLab CI runs, you need to have access to our internal
 GitLab instance, push your branch to this second Git repository, and
-create a GitLab merge request (MR). Each GitLab MR will launch a
+create a draft GitLab merge request (MR). Each GitLab MR will launch a
 pipeline with multiple jobs on various clusters.
+
+Be aware that the CI on the system runs sequentially and the number of
+concurrent jobs per user is limited. You may wish to cancel an old run
+if you no longer need the results and want your most recent run to finish.
+
+Setting git to automatically push to our CI system
+````````````````````````````````````````````````````
+
+If you would like to have git automatically push to the CI system when
+you type ``git push``, you can do so. The following procedure is
+recommended:
+
+```bash
+git remote add ci <git ssh path to ci repo>
+git remote add all git@github.com:lanl/riot.git
+git remote set-url --add --push all git@github.com:lanl/riot.git
+git remote set-url --add --push all <git ssh path to ci repo>
+git config remote.pushDefault all
+```
+
+With these changes,
+```bash
+git pull
+# pulls from github
+
+git push
+# pushes to both github and the CI machine via "all"
+
+git push origin
+# pushes only to github
+
+git push ci
+# pushes only to the CI machine
+```

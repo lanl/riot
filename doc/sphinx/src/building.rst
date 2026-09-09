@@ -138,12 +138,27 @@ documentation.
    * - ``RIOT_ENABLE_UNIT_TESTS``
      - ``OFF``
      - Build ``riot`` unit tests.
-   * - ``RIOT_ENABLE_INTEGRATION_TESTS``
-     - ``OFF``
-     - Build ``riot`` integration tests.
    * - ``RIOT_ENABLE_REGRESSION_TESTS``
      - ``OFF``
      - Build ``riot`` regression tests.
+   * - ``RIOT_REGRESSION_GOLD_VER``
+     - ``20260830``
+     - Version of the regression-gold GitHub Release asset to use.
+   * - ``RIOT_REGRESSION_GOLD_HASH``
+     - SHA-512 for the default gold archive
+     - Expected SHA-512 of the selected regression-gold archive. Set this with
+       ``RIOT_REGRESSION_GOLD_VER`` when selecting a different version.
+   * - ``RIOT_REGRESSION_GOLD_SYNC``
+     - ``ON``
+     - Download and extract the selected regression-gold archive during CMake
+       configuration when regression tests are enabled.
+   * - ``RIOT_REGRESSION_GOLD_LOCAL``
+     - unset
+     - Path to a pre-downloaded regression-gold archive. When set, CMake uses
+       this file instead of downloading from GitHub, after verifying it against
+       ``RIOT_REGRESSION_GOLD_HASH``. Useful on systems where the build node has
+       no internet access: fetch the archive ahead of time (for example on a
+       login node) and point this option at it.
    * - ``RIOT_ENABLE_CUDA``
      - ``OFF``
      - Enable CUDA support in ``riot`` and its in-tree dependencies.
