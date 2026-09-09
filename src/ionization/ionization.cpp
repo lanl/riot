@@ -1674,6 +1674,28 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   const Real diffusion_coefficient =
       ionization_params.Get<Real>("ion_diffusion_coefficient");
 
+  // pull isotope information
+  const auto &iso_zaids =
+      materials->Param<std::vector<std::vector<int>>>("Isotope Zaids");
+
+  // total number of isotopes (don't we have this somewhere??)
+  int total_niso = 0;
+  for (const auto &mat_zaids : iso_zaids) {
+    total_niso += mat_zaids.size();
+  }
+
+  // make a device-save Z and A array
+  parthenon::ParArray1D<Real> iso_A("isotope A", total_niso);
+  parthenon::ParArray1D<Real> iso_Z("isotope Z", total_niso);
+  int iso_idx = 0;
+  for (int m = 0; m < iso_zaids.size(); ++m) {
+    for (int iso = 0; iso < iso_zaids[m].size(); ++iso) {
+      iso_A(iso_idx) = iso_zaids[m][iso] % 1000;
+      iso_Z(iso_idx) = iso_zaids[m][iso] / 1000;
+      ++iso_idx;
+    }
+  }
+
   // using lt = RiotUtils::LoopType<>;
   using TE = parthenon::TopologicalElement;
   using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
@@ -1682,8 +1704,8 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   // This deliberately computes an extra transverse face layer for each orientation.
   auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, TE::NN);
 
-  // add scratch for diffusion coefficient and max diffusion coefficient
-  idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(2);
+  // add scratch for diffusion coefficient, max diffusion coefficient, mole fraction
+  idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(3);
 
   // The offset type follows the inner-loop indexing model.
   const auto di = idx_space.GetDelta(X1DIR);
@@ -1730,12 +1752,36 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
           if (niso > 0) {
             for (int iso = 0; iso < niso; iso++) {
               const int iso_idx = offset_iso + iso;
+              auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
+
+              // iso A and Z
+              const int A1 = iso_A(iso_idx); // to use when we have proper diffusivities
+              const int Z1 = iso_Z(iso_idx); // to use when we have proper diffusivities
+
+              // calculate mole fraction for this isotope
+              auto mole_fraction = RiotLoop::GetPerPointScratch<Real>(halo_range);
+              RiotLoop::inner(halo_range, [&](const auto kji) {
+                // iso mole fraction within material
+                Real mat_sum = 0.0;
+                for (int iso2 = 0; iso2 < niso; iso2++) {
+                  const int iso2_idx = offset_iso + iso2;
+                  auto iso2rho =
+                      RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso2_idx));
+                  const int A2 =
+                      iso_A(iso2_idx); // to use when we have proper diffusivities
+                  const int x = iso2rho(kji) / (rhom(kji) + 1e-30); // mass fraction
+                  mat_sum += x / A2;                                // mole fraction sum
+                }
+                const int x = isorho(kji) / (rhom(kji) + 1e-30); // mass fraction
+                mole_fraction(kji) = x / A1 / (mat_sum + 1e-20); // mole fraction
+              });
 
               // calculate isotopic diffusion coefficient and diffusion rate (used for
               // setting time step)
               RiotLoop::inner(halo_range, [&](const auto kji) {
-                auto isofrho = RiotLoop::make_var_view(idx_range, v, cm::iso(m));
-                d(kji) += diffusion_coefficient * isofrho(kji);
+                const int A = iso_A(iso_idx); // to use when we have proper diffusivities
+                const int Z = iso_Z(iso_idx); // to use when we have proper diffusivities
+                d(kji) += diffusion_coefficient * isorho(kji);
                 ratemax(kji) = std::max(ratemax(kji), d(kji));
               });
               idx_range.TeamBarrier();
@@ -1749,25 +1795,29 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
                                                       ccbulk::total_material_energy());
                 auto flx_iso =
                     RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso_idx));
-                auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(m));
-                auto isofrho = RiotLoop::make_var_view(idx_range, v, cm::iso(m));
+                auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
                 RiotLoop::inner(idx_range, [&](const auto kji) {
                   const auto [k, j, i] = idx_range.GetKJI(kji);
                   const Real dxinv = 1.0 / (coords.Dxc(DIR, k, j, i) + 1e-20);
                   const Real J = -0.5 * (d(kji - dl) + d(kji)) *
                                  (isorho(kji) - isorho(kji - dl)) * dxinv;
                   const Real face_rhom = 0.5 * (isorho(kji - dl) + isorho(kji));
-                  Real face_specific_enthalpy =
-                      0.5 *
-                      (isorho(kji - dl) * Em(kji - dl) + isorho(kji) * Em(kji) +
-                       fv(kji - dl) * pres(kji - dl) + fv(kji) * pres(kji)) /
-                      (face_rhom + 1e-20);
+
+                  const Real ph = fv(kji) * mole_fraction(kji) * pres(kji);
+                  const Real phm =
+                      fv(kji - dj) * mole_fraction(kji - dj) * pres(kji - dj);
+
+                  Real face_specific_enthalpy = 0.5 *
+                                                (isorho(kji - dl) * Em(kji - dl) +
+                                                 isorho(kji) * Em(kji) + phm + ph) /
+                                                (face_rhom + 1e-20);
                   face_specific_enthalpy *= (face_rhom > 1e-10);
 
                   flx_iso(kji) += J;
                   flx_rhom(kji) += J;
                   flx_E(kji) += J * face_specific_enthalpy;
                 }); // inner loop
+                idx_range.TeamBarrier();
               } // direction loop
             } // isotope loop
           } else { // no isotopic information - just compute material mass flux
