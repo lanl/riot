@@ -44,7 +44,7 @@ jumping off point.
 
 ## Build instructions
 
-For detailed build instructions, see the [build document](https://lanl.github.io/riot/building.html).
+For detailed build instructions, see the [build document](https://lanl.github.io/riot/main/src/building.html).
 
 ## Notes on python
 
