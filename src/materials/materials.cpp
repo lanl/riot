@@ -476,14 +476,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
     // For adding opacities...
     auto add_opac = [&](const std::string &opac_block) {
-      using namespace singularity::photons;
+      using namespace singularity::opac::photons;
 
       // First get underlying absorption opacity model
       RiotOpacity::OpacA opac_a;
       std::string opac_a_type = pin->GetOrAddString(opac_block, "opac_a", "none");
       std::string opac_a_table = opac_autogen_filename;
       if (opac_a_type == "none") {
-        opac_a = singularity::photons::Gray(0.0);
+        opac_a = singularity::opac::photons::Gray(0.0);
       } else if (opac_a_type == "constant") {
         const Real kappa_a = pin->GetOrAddReal(opac_block, "kappa_a", 0.0);
         opac_a = Gray(kappa_a);
