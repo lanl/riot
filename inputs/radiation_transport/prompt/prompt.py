@@ -162,9 +162,9 @@ def generate_input():
         Gamma=2.0,  # adiabatic index
         Cv=8.61733e42,  # specific heat at constant volume
         opac_a="table",  # tabular absorption opacity
-        opac_a_filename=opac_table,  # singularity-opac multigroup table
+        opac_filename=opac_table,  # singularity-opac multigroup table
         opac_s="table",  # tabular scattering opacity (all zeros)
-        opac_s_filename=opac_table,  # same file; distinct HDF5 group names
+        opac_material="mat0",  # shared HDF5 material group
         max_bnd_level=-1,  # maximum boundary AMR level
         max_mat_level=0,  # maximum material AMR level
     )
