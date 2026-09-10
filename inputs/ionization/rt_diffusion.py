@@ -28,9 +28,10 @@ x3max = 0.5
 Lx = x1max - x1min
 Ly = x2max - x2min
 Lz = x3max - x3min
-nx1 = 128
-nx2 = 192
+nx1 = 32
+nx2 = 48
 nx3 = 1
+isotope_filename = "./dummy_tn_data.hdf5"
 
 
 def make_input():
@@ -57,6 +58,8 @@ def make_input():
             "c.c.bulk.electron_temperature",
             "c.c.bulk.electron_pressure",
             "c.c.bulk.electron_number_density",
+            "c.c.mat.iso",
+            "c.m.iso",
         ],
         file_type="hdf5",  # Tabular data dump
         #dt=1e-4,  # time increment between outputs
@@ -67,14 +70,15 @@ def make_input():
     riot.input(
         "parthenon/time",
         nlim=-1,  # cycle limit
-        tlim=0.0012739506684689905,  # time limit
+        #tlim=0.0012739506684689905,  # time limit
+        tlim=1.667e-3,  # time limit
         integrator="rk2",  # time integration algorithm
         ncycle_out=200,  # interval for stdout summary info
     )
 
     riot.input(
         "parthenon/mesh",
-        nghost=2,
+        nghost=4,
         multigrid=False,
         refinement="none",
         numlevel=4,
@@ -96,7 +100,7 @@ def make_input():
         ox3_bc="periodic",  # Outer-X3 boundary condition flag
     )
 
-    riot.input("parthenon/meshblock", nx1=32, nx2=32, nx3=1)
+    riot.input("parthenon/meshblock", nx1=16, nx2=16, nx3=1)
 
     riot.input(
         "parthenon/refinement1",
@@ -143,6 +147,14 @@ def make_input():
             electron_eos=eos_name,
             max_bnd_level=riot.material[id]["max_level"],
             max_mat_level=riot.material[id]["max_level"],
+            isotope0=1002,
+            isotope1=1003,
+            isotope2=2004,
+            isotope3="0001",
+            isotope0_mfrac=0.1,
+            isotope1_mfrac=0.2,
+            isotope2_mfrac=0.3,
+            isotope3_mfrac=0.4,
         )
         mat_eos = riot.material[id]["eos_type"]
         riot.input(
@@ -154,6 +166,11 @@ def make_input():
             mean_atomic_mass=riot.material[id]["mean_atomic_mass"],
             mean_atomic_number=riot.material[id]["mean_atomic_number"],
         )
+
+    riot.input(
+        "isotope_data",
+        filename=isotope_filename,
+    )
 
     riot.input(
         "ideal_eos0",
@@ -181,6 +198,7 @@ def make_input():
         sparse_physics=False,
         strength=False,
         fixed_fluid=False,
+        tn=False,
     )
 
     riot.input(
@@ -209,12 +227,12 @@ def make_input():
         ion_thermal_conduction=False,
         ion_conductivity_model="braginskii",
         # viscosity
-        plasma_viscosity=False,
+        plasma_viscosity=True,
         ion_viscosity_model="constant",
         ion_shear_viscosity=1.0e-1,
         # plasma diffusion
         plasma_diffusion=True,
-        ion_diffusion_coefficient=1e1,
+        ion_diffusion_coefficient=1e3,
     )
 
     riot.input(
