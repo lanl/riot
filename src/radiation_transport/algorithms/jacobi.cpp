@@ -45,6 +45,7 @@
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
 #include "riot_utils/sparse_update.hpp"
+#include <bvals/comms/boundary_flux.hpp>
 
 using namespace parthenon::package::prelude;
 
@@ -193,6 +194,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("time", 0.0, Params::Mutability::Restart);
   params.Add("current_residual_group", std::numeric_limits<Real>::max(), true);
 
+  const bool flux_correct = pin->GetOrAddBoolean(
+      input_block, "flux_correct", false,
+      "Correct coarse-fine transport fluxes using boundary-only buffers");
+  params.Add("flux_correct", flux_correct);
+  if (flux_correct) {
+    Metadata mf({Metadata::Face, Metadata::Flux, Metadata::BoundaryFlux,
+                 Metadata::Derived, Metadata::OneCopy, MetadataJacobi,
+                 MetadataOperatorSplit},
+                std::vector<int>{ngroups * nangles});
+    jacobi_pkg->AddField(boundary_flux_name, mf);
+  }
+
   // Radiation specific intensity I
   std::string control_field = ccrad::intensity::name();
   using namespace parthenon::refinement_ops;
@@ -219,6 +232,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   jacobi_pkg->AddField<ccrad::s1>(m);
   jacobi_pkg->AddField<ccrad::s2>(m);
   jacobi_pkg->AddField<ccrad::s3>(m);
+  jacobi_pkg->AddField<ccrad::s4>(m);
   jacobi_pkg->AddField<ccrad::tauw>(m);
 
   // Advanced temperature field
@@ -434,6 +448,11 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   pm->mesh_data.AddShallow(mdname::rbase, base, jacobi_names);
   pm->mesh_data.AddShallow(mdname::ubase, base, unsplit_names);
   pm->mesh_data.AddShallow(mdname::ropac, base, opac_names);
+  const bool flux_correct = jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel;
+  if (flux_correct) {
+    pm->mesh_data.AddShallow(boundary_flux_register, base,
+                             std::vector<std::string>{boundary_flux_name});
+  }
 
   // Subcycle controls
   const int nreduce_limit = jacobi_pkg->Param<int>("nreduce_limit");
@@ -643,6 +662,14 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             std::shared_ptr<MeshData<Real>> ubase, const Real dt) {
   auto update =
       solver.AddTask(begin, JacobiUpdate, rbase.get(), riter.get(), rout.get(), dt);
+  if (pmesh->packages.Get(pkg_name)->Param<bool>("flux_correct") && pmesh->multilevel) {
+    auto flux = pmesh->mesh_data.GetOrAdd(boundary_flux_register, i);
+    auto start = solver.AddTask(begin, parthenon::StartReceiveFluxCorrections, flux);
+    auto send = solver.AddTask(start, SendFluxCorrections, rbase, riter, flux);
+    auto recv = solver.AddTask(start, parthenon::ReceiveFluxCorrections, flux);
+    update = solver.AddTask(update | recv | send, ApplyFluxCorrections, rbase, riter,
+                            rout, flux, dt);
+  }
   auto rsrc = solver.AddTask(update, ApplyRHS, rbase.get(), rout.get(), ubase.get(), dt);
   auto bc = parthenon::AddBoundaryExchangeTasks(rsrc, solver, rout, pmesh->multilevel);
   auto check = solver.AddTask(TaskQualifier::local_sync, bc, CheckConvergence,
@@ -1233,6 +1260,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   auto jacobi_pkg = pm->packages.Get(pkg_name);
   if (!(jacobi_pkg->Param<bool>("affect_fluid"))) return TaskStatus::complete;
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
+  const bool flux_correct = (jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel);
 
   // Indexing
   const int ndim = pm->ndim;
@@ -1258,7 +1286,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccr = cell_variables::cell_averaged::rad;
   auto &resolved_pkgs = pm->resolved_packages;
-  static auto desc_g = MakePackDescriptor<ccr::tauw>(resolved_pkgs.get());
+  auto desc_g = MakePackDescriptor<ccr::tauw, ccr::s4>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
   static auto desc_u = MakePackDescriptor<ccbulk::internal_energy>(resolved_pkgs.get());
   auto vu = desc_u.GetPack(ubase);
@@ -1339,11 +1367,117 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             er_old += wght(aa) * (iib - df + (1.0 - g1p) * iio);
           }
 
+          // Include the coarse-fine transport correction in the source-removed moment.
+          if (flux_correct) er_old -= vg(b, ccr::s4(gg), k, j, i);
+
           eint += er_old - er_new;
         }
       });
 
   return TaskStatus::complete;
+}
+
+namespace {
+namespace rad = cell_variables::cell_averaged::rad;
+
+// Same donor-cell AP flux as GCoef, before division by cell volume and diagonal.
+// Opacity weights are frozen for the duration of a solve.
+template <class IntensityPack, class WeightPack>
+KOKKOS_INLINE_FUNCTION Real FaceFlux(const IntensityPack &intensity,
+                                     const WeightPack &weight,
+                                     const ParArrayND<Real> &directions,
+                                     const std::array<int, 3> &ndir, int nangles, int b,
+                                     int n, int dir, int k, int j, int i) {
+  const int di = dir == X1DIR, dj = dir == X2DIR, dk = dir == X3DIR;
+  const int g = GI(nangles, n), a = AI(nangles, n);
+  const Real mu = directions(a, ndir[dir - 1]);
+  const Real t = std::max(weight(b, rad::tauw(g), k, j, i),
+                          weight(b, rad::tauw(g), k - dk, j - dj, i - di));
+  const Real left = intensity(b, n, k - dk, j - dj, i - di);
+  const Real right = intensity(b, n, k, j, i);
+  return 0.5 * (mu * (left + right) + std::abs(mu) * t * (left - right));
+}
+} // namespace
+
+TaskStatus SendFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
+                               std::shared_ptr<MeshData<Real>> state,
+                               std::shared_ptr<MeshData<Real>> flux) {
+  auto *mesh = rbase->GetMeshPointer();
+  auto pkg = mesh->packages.Get(pkg_name);
+  auto desc = MakePackDescriptor<rad::intensity>(mesh->resolved_packages.get());
+  auto ip = desc.GetPack(state.get());
+  auto tp =
+      MakePackDescriptor<rad::tauw>(mesh->resolved_packages.get()).GetPack(rbase.get());
+  const auto cp = GetAngularGridArrays(pkg).cart_pos;
+  const auto ndir = AngularFluxDirs();
+  const int nangles = pkg->Param<int>("nangles");
+  return parthenon::LoadAndSendBoundaryFluxes(
+      flux, KOKKOS_LAMBDA(int b, int dir, int t, int u, int n, int k, int j, int i) {
+        return FaceFlux(ip, tp, cp, ndir, nangles, b, n, dir, k, j, i);
+      });
+}
+
+TaskStatus ApplyFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
+                                std::shared_ptr<MeshData<Real>> state,
+                                std::shared_ptr<MeshData<Real>> output,
+                                std::shared_ptr<MeshData<Real>> flux, Real dt) {
+  auto *mesh = rbase->GetMeshPointer();
+  auto pkg = mesh->packages.Get(pkg_name);
+  auto desc = MakePackDescriptor<rad::intensity>(mesh->resolved_packages.get());
+  auto ip = desc.GetPack(state.get()), op = desc.GetPack(output.get());
+  auto tp = MakePackDescriptor<rad::tauw, rad::s4>(mesh->resolved_packages.get())
+                .GetPack(rbase.get());
+  const auto grid = GetAngularGridArrays(pkg);
+  const auto cp = grid.cart_pos, wg = grid.weights, gf = grid.gflux,
+             aw = grid.arc_weights;
+  const auto nn = grid.num_neighbors;
+  const auto ndir = AngularFluxDirs();
+  const int nangles = pkg->Param<int>("nangles"), ndim = mesh->ndim;
+  const bool split = pkg->Param<bool>("split_g1");
+  const Real cdt = pkg->Param<UnitUtils>("unit_utils").c * dt;
+  const int ngroups = pkg->Param<int>("ngroups");
+  const auto space = RiotFlatLoop::GetIndexSpace(
+      IndexDomain::interior, rbase->NumBlocks(), ngroups, rbase.get());
+  return parthenon::ApplyBoundaryFluxes(flux, [&](const auto &received) {
+    RiotFlatLoop::five_d(
+        "ApplyFluxCorrections", space, KOKKOS_LAMBDA(int b, int gg, int k, int j, int i) {
+          bool has_face = false;
+          const auto faces = received.ForCell(b, k, j, i);
+          for (int face = 0; face < 2 * ndim; ++face) {
+            has_face |= faces.HasFace(face);
+          }
+
+          Real moment = 0.0;
+          if (has_face) {
+            const auto &coords = tp.GetCoordinates(b);
+            const Real ivol = cdt / coords.CellVolume(k, j, i);
+            Real mcw = 0.0;
+            if constexpr (do_angular_fluxes) {
+              mcw = -cdt * InverseRadiusForAngularFlux(coords, i);
+            }
+            for (int aa = 0; aa < nangles; ++aa) {
+              const int n = GAI(nangles, gg, aa);
+              Real correction = 0.0;
+              for (int face = 0; face < 2 * ndim; ++face) {
+                if (!faces.HasFace(face)) continue;
+                const int dir = face / 2 + 1, side = face % 2 == 0 ? -1 : 1;
+                const int fi = i + (side > 0 && dir == X1DIR);
+                const int fj = j + (side > 0 && dir == X2DIR);
+                const int fk = k + (side > 0 && dir == X3DIR);
+                const Real native =
+                    FaceFlux(ip, tp, cp, ndir, nangles, b, n, dir, fk, fj, fi);
+                correction += side * ivol * coords.FaceArea(dir, fk, fj, fi) *
+                              (faces(face, n) - native);
+              }
+              const Real diagonal = G1Coef(tp, coords, cp, ndir, ndim, wg, gf, aw, nn,
+                                           0.5 * ivol, mcw, split, gg, aa, b, k, j, i);
+              op(b, n, k, j, i) -= correction / diagonal;
+              moment += wg(aa) * correction;
+            }
+          }
+          tp(b, rad::s4(gg), k, j, i) = moment;
+        });
+  });
 }
 
 } // namespace Jacobi

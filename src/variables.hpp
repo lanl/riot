@@ -158,6 +158,7 @@ VARIABLE_VECTOR(c.c.rad, moments, false, 1);   // ngroups
 VARIABLE_VECTOR(c.c.rad, s1, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s2, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s3, false, 1);        // ngroups
+VARIABLE_VECTOR(c.c.rad, s4, false, 1);        // ngroups; Jacobi AMR correction moment
 VARIABLE_VECTOR(c.c.rad, divfa, false, 1);     // ngroups
 VARIABLE_VECTOR(c.c.rad, tauw, false, 1);      // ngroups
 VARIABLE_SCALAR(c.c.rad, temperature, false);

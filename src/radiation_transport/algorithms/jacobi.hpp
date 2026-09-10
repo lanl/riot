@@ -66,6 +66,16 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
 TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
                           MeshData<Real> *rout, MeshData<Real> *ubase, const Real dt);
 
+inline constexpr char boundary_flux_name[] = "jacobi.boundary_flux";
+inline constexpr char boundary_flux_register[] = "jacobi.boundary_flux_register";
+TaskStatus SendFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
+                               std::shared_ptr<MeshData<Real>> state,
+                               std::shared_ptr<MeshData<Real>> flux);
+TaskStatus ApplyFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
+                                std::shared_ptr<MeshData<Real>> state,
+                                std::shared_ptr<MeshData<Real>> output,
+                                std::shared_ptr<MeshData<Real>> flux, Real dt);
+
 //----------------------------------------------------------------------------------------
 //! \fn  Real TauWeight
 //! \brief Assigns optical depth weights for Rusanov flux
