@@ -448,8 +448,7 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   pm->mesh_data.AddShallow(mdname::rbase, base, jacobi_names);
   pm->mesh_data.AddShallow(mdname::ubase, base, unsplit_names);
   pm->mesh_data.AddShallow(mdname::ropac, base, opac_names);
-  const bool flux_correct =
-      jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel;
+  const bool flux_correct = jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel;
   if (flux_correct) {
     pm->mesh_data.AddShallow(boundary_flux_register, base,
                              std::vector<std::string>{boundary_flux_name});
@@ -663,8 +662,7 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             std::shared_ptr<MeshData<Real>> ubase, const Real dt) {
   auto update =
       solver.AddTask(begin, JacobiUpdate, rbase.get(), riter.get(), rout.get(), dt);
-  if (pmesh->packages.Get(pkg_name)->Param<bool>("flux_correct") &&
-      pmesh->multilevel) {
+  if (pmesh->packages.Get(pkg_name)->Param<bool>("flux_correct") && pmesh->multilevel) {
     auto flux = pmesh->mesh_data.GetOrAdd(boundary_flux_register, i);
     auto start = solver.AddTask(begin, parthenon::StartReceiveFluxCorrections, flux);
     auto send = solver.AddTask(start, SendFluxCorrections, rbase, riter, flux);
@@ -1262,8 +1260,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   auto jacobi_pkg = pm->packages.Get(pkg_name);
   if (!(jacobi_pkg->Param<bool>("affect_fluid"))) return TaskStatus::complete;
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
-  const bool flux_correct =
-      (jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel);
+  const bool flux_correct = (jacobi_pkg->Param<bool>("flux_correct") && pm->multilevel);
 
   // Indexing
   const int ndim = pm->ndim;
@@ -1403,8 +1400,8 @@ KOKKOS_INLINE_FUNCTION Real FaceFlux(const IntensityPack &intensity,
 } // namespace
 
 TaskStatus SendFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
-                                  std::shared_ptr<MeshData<Real>> state,
-                                  std::shared_ptr<MeshData<Real>> flux) {
+                               std::shared_ptr<MeshData<Real>> state,
+                               std::shared_ptr<MeshData<Real>> flux) {
   auto *mesh = rbase->GetMeshPointer();
   auto pkg = mesh->packages.Get(pkg_name);
   auto desc = MakePackDescriptor<rad::intensity>(mesh->resolved_packages.get());
@@ -1421,9 +1418,9 @@ TaskStatus SendFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
 }
 
 TaskStatus ApplyFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
-                                     std::shared_ptr<MeshData<Real>> state,
-                                     std::shared_ptr<MeshData<Real>> output,
-                                     std::shared_ptr<MeshData<Real>> flux, Real dt) {
+                                std::shared_ptr<MeshData<Real>> state,
+                                std::shared_ptr<MeshData<Real>> output,
+                                std::shared_ptr<MeshData<Real>> flux, Real dt) {
   auto *mesh = rbase->GetMeshPointer();
   auto pkg = mesh->packages.Get(pkg_name);
   auto desc = MakePackDescriptor<rad::intensity>(mesh->resolved_packages.get());
@@ -1443,8 +1440,7 @@ TaskStatus ApplyFluxCorrections(std::shared_ptr<MeshData<Real>> rbase,
       IndexDomain::interior, rbase->NumBlocks(), ngroups, rbase.get());
   return parthenon::ApplyBoundaryFluxes(flux, [&](const auto &received) {
     RiotFlatLoop::five_d(
-        "ApplyFluxCorrections", space,
-        KOKKOS_LAMBDA(int b, int gg, int k, int j, int i) {
+        "ApplyFluxCorrections", space, KOKKOS_LAMBDA(int b, int gg, int k, int j, int i) {
           bool has_face = false;
           const auto faces = received.ForCell(b, k, j, i);
           for (int face = 0; face < 2 * ndim; ++face) {
