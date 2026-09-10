@@ -1025,7 +1025,6 @@ void MaterialsFillDerived(MeshData<Real> *md) {
       });
 }
 
-
 int CountMaterials(ParameterInput *pin) {
   const std::string mat_prefix = "material";
   // "blocks" also contains the <materials> block, which we don't want

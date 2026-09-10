@@ -108,7 +108,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // TODO(JMM): Move Carbuncle correction into HLLC solver
   std::string solver = pin->GetOrAddString(
       "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "chllc", "lhllc", "hll"}, "Riemann solver to use");
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll"},
+      "Riemann solver to use");
   if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {

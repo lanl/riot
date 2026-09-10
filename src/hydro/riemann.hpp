@@ -317,8 +317,8 @@ lr_to_flux_hll(Real rhol, Real rhor, Real v1l, Real v1r, Real v2l, Real v2r, Rea
 
   rhol = std::max(rhol, 1.e-100);
   rhor = std::max(rhor, 1.e-100);
-  Real vpl = (DIR == X1DIR) * v1l + (DIR == X2DIR) * v2l + (DIR == X3DIR) * v3l;
-  Real vpr = (DIR == X1DIR) * v1r + (DIR == X2DIR) * v2r + (DIR == X3DIR) * v3r;
+  const Real vpl = (DIR == X1DIR) * v1l + (DIR == X2DIR) * v2l + (DIR == X3DIR) * v3l;
+  const Real vpr = (DIR == X1DIR) * v1r + (DIR == X2DIR) * v2r + (DIR == X3DIR) * v3r;
 
   const Real sl = std::min(vpl - cl, vpr - cr);
   const Real sr = std::max(vpl + cl, vpr + cr);
@@ -326,27 +326,48 @@ lr_to_flux_hll(Real rhol, Real rhor, Real v1l, Real v1r, Real v2l, Real v2r, Rea
   const Real rhocsl = rhol * (sl - vpl);
   const Real rhocsr = rhor * (sr - vpr);
 
-  const Real isrsl = 1.0 / (sr - sl);
-  const Real frho = (sl * rhocsr - sr * rhocsl) * isrsl;
-  const Real l_flag = 1.0 * (frho >= 0.0);
-  const Real r_flag = 1.0 - l_flag;
-  riemann_vel = frho / (l_flag * rhol + r_flag * rhor);
-  // TODO(jcd): figure out the best velocities to use here
-  //            these are not consistent with Uhll, but maybe that's OK
-  v1face = (DIR == X1DIR ? riemann_vel : l_flag * v1l + r_flag * v1r);
-  v2face = (DIR == X2DIR ? riemann_vel : l_flag * v2l + r_flag * v2r);
-  v3face = (DIR == X3DIR ? riemann_vel : l_flag * v3l + r_flag * v3r);
+  const Real frho_num = sl * rhocsr - sr * rhocsl;
+  const Real rho_upwind = (frho_num >= 0.0) * rhol + (frho_num < 0.0) * rhor;
 
-  f_v1 = (sl * rhocsr * v1r - sr * rhocsl * v1l) * isrsl;
-  f_v2 = (sl * rhocsr * v2r - sr * rhocsl * v2l) * isrsl;
-  f_v3 = (sl * rhocsr * v3r - sr * rhocsl * v3l) * isrsl;
-  if constexpr (DIR == X1DIR) f_v1 += (sr * Pl - sl * Pr) * isrsl;
-  if constexpr (DIR == X2DIR) f_v2 += (sr * Pl - sl * Pr) * isrsl;
-  if constexpr (DIR == X3DIR) f_v3 += (sr * Pl - sl * Pr) * isrsl;
+  const Real hll_flag = (sl < 0.0 && sr > 0.0);
+  const Real isrsl = hll_flag ? 1.0 / (sr - sl) : 0.0;
+
+  const Real ss =
+      (sl >= 0.0) * vpl + (sr <= 0.0) * vpr + hll_flag * frho_num * isrsl / rho_upwind;
+
+  const Real l_flag = 1.0 * (ss >= 0.0);
+  const Real r_flag = 1.0 - l_flag;
+  const Real rho = l_flag * rhol + r_flag * rhor;
+  const Real s = hll_flag * (l_flag * sl + r_flag * sr);
+  const Real v1 = l_flag * v1l + r_flag * v1r;
+  const Real v2 = l_flag * v2l + r_flag * v2r;
+  const Real v3 = l_flag * v3l + r_flag * v3r;
+  const Real vp = l_flag * vpl + r_flag * vpr;
+  const Real u = l_flag * ul + r_flag * ur;
+  const Real P = l_flag * Pl + r_flag * Pr;
+  v1face = (DIR == X1DIR ? ss : v1);
+  v2face = (DIR == X2DIR ? ss : v2);
+  v3face = (DIR == X3DIR ? ss : v3);
+
+  // frho = rho * ss;
+  // riemann_vel = frho / rho
+  riemann_vel = ss;
+
+  const Real m1h = (rhocsr * v1r - rhocsl * v1l + (DIR == X1DIR) * (Pl - Pr)) * isrsl;
+  const Real m2h = (rhocsr * v2r - rhocsl * v2l + (DIR == X2DIR) * (Pl - Pr)) * isrsl;
+  const Real m3h = (rhocsr * v3r - rhocsl * v3l + (DIR == X3DIR) * (Pl - Pr)) * isrsl;
+  f_v1 = rho * vp * v1 + s * (m1h - rho * v1);
+  f_v2 = rho * vp * v2 + s * (m2h - rho * v2);
+  f_v3 = rho * vp * v3 + s * (m3h - rho * v3);
+  if constexpr (DIR == X1DIR) f_v1 += P;
+  if constexpr (DIR == X2DIR) f_v2 += P;
+  if constexpr (DIR == X3DIR) f_v3 += P;
 
   const Real El = ul + 0.5 * rhol * (SQR(v1l) + SQR(v2l) + SQR(v3l));
   const Real Er = ur + 0.5 * rhor * (SQR(v1r) + SQR(v2r) + SQR(v3r));
-  f_eng = (sr * (El + Pl) * vpl - sl * (Er + Pr) * vpr + sr * sl * (Er - El)) * isrsl;
+  const Real E = u + 0.5 * rho * (SQR(v1) + SQR(v2) + SQR(v3));
+  const Real Eh = (sr * Er - sl * El + vpl * (El + Pl) - vpr * (Er + Pr)) * isrsl;
+  f_eng = vp * (E + P) + s * (Eh - E);
 
   return std::max(std::abs(sl), std::abs(sr));
 }
