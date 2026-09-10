@@ -165,10 +165,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       pin->GetOrAddReal("ionization", "ion_shear_viscosity", 1e0,
                         "Ion shear viscosity if constant model is selected");
   physics->AddParam("ion_shear_viscosity", ion_shear_viscosity);
-  const Real ion_bulk_viscosity =
-      pin->GetOrAddReal("ionization", "ion_bulk_viscosity", 0e0,
-                        "Ion bulk viscosity if constant model is selected");
-  physics->AddParam("ion_bulk_viscosity", ion_bulk_viscosity);
+
+  // plasma diffusion
+  const bool plasma_diffusion = pin->GetOrAddBoolean(
+      "ionization", "plasma_diffusion", false,
+      "Add plasma diffusion fluxes to isotope, mass and energy equations");
+  physics->AddParam("plasma_diffusion", plasma_diffusion);
+  const std::string ion_diffusion_model =
+      pin->GetOrAddString("ionization", "ion_diffusion_model", "fokker_planck_landau",
+                          std::vector<std::string>{"constant", "fokker_planck_landau"},
+                          "Model to use for ion diffusion");
+  physics->AddParam("ion_diffusion_model", ion_diffusion_model);
+  const Real ion_diffusion_coefficient =
+      pin->GetOrAddReal("ionization", "ion_diffusion_coefficient", 1e0,
+                        "Ion diffusion coefficient if constant model is selected");
+  physics->AddParam("ion_diffusion_coefficient", ion_diffusion_coefficient);
+  // store max diffusion rate in params for time step calculation
+  params.Add("max_diffusion_rate", 0.0, Params::Mutability::Restart);
 
   using namespace parthenon::refinement_ops;
   using solver_t = parthenon::solvers::BiCGSTABSolver<LinearizedDiffusionEquation<delta>>;
@@ -1215,7 +1228,6 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
   auto &options = pm->packages.Get("ionization");
   const Real ion_shear_viscosity = options->Param<Real>("ion_shear_viscosity");
-  const Real ion_bulk_viscosity = options->Param<Real>("ion_bulk_viscosity");
   const std::string ion_viscosity_model =
       options->Param<std::string>("ion_viscosity_model");
   const PlasmaViscosityModel viscosity_model =
@@ -1238,7 +1250,7 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
 
   using lt = RiotUtils::LoopType<>;
-  const int nhalo = 1;
+  const int nhalo = 2;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md,
                                      parthenon::TopologicalElement::CC);
   idx_space.template AddPerPointScratch<Real>(1);
@@ -1336,16 +1348,18 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   const bool plasma_viscosity = ionization_params.Get<bool>("plasma_viscosity");
   const bool electron_thermal_conduction =
       ionization_params.Get<bool>("electron_thermal_conduction");
+  const bool plasma_diffusion = ionization_params.Get<bool>("plasma_diffusion");
 
   Real dt_conduction = 1e20;
   Real dt_viscosity = 1e20;
+  Real dt_diffusion = 1e20;
   const auto timestep_control = ionization_params.Get<std::string>("timestep_control");
 
   auto v = riot::MakePack<Ionization::Dcell, Ionization::temp_tstep_criterion,
                           ccbulk::rho, ccbulk::ion_shear_viscosity>(md);
   const int ndim = pm->ndim;
 
-  const auto &cfl = hydro_params.Get<Real>("cfl");
+  const Real &cfl = hydro_params.Get<Real>("cfl");
 
   //===========================
   // conduction time step limit
@@ -1373,7 +1387,6 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
               }
             });
           });
-      const auto &cfl = hydro_params.Get<Real>("cfl");
       dt_conduction = cfl * min_dt;
     } else if (timestep_control == "relative") {
       auto *dt = ionization_pkg->MutableParam<Real>("dt");
@@ -1417,11 +1430,15 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
             }
           });
         });
-    const auto &cfl = hydro_params.Get<Real>("cfl");
     dt_viscosity = 0.5 * cfl * min_dt;
   }
 
-  return std::min(dt_conduction, dt_viscosity);
+  if (plasma_diffusion) {
+    const Real max_diffusion_rate = ionization_params.Get<Real>("max_diffusion_rate");
+    dt_diffusion = 0.5 * cfl / (max_diffusion_rate + 1e-30);
+  }
+
+  return std::min({dt_conduction, dt_viscosity, dt_diffusion});
 }
 
 // Compute fluxes to momentum and energy from plasma viscosity
@@ -1447,8 +1464,6 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
   // don't launch kernel if there are no blocks
   const int nblocks = vb.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
-
-  const Real bulk_viscosity = ionization_params.Get<Real>("ion_bulk_viscosity");
 
   // Calculate the strain rate tensor.
   Hydro::CalculateStrainRate(md, vb);
@@ -1613,6 +1628,254 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
 
   return TaskStatus::complete;
 } // ComputeViscousFluxes
+
+// Compute fluxes to density, momentum and energy from plasma diffusion
+TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace cm = cell_variables::material_averaged;
+
+  auto pm = md->GetParentPointer();
+
+  auto &ionization_pkg = pm->packages.Get("ionization");
+  auto &ionization_params = ionization_pkg->AllParams();
+
+  const bool plasma_diffusion = ionization_params.Get<bool>("plasma_diffusion");
+  if (!plasma_diffusion) return TaskStatus::complete;
+
+  auto &materials = pm->packages.Get("materials");
+  const auto &ion_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
+  const int max_array_size = materials->Param<int>("max_array_size");
+  const auto &eos_from_matid =
+      materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
+  const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+
+  auto num_iso_per_mat = materials->Param<parthenon::ParArray1D<int>>("num_iso_per_mat");
+
+  // full list of material IDs that have isotopes
+  // The full name of the isotope variable (exact string Parthenon uses)
+  std::string iso_name = ccmat::iso::name(); // "c.c.mat.iso"
+
+  // pack up fields
+  std::set<parthenon::PDOpt> opts = {parthenon::PDOpt::WithFluxes};
+  auto v =
+      riot::MakePack<cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccbulk::rho,
+                     ccbulk::electron_temperature, ccbulk::temperature,
+                     cm::ionization_zbar, ccmat::volume_fraction,
+                     ccbulk::electron_number_density, ccmat::internal_energy, ccmat::iso,
+                     cm::iso, ccbulk::pressure, ccbulk::total_material_energy>(
+          md, std::vector<int>{}, opts);
+  const int nblocks = v.GetNBlocks();
+  const int ndim = pm->ndim;
+
+  // don't launch kernel if there are no blocks
+  if (nblocks == 0) return TaskStatus::complete;
+
+  const Real diffusion_coefficient =
+      ionization_params.Get<Real>("ion_diffusion_coefficient");
+
+  // pull isotope information
+  const auto &iso_zaids =
+      materials->Param<std::vector<std::vector<int>>>("Isotope Zaids");
+
+  // total number of isotopes (don't we have this somewhere??)
+  int total_niso = 0;
+  for (const auto &mat_zaids : iso_zaids) {
+    total_niso += mat_zaids.size();
+  }
+
+  // make a device-save Z and A array
+  parthenon::ParArray1D<Real> iso_A("isotope A", total_niso);
+  parthenon::ParArray1D<Real> iso_Z("isotope Z", total_niso);
+  int iso_idx = 0;
+  for (int m = 0; m < iso_zaids.size(); ++m) {
+    for (int iso = 0; iso < iso_zaids[m].size(); ++iso) {
+      iso_A(iso_idx) = iso_zaids[m][iso] % 1000;
+      iso_Z(iso_idx) = iso_zaids[m][iso] / 1000;
+      ++iso_idx;
+    }
+  }
+
+  // using lt = RiotUtils::LoopType<>;
+  using TE = parthenon::TopologicalElement;
+  using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+  const int nhalo = 0;
+  // Use the NN logical range so one loop covers all three face orientations.
+  // This deliberately computes an extra transverse face layer for each orientation.
+  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, TE::NN);
+
+  // add scratch for diffusion coefficient, max diffusion coefficient, mole fraction
+  idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(3);
+
+  // The offset type follows the inner-loop indexing model.
+  const auto di = idx_space.GetDelta(X1DIR);
+  const auto dj = idx_space.GetDelta(X2DIR);
+  const auto dk = idx_space.GetDelta(X3DIR);
+
+  std::array<int, 4> deltas{0, di, dj, dk};
+
+  // X1 fluxes
+  // RiotLoop::outer(
+  //     idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+  auto max_diffusion_rate = RiotLoop::outer_reduce(
+      idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
+        const auto halo_range = AddHalo<diffusion_halo_t>(idx_range);
+        auto d = RiotLoop::GetPerPointScratch<Real>(halo_range);
+        auto ratemax = RiotLoop::GetPerPointScratch<Real>(halo_range);
+
+        // zero ratemax
+        RiotLoop::inner(halo_range, [&](const auto kji) { ratemax(kji) = 0.; });
+
+        auto &coords = v.GetCoordinates(b);
+
+        // EOS map
+        const int nmat = v.GetSize(b, ccmat::rho());
+        std::array<int, MAX_MATERIALS> eos_map;
+        RiotEOS::FillEosMap<ccmat::rho>(v, b, nmat, eos_from_matid, nphase, eos_map);
+
+        // compute diffusion coefficient
+        int offset_iso = 0;
+        for (int m = 0; m < nmat; ++m) {
+          // zero d
+          RiotLoop::inner(halo_range, [&](const auto kji) { d(kji) = 0.; });
+          idx_range.TeamBarrier();
+
+          int global_mat_id = v(b, ccmat::rho(m)).sparse_id;
+          const int niso =
+              num_iso_per_mat(global_mat_id); // does the material have isotopes?
+
+          auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
+          auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
+          auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
+
+          if (niso > 0) {
+            for (int iso = 0; iso < niso; iso++) {
+              const int iso_idx = offset_iso + iso;
+              auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
+
+              // iso A and Z
+              const int A1 = iso_A(iso_idx); // to use when we have proper diffusivities
+              const int Z1 = iso_Z(iso_idx); // to use when we have proper diffusivities
+
+              // calculate mole fraction for this isotope
+              auto mole_fraction = RiotLoop::GetPerPointScratch<Real>(halo_range);
+              RiotLoop::inner(halo_range, [&](const auto kji) {
+                // iso mole fraction within material
+                Real mat_sum = 0.0;
+                for (int iso2 = 0; iso2 < niso; iso2++) {
+                  const int iso2_idx = offset_iso + iso2;
+                  auto iso2rho =
+                      RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso2_idx));
+                  const int A2 =
+                      iso_A(iso2_idx); // to use when we have proper diffusivities
+                  const int x = iso2rho(kji) / (rhom(kji) + 1e-30); // mass fraction
+                  mat_sum += x / A2;                                // mole fraction sum
+                }
+                const int x = isorho(kji) / (rhom(kji) + 1e-30); // mass fraction
+                mole_fraction(kji) = x / A1 / (mat_sum + 1e-20); // mole fraction
+              });
+
+              // calculate isotopic diffusion coefficient and diffusion rate (used for
+              // setting time step)
+              RiotLoop::inner(halo_range, [&](const auto kji) {
+                const int A = iso_A(iso_idx); // to use when we have proper diffusivities
+                const int Z = iso_Z(iso_idx); // to use when we have proper diffusivities
+                d(kji) += diffusion_coefficient * isorho(kji);
+                ratemax(kji) = std::max(ratemax(kji), d(kji));
+              });
+              idx_range.TeamBarrier();
+
+              // calculate fluxes to add in
+              for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
+                auto dl = deltas[DIR];
+                auto flx_rhom =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+                auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                      ccbulk::total_material_energy());
+                auto flx_iso =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso_idx));
+                auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
+                RiotLoop::inner(idx_range, [&](const auto kji) {
+                  const auto [k, j, i] = idx_range.GetKJI(kji);
+                  const Real dxinv = 1.0 / (coords.Dxc(DIR, k, j, i) + 1e-20);
+                  const Real J = -0.5 * (d(kji - dl) + d(kji)) *
+                                 (isorho(kji) - isorho(kji - dl)) * dxinv;
+                  const Real face_rhom = 0.5 * (isorho(kji - dl) + isorho(kji));
+
+                  const Real ph = fv(kji) * mole_fraction(kji) * pres(kji);
+                  const Real phm =
+                      fv(kji - dj) * mole_fraction(kji - dj) * pres(kji - dj);
+
+                  Real face_specific_enthalpy = 0.5 *
+                                                (isorho(kji - dl) * Em(kji - dl) +
+                                                 isorho(kji) * Em(kji) + phm + ph) /
+                                                (face_rhom + 1e-20);
+                  face_specific_enthalpy *= (face_rhom > 1e-10);
+
+                  flx_iso(kji) += J;
+                  flx_rhom(kji) += J;
+                  flx_E(kji) += J * face_specific_enthalpy;
+                }); // inner loop
+                idx_range.TeamBarrier();
+              } // direction loop
+            } // isotope loop
+          } else { // no isotopic information - just compute material mass flux
+
+            // calculate material diffusion coefficient and diffusion rate (used for
+            // setting time step)
+            RiotLoop::inner(halo_range, [&](const auto kji) {
+              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+              d(kji) += diffusion_coefficient * rhom(kji);
+              ratemax(kji) = std::max(ratemax(kji), d(kji));
+            });
+            idx_range.TeamBarrier();
+
+            // calculate fluxes to add in
+            for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
+              auto dl = deltas[DIR];
+              auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+              auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                    ccbulk::total_material_energy());
+              RiotLoop::inner(idx_range, [&](const auto kji) {
+                const auto [k, j, i] = idx_range.GetKJI(kji);
+                const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
+                const Real J =
+                    -0.5 * (d(kji - dj) + d(kji)) * (rhom(kji) - rhom(kji - dl)) * dxinv;
+                const Real face_rhom = 0.5 * (rhom(kji - dl) + rhom(kji));
+                Real face_specific_enthalpy =
+                    0.5 *
+                    (rhom(kji - dl) * Em(kji - dl) + rhom(kji) * Em(kji) +
+                     fv(kji - dl) * pres(kji - dl) + fv(kji) * pres(kji)) /
+                    (face_rhom + 1e-20);
+                face_specific_enthalpy *= (face_rhom > 1e-10);
+
+                flx_rhom(kji) += J;
+                flx_E(kji) += J * face_specific_enthalpy;
+              }); // inner loop
+            } // direction loop
+
+          } // isotopes or not
+
+          offset_iso += niso;
+        } // materials loop
+
+        // reduction on rate for setting stable time step limit
+        RiotLoop::inner_reduce(idx_range, [&](const auto kji, Real &max_rate) {
+          const auto [k, j, i] = idx_range.GetKJI(kji);
+          Real rate = 0.0;
+          for (int dir = 0; dir < ndim; ++dir) {
+            const Real dx = coords.Dxc(dir + 1, k, j, i);
+            rate += ratemax(kji) / (dx * dx);
+          }
+          max_rate = std::max(max_rate, rate);
+        });
+      }); // outer loop
+
+  ionization_pkg->UpdateParam<Real>("max_diffusion_rate", max_diffusion_rate);
+
+  return TaskStatus::complete;
+} // ComputeDiffusionFluxes
 
 //----------------------------------------------------------------------------------------
 //! \fn  ElectronThermalConductivityModel
