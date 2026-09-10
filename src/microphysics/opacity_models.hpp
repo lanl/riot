@@ -25,15 +25,17 @@ namespace RiotOpacity {
 
 //----------------------------------------------------------------------------------------
 // Reduced absorption variant
-using OpacA = singularity::photons::impl::Variant<singularity::photons::Gray,
-                                                  singularity::photons::PowerLaw>;
-using MeanOpacA = singularity::photons::MeanOpacityBase;
+using OpacA =
+    singularity::opac::photons::impl::Variant<singularity::opac::photons::Gray,
+                                              singularity::opac::photons::PowerLaw>;
+using MeanOpacA = singularity::opac::photons::MeanOpacityBase;
 
 //----------------------------------------------------------------------------------------
 // Reduced scattering variant
-using OpacS = singularity::photons::impl::S_Variant<singularity::photons::GrayS,
-                                                    singularity::photons::ThomsonS>;
-using MeanOpacS = singularity::photons::MeanSOpacityBase;
+using OpacS =
+    singularity::opac::photons::impl::S_Variant<singularity::opac::photons::GrayS,
+                                                singularity::opac::photons::ThomsonS>;
+using MeanOpacS = singularity::opac::photons::MeanSOpacityBase;
 
 } // namespace RiotOpacity
 
