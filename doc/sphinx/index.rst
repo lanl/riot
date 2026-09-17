@@ -5,7 +5,7 @@
       :align: left
       :width: 800px
 
-block-adaptive, performance portable mutli-material radiation hydrodynamics
+block-adaptive, performance portable multi-material radiation hydrodynamics
 ==================================================================================
 
 .. only:: html
