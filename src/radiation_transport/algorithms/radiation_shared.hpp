@@ -236,6 +236,38 @@ inline int AddGroupStructure(StateDescriptor *materials, Params &params) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn void AddMixFrac
+//! \brief Store the phenomenological opacity mixing parameter.  mix_frac in [0,1]
+//! interpolates the multi-material extinction coefficient between the Amagat closure
+//! (mix_frac = 0, each material at its intrinsic density rho_m weighted by its volume
+//! fraction f_m) and the homogeneous closure (mix_frac = 1, each material evaluated at
+//! the partial density f_m*rho_m).
+inline void AddMixFrac(ParameterInput *pin, Params &params) {
+  const Real mix_frac = pin->GetOrAddReal(
+      radiation_block, "mix_frac", 0.0,
+      "Phenomenological opacity mixing parameter in [0,1] interpolating between the "
+      "Amagat (0) and homogeneous (1) opacity closures");
+  PARTHENON_REQUIRE(mix_frac >= 0.0 && mix_frac <= 1.0, "mix_frac must be in [0,1]!");
+  params.Add("mix_frac", mix_frac);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void AddOpacFloors
+//! \brief Store the density/temperature floors applied to opacity evaluations.
+inline void AddOpacFloors(ParameterInput *pin, Params &params) {
+  const Real opac_rho_min =
+      pin->GetOrAddReal(radiation_block, "opac_rho_min", 0.0,
+                        "Density floor [g/cc] for opacity evaluations");
+  const Real opac_temp_min =
+      pin->GetOrAddReal(radiation_block, "opac_temp_min", 0.0,
+                        "Temperature floor [K] for opacity evaluations");
+  PARTHENON_REQUIRE(opac_rho_min >= 0.0, "opac_rho_min must be >= 0!");
+  PARTHENON_REQUIRE(opac_temp_min >= 0.0, "opac_temp_min must be >= 0!");
+  params.Add("opac_rho_min", opac_rho_min);
+  params.Add("opac_temp_min", opac_temp_min);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn void AddFixedPgenOpac
 //! \brief Store the flag that fixes opacities to the values set in the ProblemGenerator.
 inline void AddFixedPgenOpac(ParameterInput *pin, Params &params) {
@@ -263,6 +295,8 @@ inline SharedParams AddSharedParams(ParameterInput *pin, StateDescriptor *materi
   ConfigOption::AddUnitUtils(pin, params);
   const bool coupling = ConfigOption::AddCouplingParams(pin, params);
   ConfigOption::AddCouplingUtils(pin, params, coupling);
+  ConfigOption::AddMixFrac(pin, params);
+  ConfigOption::AddOpacFloors(pin, params);
   ConfigOption::AddFixedPgenOpac(pin, params);
   SharedParams shared;
   shared.nangles = ConfigOption::AddAngularMesh(pin, params);

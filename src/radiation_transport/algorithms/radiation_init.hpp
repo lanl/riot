@@ -45,6 +45,7 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace cm = cell_variables::material_averaged;
   namespace ccrad = cell_variables::cell_averaged::rad;
   if (md->NumBlocks() == 0) return;
 
@@ -52,12 +53,15 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   const auto rad_pkg = GetRadPackage(pm->packages);
   const int ngroups = rad_pkg->Param<int>("ngroups");
   const int nangles = rad_pkg->Param<int>("nangles");
+  const Real mix_frac = rad_pkg->Param<Real>("mix_frac");
+  const Real opac_rho_min = rad_pkg->Param<Real>("opac_rho_min");
+  const Real opac_temp_min = rad_pkg->Param<Real>("opac_temp_min");
 
   // Set opacities
-  // NOTE(@pdmullen): We are not required to set opacities in the ProblemGenerator,
+  // NOTE(@pdmullen): We are not required to set opacities in the initialization,
   // however, this makes them visible in the initial condition which is useful for viz
   static auto desc =
-      MakePackDescriptor<ccmat::rho, ccmat::volume_fraction, ccbulk::temperature,
+      MakePackDescriptor<cm::rho, ccmat::rho, ccmat::volume_fraction, ccbulk::temperature,
                          ccrad::aa, ccrad::ss>((pm->resolved_packages).get());
   auto v = desc.GetPack(md);
 
@@ -72,25 +76,34 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
+          const Real temp = std::max(v(b, ccbulk::temperature(), k, j, i), opac_temp_min);
           for (int gg = 0; gg < ngroups; ++gg) {
             // Set opacities
             Real &aa = v(b, ccrad::aa(gg), k, j, i) = 0.0;
             Real &ss = v(b, ccrad::ss(gg), k, j, i) = 0.0;
-            const Real &temp = v(b, ccbulk::temperature(), k, j, i);
             for (int m = 0; m < v.GetSize(b, ccmat::rho()); ++m) {
+              const Real &rhom = v(b, cm::rho(m), k, j, i);
+              const Real &rhobarm = v(b, ccmat::rho(m), k, j, i);
               const Real &vfracm = v(b, ccmat::volume_fraction(m), k, j, i);
-              const Real rhom = v(b, ccmat::rho(m), k, j, i) / (vfracm + 1.0e-100);
               const int &mat_id = v(b, ccmat::rho(m)).sparse_id;
               const int &phase_id = v(b, ccmat::rho(m)).v;
               const int opac_id = opac_from_matid(mat_id) + phase_id;
-              const Real aam = (rhom > 0)
-                                   ? opac_a(opac_id).AbsorptionCoefficient(rhom, temp, gg)
-                                   : 0.0;
-              const Real ssm = (rhom > 0)
-                                   ? opac_s(opac_id).ScatteringCoefficient(rhom, temp, gg)
-                                   : 0.0;
-              aa += vfracm * aam;
-              ss += vfracm * ssm;
+              const auto &oam = opac_a(opac_id);
+              const auto &osm = opac_s(opac_id);
+              const Real rm = std::max(rhom, opac_rho_min);
+              const Real rbarm = std::max(rhobarm, opac_rho_min);
+              const Real wamg = (rhobarm > 0) ? (1.0 - mix_frac) * vfracm : 0.0;
+              const Real whom = (rhobarm > 0) ? mix_frac : 0.0;
+              const Real aam_amg =
+                  (wamg > 0.0) ? oam.AbsorptionCoefficient(rm, temp, gg) : 0.0;
+              const Real aam_hom =
+                  (whom > 0.0) ? oam.AbsorptionCoefficient(rbarm, temp, gg) : 0.0;
+              const Real ssm_amg =
+                  (wamg > 0.0) ? osm.ScatteringCoefficient(rm, temp, gg) : 0.0;
+              const Real ssm_hom =
+                  (whom > 0.0) ? osm.ScatteringCoefficient(rbarm, temp, gg) : 0.0;
+              aa += wamg * aam_amg + whom * aam_hom;
+              ss += wamg * ssm_amg + whom * ssm_hom;
             }
           }
         });

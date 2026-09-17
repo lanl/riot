@@ -133,7 +133,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   explicit_pkg->EstimateTimestepMesh = EstimateTimestepMesh;
 
   // Set Moments
-  explicit_pkg->FillDerivedMesh = SetMomentsMesh;
+  explicit_pkg->UserWorkBeforeOutputMesh = SetMomentsMesh;
 
   return explicit_pkg;
 }
@@ -332,7 +332,6 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
                                            integrator.get(), base, r0, r1, nsteps, dt);
 
     // Update fluid state if radiation affects fluid
-    TaskID aux = none;
     if (affect_fluid) {
       auto pte = tl.AddTask(
           cycler_id,
@@ -349,17 +348,8 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
           },
           a0.get());
       auto u_bc = parthenon::AddBoundaryExchangeTasks(pte, tl, a0, pmesh->multilevel);
-      aux = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, a0.get());
+      auto derive = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, a0.get());
     }
-
-    // Update moments
-    auto moments = tl.AddTask(
-        cycler_id | aux,
-        [](MeshData<Real> *md) {
-          SetMomentsMesh(md);
-          return TaskStatus::complete;
-        },
-        r0.get());
   }
 
   return tc;
@@ -424,6 +414,9 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   // Resolved packages and indexing
   auto &resolved_pkgs = pm->resolved_packages;
   const int ngroups = explicit_pkg->Param<int>("ngroups");
+  const Real mix_frac = explicit_pkg->Param<Real>("mix_frac");
+  const Real opac_rho_min = explicit_pkg->Param<Real>("opac_rho_min");
+  const Real opac_temp_min = explicit_pkg->Param<Real>("opac_temp_min");
 
   // Opacity parameters
   auto &mat_pkg = pm->packages.Get("materials");
@@ -437,8 +430,8 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   namespace cm = cell_variables::material_averaged;
   namespace ccrad = cell_variables::cell_averaged::rad;
   static auto desc =
-      MakePackDescriptor<ccrad::aa, ccrad::ss, cm::rho, ccmat::volume_fraction,
-                         ccbulk::temperature>(resolved_pkgs.get());
+      MakePackDescriptor<cm::rho, ccmat::rho, ccmat::volume_fraction, ccbulk::temperature,
+                         ccrad::aa, ccrad::ss>(resolved_pkgs.get());
   auto pack = desc.GetPack(md);
 
   // Set bulk opacities
@@ -450,19 +443,31 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
                     const int &i) {
         Real &aa = pack(b, ccrad::aa(gg), k, j, i) = 0.0;
         Real &ss = pack(b, ccrad::ss(gg), k, j, i) = 0.0;
-        const Real &temp = pack(b, ccbulk::temperature(), k, j, i);
+        const Real temp =
+            std::max(pack(b, ccbulk::temperature(), k, j, i), opac_temp_min);
         for (int m = 0; m < pack.GetSize(b, cm::rho()); ++m) {
           const Real &rhom = pack(b, cm::rho(m), k, j, i);
+          const Real &rhobarm = pack(b, ccmat::rho(m), k, j, i);
           const Real &vfracm = pack(b, ccmat::volume_fraction(m), k, j, i);
-          const int &mat_id = pack(b, cm::rho(m)).sparse_id;
-          const int &phase_id = pack(b, cm::rho(m)).v;
+          const int &mat_id = pack(b, ccmat::rho(m)).sparse_id;
+          const int &phase_id = pack(b, ccmat::rho(m)).v;
           const int opac_id = opac_from_matid(mat_id) + phase_id;
-          const Real aam =
-              (rhom > 0) ? opac_a(opac_id).AbsorptionCoefficient(rhom, temp, gg) : 0.0;
-          const Real ssm =
-              (rhom > 0) ? opac_s(opac_id).ScatteringCoefficient(rhom, temp, gg) : 0.0;
-          aa += vfracm * aam;
-          ss += vfracm * ssm;
+          const auto &oam = opac_a(opac_id);
+          const auto &osm = opac_s(opac_id);
+          const Real rm = std::max(rhom, opac_rho_min);
+          const Real rbarm = std::max(rhobarm, opac_rho_min);
+          const Real wamg = (rhobarm > 0) ? (1.0 - mix_frac) * vfracm : 0.0;
+          const Real whom = (rhobarm > 0) ? mix_frac : 0.0;
+          const Real aam_amg =
+              (wamg > 0.0) ? oam.AbsorptionCoefficient(rm, temp, gg) : 0.0;
+          const Real aam_hom =
+              (whom > 0.0) ? oam.AbsorptionCoefficient(rbarm, temp, gg) : 0.0;
+          const Real ssm_amg =
+              (wamg > 0.0) ? osm.ScatteringCoefficient(rm, temp, gg) : 0.0;
+          const Real ssm_hom =
+              (whom > 0.0) ? osm.ScatteringCoefficient(rbarm, temp, gg) : 0.0;
+          aa += wamg * aam_amg + whom * aam_hom;
+          ss += wamg * ssm_amg + whom * ssm_hom;
         }
       });
 
