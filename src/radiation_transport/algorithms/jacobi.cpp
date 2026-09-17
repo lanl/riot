@@ -156,13 +156,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
              "Limit timestep of implicit update of thermal radiation transport by "
              "cfl * dt_ratio_hyperbolic * min_dx / c.  Setting to -1 does not permit "
              "this timestep controller to limit global timestep.");
-  params.Add(
-      "dt_ratio_lag",
-      pin->GetOrAddReal(
-          input_block, "dt_ratio_lag", -1.0,
-          "EXPERIMENTAL: Limit timestep of implicit update of thermal radiation "
-          "transport to account for lagged opacities in implicit solve. Setting "
-          "to -1 does not permit this timestep controller to limit global timestep."));
   params.Add("split_g1", pin->GetOrAddBoolean(input_block, "split_g1", true,
                                               "Split Jacobi coefficient g1 = g1' + g1'' "
                                               "where g1' and g1'' are positive and "
@@ -230,7 +223,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   jacobi_pkg->EstimateTimestepMesh = EstimateTimestepMesh;
 
   // Set Moments
-  jacobi_pkg->FillDerivedMesh = SetMomentsMesh;
+  jacobi_pkg->UserWorkBeforeOutputMesh = SetMomentsMesh;
 
   return jacobi_pkg;
 }
@@ -245,12 +238,9 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
   auto jacobi_pkg = pm->packages.Get(pkg_name);
   const Real dt_ratio_hyperbolic = jacobi_pkg->Param<Real>("dt_ratio_hyperbolic");
-  const Real dt_ratio_lag = jacobi_pkg->Param<Real>("dt_ratio_lag");
-  const bool do_lag = (dt_ratio_lag > 0.0) && jacobi_pkg->Param<bool>("coupling");
 
-  // If neither dt_ratio_hyperbolic nor dt_ratio_lag constraints are active, radiation
-  // does not vote a timestep.
-  if (dt_ratio_hyperbolic < 0.0 && !do_lag) return max_dt;
+  // If dt_ratio_hyperbolic not active, radiation does not vote a timestep.
+  if (dt_ratio_hyperbolic < 0.0) return max_dt;
 
   // Resolved packages and indexing
   auto resolved_pkgs = pm->resolved_packages;
@@ -321,85 +311,9 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
         });
   }
 
-  // Time controller accounting for lagged opacity
-  Real lag_dt = max_dt;
-  if (do_lag) {
-    const Real tfloor = pm->packages.Get("hydro")->Param<Real>("temp_floor");
-    const int ngroups = jacobi_pkg->Param<int>("ngroups");
-    const auto fbnd = *(jacobi_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
-
-    // Opacity models
-    auto &mat_pkg = pm->packages.Get("materials");
-    const auto opac_a = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacA>>("d.d.opac_a");
-    const auto opac_from_matid = mat_pkg->Param<ParArray1D<int>>("d.opac_from_matid");
-
-    namespace ccbulk = cell_variables::cell_averaged::bulk;
-    namespace ccmat = cell_variables::cell_averaged::mat;
-    namespace cm = cell_variables::material_averaged;
-    namespace ccrad = cell_variables::cell_averaged::rad;
-    static auto desc_c =
-        MakePackDescriptor<cm::rho, ccmat::rho, ccmat::volume_fraction, cm::specific_heat,
-                           ccbulk::temperature, ccrad::moments>(resolved_pkgs.get());
-    auto vc = desc_c.GetPack(md);
-    const auto uu = unit_utils;
-
-    using rt = RiotFlatReduce::ReductionType<Kokkos::Min<Real>>;
-    auto idx_space = rt::GetIndexSpace(IndexDomain::interior, vc.GetNBlocks(), md);
-    const Real teq_min = rt::four_d(
-        "Jacobi::EquilTimestep", idx_space,
-        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &ldt) {
-          const Real temp = vc(b, ccbulk::temperature(), k, j, i);
-          if (temp <= tfloor) return;
-
-          // Volumetric heat capacity Cv
-          const int nmat = vc.GetSize(b, cm::rho());
-          Real Cv = 0.0;
-          for (int m = 0; m < nmat; ++m) {
-            Cv += vc(b, ccmat::rho(m), k, j, i) * vc(b, cm::specific_heat(m), k, j, i);
-          }
-          if (Cv <= 0.0) return;
-
-          // Coupling rates
-          Real rate_sum1 = 0.0;
-          Real rate_sum2 = 0.0;
-          for (int gg = 0; gg < ngroups; ++gg) {
-            Real alpha = 0.0;
-            Real dalpha = 0.0;
-            const Real eps = Emissivity(gg, temp, fbnd, ngroups, uu);
-            const Real depsdT = EmissivityDT(gg, temp, fbnd, ngroups, uu);
-            for (int m = 0; m < nmat; ++m) {
-              const Real rhom = vc(b, cm::rho(m), k, j, i);
-              if (rhom <= 0.0) continue;
-              const Real vfm = vc(b, ccmat::volume_fraction(m), k, j, i);
-              const int mat_id = vc(b, cm::rho(m)).sparse_id;
-              const int phase_id = vc(b, cm::rho(m)).v;
-              const int opac_id = opac_from_matid(mat_id) + phase_id;
-              const Real aam = opac_a(opac_id).AbsorptionCoefficient(rhom, temp, gg);
-              const Real dloga =
-                  opac_a(opac_id).DLogAbsorptionCoefficientDLogT(rhom, temp, gg);
-              alpha += vfm * aam;
-              dalpha += vfm * aam * dloga;
-            }
-            rate_sum1 += (vc(b, ccrad::moments(gg), k, j, i) - eps) * dalpha;
-            rate_sum2 += alpha * depsdT;
-          }
-          const Real sum_rate = std::abs(rate_sum1) / (dt_ratio_lag * temp) - rate_sum2;
-          if (sum_rate <= 0.0) return;
-
-          const Real teq = Cv / (cc * sum_rate);
-          ldt = std::min(ldt, teq);
-        });
-
-    lag_dt = teq_min;
-  }
-
   // Set timestep
   const Real cfl = jacobi_pkg->Param<Real>("cfl");
-  Real dt = max_dt;
-  if (dt_ratio_hyperbolic >= 0.0)
-    dt = std::min(dt, cfl * std::min(min_sdt, min_adt) * dt_ratio_hyperbolic);
-  if (do_lag) dt = std::min(dt, lag_dt);
-  return dt;
+  return cfl * std::min(min_sdt, min_adt) * dt_ratio_hyperbolic;
 }
 
 //----------------------------------------------------------------------------------------
@@ -600,7 +514,6 @@ TaskCollection JacobiCommit(Mesh *pmesh, const Real dt) {
         std::vector<MetadataFlag>({Metadata::Independent}), rbase.get(), rout.get());
 
     // Update fluid state if radiation affects fluid
-    TaskID aux = none;
     if (affect_fluid) {
       auto pte = tl.AddTask(
           feedback,
@@ -617,15 +530,8 @@ TaskCollection JacobiCommit(Mesh *pmesh, const Real dt) {
           },
           ubase.get());
       auto u_bc = parthenon::AddBoundaryExchangeTasks(pte, tl, ubase, pmesh->multilevel);
-      aux = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, ubase.get());
+      auto derive = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, ubase.get());
     }
-    auto moments = tl.AddTask(
-        copy_reg | aux,
-        [](MeshData<Real> *md) {
-          SetMomentsMesh(md);
-          return TaskStatus::complete;
-        },
-        rbase.get());
   }
 
   return tc;
@@ -838,6 +744,9 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
   // Materials
   const bool coupling = jacobi_pkg->Param<bool>("coupling");
   const bool fixed_pgen_opac = jacobi_pkg->Param<bool>("fixed_pgen_opac");
+  const Real mix_frac = jacobi_pkg->Param<Real>("mix_frac");
+  const Real opac_rho_min = jacobi_pkg->Param<Real>("opac_rho_min");
+  const Real opac_temp_min = jacobi_pkg->Param<Real>("opac_temp_min");
   ParArray1D<RiotOpacity::MeanOpacA> opac_a;
   ParArray1D<RiotOpacity::MeanOpacS> opac_s;
   ParArray1D<int> opac_from_matid;
@@ -853,9 +762,8 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
   namespace ccr = cell_variables::cell_averaged::rad;
-  static auto desc_u =
-      MakePackDescriptor<cm::rho, ccmat::volume_fraction, ccbulk::temperature>(
-          resolved_pkgs.get());
+  static auto desc_u = MakePackDescriptor<cm::rho, ccmat::rho, ccmat::volume_fraction,
+                                          ccbulk::temperature>(resolved_pkgs.get());
   static auto desc_r =
       MakePackDescriptor<ccr::aa, ccr::ss, ccr::temperature>(resolved_pkgs.get());
   auto vu = desc_u.GetPack(ubase);
@@ -869,24 +777,34 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
         KOKKOS_LAMBDA(const int &b, const int &k, const int &j, const int &i) {
           vr(b, ccr::temperature(), k, j, i) = vu(b, ccbulk::temperature(), k, j, i);
           if (!(fixed_pgen_opac)) {
+            const Real temp =
+                std::max(vu(b, ccbulk::temperature(), k, j, i), opac_temp_min);
             for (int gg = 0; gg < ngroups; ++gg) {
               Real &aa = vr(b, ccr::aa(gg), k, j, i) = 0.0;
               Real &ss = vr(b, ccr::ss(gg), k, j, i) = 0.0;
-              const Real &temp = vu(b, ccbulk::temperature(), k, j, i);
               for (int m = 0; m < vu.GetSize(b, cm::rho()); ++m) {
                 const Real &rhom = vu(b, cm::rho(m), k, j, i);
-                const Real &vfm = vu(b, ccmat::volume_fraction(m), k, j, i);
-                const int &mat_id = vu(b, cm::rho(m)).sparse_id;
-                const int &phase_id = vu(b, cm::rho(m)).v;
+                const Real &rhobarm = vu(b, ccmat::rho(m), k, j, i);
+                const Real &vfracm = vu(b, ccmat::volume_fraction(m), k, j, i);
+                const int &mat_id = vu(b, ccmat::rho(m)).sparse_id;
+                const int &phase_id = vu(b, ccmat::rho(m)).v;
                 const int opac_id = opac_from_matid(mat_id) + phase_id;
-                const Real aam =
-                    (rhom > 0) ? opac_a(opac_id).AbsorptionCoefficient(rhom, temp, gg)
-                               : 0.0;
-                const Real ssm =
-                    (rhom > 0) ? opac_s(opac_id).ScatteringCoefficient(rhom, temp, gg)
-                               : 0.0;
-                aa += vfm * aam;
-                ss += vfm * ssm;
+                const auto &oam = opac_a(opac_id);
+                const auto &osm = opac_s(opac_id);
+                const Real rm = std::max(rhom, opac_rho_min);
+                const Real rbarm = std::max(rhobarm, opac_rho_min);
+                const Real wamg = (rhobarm > 0) ? (1.0 - mix_frac) * vfracm : 0.0;
+                const Real whom = (rhobarm > 0) ? mix_frac : 0.0;
+                const Real aam_amg =
+                    (wamg > 0.0) ? oam.AbsorptionCoefficient(rm, temp, gg) : 0.0;
+                const Real aam_hom =
+                    (whom > 0.0) ? oam.AbsorptionCoefficient(rbarm, temp, gg) : 0.0;
+                const Real ssm_amg =
+                    (wamg > 0.0) ? osm.ScatteringCoefficient(rm, temp, gg) : 0.0;
+                const Real ssm_hom =
+                    (whom > 0.0) ? osm.ScatteringCoefficient(rbarm, temp, gg) : 0.0;
+                aa += wamg * aam_amg + whom * aam_hom;
+                ss += wamg * ssm_amg + whom * ssm_hom;
               }
             }
           }

@@ -695,10 +695,10 @@ GetBoundaryPackDescriptorMap(std::shared_ptr<MeshBlockData<Real>> &rc) {
 //----------------------------------------------------------------------------------------
 //! \fn  void SetMomentsMesh
 //! \brief
-inline void SetMomentsMesh(MeshData<Real> *md) {
+inline void SetMomentsMesh(Mesh *pm, ParameterInput *pin, SimTime &tm) {
   namespace ccrad = cell_variables::cell_averaged::rad;
 
-  auto pm = md->GetParentPointer();
+  auto md = pm->mesh_data.Get().get();
   auto &resolved_pkgs = pm->resolved_packages;
   static auto desc =
       MakePackDescriptor<ccrad::intensity, ccrad::moments>(resolved_pkgs.get());
