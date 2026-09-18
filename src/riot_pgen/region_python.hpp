@@ -20,6 +20,10 @@
 #include <basic_types.hpp>
 
 #include "region_primitives.hpp"
+using region_primitives::field_data_t;
+using region_primitives::field_func_t;
+using region_primitives::mask_func_t;
+using region_primitives::sample_positions_t;
 #ifdef RIOT_ENABLE_PYTHON
 #include "riot_utils/py_caller.hpp"
 

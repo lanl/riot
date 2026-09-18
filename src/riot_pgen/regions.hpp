@@ -34,23 +34,13 @@
 #include "riot_utils/type_maps.hpp"
 #include "variables.hpp"
 
+using region_primitives::field_func_t;
+using region_primitives::mask_func_t;
+using region_primitives::mask_generator_t;
+using region_primitives::sample_positions_t;
+using region_primitives::VectorOfArrays;
+
 namespace region_pgen {
-
-#define FOREACH_REGION                                                                   \
-  REG(background)                                                                        \
-  REG(inside_sphere)                                                                     \
-  REG(inside_spherical_shell)                                                            \
-  REG(inside_cylinder)                                                                   \
-  REG(inside_cylindrical_shell)                                                          \
-  REG(inside_ellipsoid)                                                                  \
-  REG(inside_ellipsoidal_shell)                                                          \
-  REG(inside_rectangle)                                                                  \
-  REG(cad)
-
-// build a map of region name to mask generator
-#define REG(name) {#name, name},
-static std::map<std::string, mask_generator_t> region_mask_map({FOREACH_REGION});
-#undef REG
 
 enum class InitType {
   PT,
