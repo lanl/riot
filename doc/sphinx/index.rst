@@ -54,6 +54,7 @@ block-adaptive, performance portable multi-material radiation hydrodynamics
    src/packages/regions
    src/packages/python_interface
    src/packages/diagnostics
+   src/packages/visualization
    src/programmer_guide
    src/contributing
 
