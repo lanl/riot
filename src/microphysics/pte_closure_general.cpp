@@ -206,6 +206,9 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
               // mats with the least ccmat_rho, until PTE (or single mat) solution
               // acquired...
               for (int iter = 0; iter < nmat_cell; iter++) {
+                // Record backup attempt
+                if (track_pte_statistics) pv(diag::pte_nbackups(), kji) += 1;
+
                 // Check number of materials in cell this iteration
                 int nmat_backup = 0;
                 for (int m = 0; m < nmat; m++) {

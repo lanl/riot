@@ -1,0 +1,112 @@
+# This file was made with the assistance of generative AI.
+name: Unit tests (CPU)
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+  # Keep a baseline compiler cache that pull-request builds can restore.
+  push:
+    branches: [main]
+
+# ccache is a compiler launcher that caches object files and carefully
+# checks that the compilation should be identical, and if it is, uses
+# the cache. We use it to speedup compilation dramatically and cache
+# results of dependencies like parthenon object files. Github allows
+# for caching using workspaces, so we use that.
+env:
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_MAXSIZE: 5G
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-26.04
+    strategy:
+      # Let both compiler results complete even if the other compiler fails.
+      fail-fast: false
+      matrix:
+        compiler:
+          - name: gcc
+            cc: gcc
+            cxx: g++
+          - name: clang
+            cc: clang-20
+            cxx: clang++-20
+    env:
+      # Use the selected compiler directly and through MPICH's wrappers.
+      CC: ${{ matrix.compiler.cc }}
+      CXX: ${{ matrix.compiler.cxx }}
+      MPICH_CC: ${{ matrix.compiler.cc }}
+      MPICH_CXX: ${{ matrix.compiler.cxx }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Initialize in-tree build dependencies
+        run: |
+          git submodule update --init --recursive \
+            external/parthenon \
+            external/kokkos-kernels \
+            external/singularity-eos \
+            external/singularity-opac
+
+      - name: Identify in-tree dependency revisions
+        id: dependencies
+        run: |
+          # A dependency update selects a fresh cache namespace.
+          echo "hash=$(git submodule status --recursive | sha256sum | cut -d' ' -f1)" \
+            >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ubuntu build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            binutils-gold \
+            ccache \
+            libcatch2-dev \
+            libhdf5-mpich-dev \
+            git \
+            cmake
+
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          # This is github's mechanism for pulling out stashed data via workspaces
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-${{ steps.dependencies.outputs.hash }}
+          restore-keys: |
+            ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-
+
+      - name: Build, install, and test
+        run: |
+          python -m venv riot_venv
+          . riot_venv/bin/activate
+          python -m pip install numpy scipy h5py "pybind11[global]"
+
+          cmake -S . -B build \
+            -DRIOT_ENABLE_UNIT_TESTS=ON \
+            -DRIOT_BUILD_CATCH2=OFF \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=gold \
+            -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=gold \
+            -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=gold \
+            -DPython_ROOT_DIR="$VIRTUAL_ENV" \
+            -DCMAKE_INSTALL_PREFIX="$VIRTUAL_ENV"
+
+          cmake --build build --parallel -j 4
+          ccache --show-stats
+          cmake --install build
+          ctest --test-dir build --output-on-failure

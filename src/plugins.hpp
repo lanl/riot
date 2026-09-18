@@ -22,7 +22,7 @@ namespace riot_plugins {
 struct Plugins {
   Plugins() = default;
   void DriverParams(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm);
-  void Initialize(ParameterInput *pin, Packages_t &pkgs);
+  static void Initialize(ParameterInput *pin, Packages_t &pkgs);
   TaskID AddSources(TaskList &tl, TaskID &dep, MeshData<Real> *mu0, Mesh *pmesh,
                     const int partition_id, const Real dt) const;
 

@@ -37,7 +37,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Gravity
   int gravity_dim =
-      pin->GetOrAddInteger("gravity", "gravity_dim", X2DIR,
+      pin->GetOrAddInteger("gravity", "gravity_dim", X2DIR - 1, // default \hat{x2} dir
                            "Direction to apply gravity, if gravity is enabled");
   params.Add("gravity_dim", gravity_dim);
   Real gravity_g =
