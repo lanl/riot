@@ -165,11 +165,12 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     }
 
     auto [masks_vec, mask_id] = MakeMasks(pin, layer);
-    
+
     auto scale_type = GetType(field_scale, ScaleTypeMap);
     auto scale = [&](const Real val) {
       if (scale_type == ScaleType::log) {
-        PARTHENON_REQUIRE_THROWS(val > 0.0, "Trying to take the log of a negative number is a no-no.");
+        PARTHENON_REQUIRE_THROWS(
+            val > 0.0, "Trying to take the log of a negative number is a no-no.");
         return std::log10(val);
       }
       return val;
@@ -202,7 +203,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     // add this layer to the camera
     camera.layer.emplace_back(MakeNormalizedDataBox(red), MakeNormalizedDataBox(green),
                               MakeNormalizedDataBox(blue), MakeNormalizedDataBox(alpha),
-                              label, colorbar, scale(cmin), scale(cmax), GetType(type, VizTypeMap), scale_type);
+                              label, colorbar, scale(cmin), scale(cmax),
+                              GetType(type, VizTypeMap), scale_type);
   }
 
   rp.type.push_back(layer_type);
@@ -966,7 +968,9 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       size_t max_range_width = 0;
       for (auto &layer : camera[i].layer) {
         if (!layer.colorbar) continue;
-        auto layer_label = layer.scale_type == ScaleType::log ? "log10(" + layer.label + ")" : layer.label;
+        auto layer_label = layer.scale_type == ScaleType::log
+                               ? "log10(" + layer.label + ")"
+                               : layer.label;
         max_label_width = std::max(max_label_width, layer_label.size());
         auto range_str = FormatMinMax(layer.min_range, layer.max_range);
         max_range_width = std::max(max_range_width, range_str.size());
@@ -1038,7 +1042,9 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
             }
           }
         }
-        auto layer_label = layer.scale_type == ScaleType::log ? "log10(" + layer.label + ")" : layer.label;
+        auto layer_label = layer.scale_type == ScaleType::log
+                               ? "log10(" + layer.label + ")"
+                               : layer.label;
         draw_text(&host_images(i, 0), w, total_h, max_label_width / 2,
                   h + (ilabel + 1 + timebar) * t - 9, layer_label, 255, 255, 255);
         draw_text(&host_images(i, 0), w, total_h, w - max_range_width / 2,

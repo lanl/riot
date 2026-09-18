@@ -49,8 +49,7 @@ inline std::unordered_map<std::string, GradType> GradTypeMap{
     {"log_magnitude", GradType::log_mag}};
 enum class ScaleType { linear, log };
 inline std::unordered_map<std::string, ScaleType> ScaleTypeMap{
-    {"linear", ScaleType::linear},
-    {"log", ScaleType::log}};
+    {"linear", ScaleType::linear}, {"log", ScaleType::log}};
 
 template <typename T>
 T GetType(const std::string &key, const std::unordered_map<std::string, T> &map) {
@@ -75,7 +74,7 @@ T GetType(const std::string &key, const std::unordered_map<std::string, T> &map)
 }
 
 template <typename T>
-T clamp(const T& val, const T& min_val, const T& max_val) {
+T clamp(const T &val, const T &min_val, const T &max_val) {
   return std::min(std::max(val, min_val), max_val);
 }
 
@@ -259,24 +258,24 @@ class VectorView1D {
 struct RenderingParams {
 
   RenderingParams(vec2d_t<VizType> &t, vec2d_t<int> &pack_idx,
-                  vec2d_t<int> &alpha_pack_idx, vec2d_t<ScaleType> &field_scale, vec2d_t<Real> &range_min,
-                  vec2d_t<Real> &range_max, vec2d_t<Real> &alpha_range_min,
-                  vec2d_t<Real> &alpha_range_max, vec2d_t<GradType> &use_grad,
-                  vec2d_t<GradType> &alpha_use_grad, std::vector<Real> &alpha_tol,
-                  vec2d_t<DataBox> &r, vec2d_t<DataBox> &g, vec2d_t<DataBox> &b,
-                  vec2d_t<DataBox> &a, vec3d_t<Real> &contours, vec3d_t<Real> &rc,
-                  vec3d_t<Real> &gc, vec3d_t<Real> &bc, vec3d_t<Real> &ac,
-                  vec3d_t<Real> &slice_x, vec3d_t<Real> &slice_n, std::vector<Real> &xl,
-                  std::vector<Real> &yl, std::vector<Real> &zl,
+                  vec2d_t<int> &alpha_pack_idx, vec2d_t<ScaleType> &field_scale,
+                  vec2d_t<Real> &range_min, vec2d_t<Real> &range_max,
+                  vec2d_t<Real> &alpha_range_min, vec2d_t<Real> &alpha_range_max,
+                  vec2d_t<GradType> &use_grad, vec2d_t<GradType> &alpha_use_grad,
+                  std::vector<Real> &alpha_tol, vec2d_t<DataBox> &r, vec2d_t<DataBox> &g,
+                  vec2d_t<DataBox> &b, vec2d_t<DataBox> &a, vec3d_t<Real> &contours,
+                  vec3d_t<Real> &rc, vec3d_t<Real> &gc, vec3d_t<Real> &bc,
+                  vec3d_t<Real> &ac, vec3d_t<Real> &slice_x, vec3d_t<Real> &slice_n,
+                  std::vector<Real> &xl, std::vector<Real> &yl, std::vector<Real> &zl,
                   std::vector<Real> &ambient, std::vector<Real> &diffuse,
                   vec3d_t<mask_tuple_t> &mask, vec3d_t<int> &mask_id)
-      : type(t), pack_idx(pack_idx), alpha_pack_idx(alpha_pack_idx), field_scale(field_scale), range_min(range_min),
-        range_max(range_max), alpha_range_min(alpha_range_min),
-        alpha_range_max(alpha_range_max), use_grad(use_grad),
-        alpha_use_grad(alpha_use_grad), alpha_tol(alpha_tol), r(r), g(g), b(b), a(a),
-        contours(contours), rc(rc), gc(gc), bc(bc), ac(ac), slice_x(slice_x),
-        slice_n(slice_n), xl(xl), yl(yl), zl(zl), ambient(ambient), diffuse(diffuse),
-        mask(mask), mask_id(mask_id) {
+      : type(t), pack_idx(pack_idx), alpha_pack_idx(alpha_pack_idx),
+        field_scale(field_scale), range_min(range_min), range_max(range_max),
+        alpha_range_min(alpha_range_min), alpha_range_max(alpha_range_max),
+        use_grad(use_grad), alpha_use_grad(alpha_use_grad), alpha_tol(alpha_tol), r(r),
+        g(g), b(b), a(a), contours(contours), rc(rc), gc(gc), bc(bc), ac(ac),
+        slice_x(slice_x), slice_n(slice_n), xl(xl), yl(yl), zl(zl), ambient(ambient),
+        diffuse(diffuse), mask(mask), mask_id(mask_id) {
     nlayers = parthenon::ParArray1D<int>("nlayers", t.size());
     auto host_nlayers = nlayers.GetHostMirror();
     for (int i = 0; i < t.size(); i++)
@@ -305,12 +304,12 @@ struct RenderingParams {
   }
 
   explicit RenderingParams(RenderingParamsVec &rv)
-      : RenderingParams(rv.type, rv.pack_idx, rv.alpha_pack_idx, rv.field_scale, rv.range_min,
-                        rv.range_max, rv.alpha_range_min, rv.alpha_range_max, rv.use_grad,
-                        rv.alpha_use_grad, rv.alpha_tol, rv.r, rv.g, rv.b, rv.a,
-                        rv.contours, rv.rc, rv.gc, rv.bc, rv.ac, rv.slice_x, rv.slice_n,
-                        rv.xl, rv.yl, rv.zl, rv.ambient, rv.diffuse, rv.masks,
-                        rv.mask_id) {}
+      : RenderingParams(rv.type, rv.pack_idx, rv.alpha_pack_idx, rv.field_scale,
+                        rv.range_min, rv.range_max, rv.alpha_range_min,
+                        rv.alpha_range_max, rv.use_grad, rv.alpha_use_grad, rv.alpha_tol,
+                        rv.r, rv.g, rv.b, rv.a, rv.contours, rv.rc, rv.gc, rv.bc, rv.ac,
+                        rv.slice_x, rv.slice_n, rv.xl, rv.yl, rv.zl, rv.ambient,
+                        rv.diffuse, rv.masks, rv.mask_id) {}
 
   KOKKOS_INLINE_FUNCTION
   PixelVal val_to_rgba(const int outer, const int inner, Real val,
@@ -646,9 +645,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       // figure out distance to contours
       else if (rp.type(cam_id, ilay) == VizType::contour ||
                rp.type(cam_id, ilay) == VizType::contour_slice) {
-        std::array<Real, 3> final_x{x[0] + h * v[0],
-                                    x[1] + h * v[1],
-                                    x[2] + h * v[2]};
+        std::array<Real, 3> final_x{x[0] + h * v[0], x[1] + h * v[1], x[2] + h * v[2]};
         if (!mask[ilay]) {
           if (!rp.masks(cam_id, ilay, final_x[0], final_x[1], final_x[2])) continue;
         }
