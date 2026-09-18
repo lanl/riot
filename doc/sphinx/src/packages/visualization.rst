@@ -28,8 +28,7 @@ defines one or more *cameras* in numbered blocks ``<riot_viz/camera0>``,
 ``<riot_viz/camera1>``, …; each camera produces one image (or image sequence).
 A camera references a list of *layers*, and each layer is its own input block
 that describes one thing to draw — a volume rendering, a slice, or a set of
-contours. Layers are composited front-to-back in the order listed, so a later
-layer draws over earlier ones.
+contours.
 
 At the scheduled times, RIOT seeds a ray-tracer particle for every pixel of
 every camera at the point where its ray enters the domain, marches those
