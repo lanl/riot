@@ -57,6 +57,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   int ncolorbars = 0;
   std::vector<VizType> layer_type;
   std::vector<int> layer_pack_idx, layer_alpha_pack_idx;
+  std::vector<ScaleType> layer_field_scale;
   std::vector<Real> layer_range_min, layer_range_max, layer_alpha_range_min,
       layer_alpha_range_max;
   std::vector<GradType> layer_use_grad, layer_alpha_use_grad;
@@ -69,6 +70,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     auto type = pin->Get<std::string>(layer, "type");
     auto field = pin->Get<std::string>(layer, "field");
     auto field_use_grad = pin->GetOrAdd<std::string>(layer, "field_use_grad", "none");
+    auto field_scale = pin->GetOrAdd<std::string>(layer, "field_scale", "linear");
     auto field_alpha = pin->GetOrAdd<std::string>(layer, "field_alpha", field);
     auto field_alpha_use_grad =
         pin->GetOrAdd<std::string>(layer, "field_alpha_use_grad", "none");
@@ -126,7 +128,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     }
 
     for (int i = 0; i < contour_alpha.size(); i++) {
-      contour_alpha[i] = std::clamp(contour_alpha[i], 0.0, 1.0);
+      contour_alpha[i] = clamp(contour_alpha[i], 0.0, 1.0);
     }
     auto cont_dev = RiotUtils::VectorToDevice(contours, "contours");
     auto cont_red_dev = RiotUtils::VectorToDevice(contour_red, "contour red");
@@ -163,16 +165,26 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     }
 
     auto [masks_vec, mask_id] = MakeMasks(pin, layer);
+    
+    auto scale_type = GetType(field_scale, ScaleTypeMap);
+    auto scale = [&](const Real val) {
+      if (scale_type == ScaleType::log) {
+        PARTHENON_REQUIRE_THROWS(val > 0.0, "Trying to take the log of a negative number is a no-no.");
+        return std::log10(val);
+      }
+      return val;
+    };
 
-    layer_type.push_back(VizTypeMap.at(type));
+    layer_type.push_back(GetType(type, VizTypeMap));
     layer_pack_idx.push_back(var_index);
     layer_alpha_pack_idx.push_back(alpha_var_index);
-    layer_range_min.push_back(cmin);
-    layer_range_max.push_back(cmax);
+    layer_field_scale.push_back(scale_type);
+    layer_range_min.push_back(scale(cmin));
+    layer_range_max.push_back(scale(cmax));
     layer_alpha_range_min.push_back(amin);
     layer_alpha_range_max.push_back(amax);
-    layer_use_grad.push_back(GradTypeMap.at(field_use_grad));
-    layer_alpha_use_grad.push_back(GradTypeMap.at(field_alpha_use_grad));
+    layer_use_grad.push_back(GetType(field_use_grad, GradTypeMap));
+    layer_alpha_use_grad.push_back(GetType(field_alpha_use_grad, GradTypeMap));
     layer_r.push_back(MakeNormalizedDeviceDataBox(red));
     layer_g.push_back(MakeNormalizedDeviceDataBox(green));
     layer_b.push_back(MakeNormalizedDeviceDataBox(blue));
@@ -190,12 +202,13 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     // add this layer to the camera
     camera.layer.emplace_back(MakeNormalizedDataBox(red), MakeNormalizedDataBox(green),
                               MakeNormalizedDataBox(blue), MakeNormalizedDataBox(alpha),
-                              label, colorbar, cmin, cmax, VizTypeMap.at(type));
+                              label, colorbar, scale(cmin), scale(cmax), GetType(type, VizTypeMap), scale_type);
   }
 
   rp.type.push_back(layer_type);
   rp.pack_idx.push_back(layer_pack_idx);
   rp.alpha_pack_idx.push_back(layer_alpha_pack_idx);
+  rp.field_scale.push_back(layer_field_scale);
   rp.range_min.push_back(layer_range_min);
   rp.range_max.push_back(layer_range_max);
   rp.alpha_range_min.push_back(layer_alpha_range_min);
@@ -282,7 +295,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
           if (lam < 0.0) return false;
           for (int dd = 0; dd < 3; dd++) {
             const Real x = cloc[dd] + lam * nray[dd];
-            if (x < xmin[dd] - 1.e-12 || x > xmax[dd] + 1.e-12) return false;
+            if (x < xmin[dd] - kGeomTol || x > xmax[dd] + kGeomTol) return false;
           }
           return true;
         };
@@ -329,8 +342,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
               trial[dd] = cloc[dd] + lambda[d] * nray[dd];
             }
             auto rt = std::sqrt(trial[0] * trial[0] + trial[1] * trial[1]);
-            if (rt < xmax[0] + 1.e-12 &&
-                (trial[2] > xmin[1] - 1e-12 && trial[2] < xmax[1] + 1.e-12)) {
+            if (rt < xmax[0] + kGeomTol &&
+                (trial[2] > xmin[1] - kGeomTol && trial[2] < xmax[1] + kGeomTol)) {
               face_dir = d;
               lambda_use = lambda[d];
             }
@@ -380,8 +393,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
       if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
         trial[face_dir] =
             (nray[face_dir] > 0.0
-                 ? xmin[face_dir] + (xmax[face_dir] - xmin[face_dir]) * 1.e-12
-                 : xmax[face_dir] - (xmax[face_dir] - xmin[face_dir]) * 1.e-12);
+                 ? xmin[face_dir] + (xmax[face_dir] - xmin[face_dir]) * kGeomTol
+                 : xmax[face_dir] - (xmax[face_dir] - xmin[face_dir]) * kGeomTol);
         face_id = 2 * face_dir + (nray[face_dir] < 0);
       } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
         if (face_dir == 1 && nray[2] > 0) {
@@ -400,7 +413,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
         face_id = 1;
         auto r =
             std::sqrt(trial[0] * trial[0] + trial[1] * trial[1] + trial[2] * trial[2]);
-        auto rb = xmax[0] * (1.0 - 1.e-14);
+        auto rb = xmax[0] * (1.0 - kGeomTol);
         trial[0] *= rb / r;
         trial[1] *= rb / r;
         trial[2] *= rb / r;
@@ -437,9 +450,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   std::queue<Real> tdump;
   if (dt_viz > 0.0) {
     tdump.push(0.0);
-    while (tdump.back() + dt_viz < tlim + 1.e-14 * dt_viz)
+    while (tdump.back() + dt_viz < tlim + kMarchTiny * dt_viz)
       tdump.push(tdump.back() + dt_viz);
-    if (std::abs(tlim - tdump.back()) < 1.e-14 * dt_viz) tdump.back() = tlim;
+    if (std::abs(tlim - tdump.back()) < kMarchTiny * dt_viz) tdump.back() = tlim;
   } else {
     for (auto &tnext : t_viz)
       tdump.push(tnext);
@@ -691,8 +704,8 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
           } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
             Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
                                   camera_pts(n, sample::y) * camera_pts(n, sample::y));
-            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < 1.e-6)
-              rcyl = block_xmax[0] - 1.e-12;
+            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < kBoundaryBand)
+              rcyl = block_xmax[0] - kGeomTol;
             const Real zcyl = camera_pts(n, sample::z);
             Real phi_cyl = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
             phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
@@ -953,7 +966,8 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       size_t max_range_width = 0;
       for (auto &layer : camera[i].layer) {
         if (!layer.colorbar) continue;
-        max_label_width = std::max(max_label_width, layer.label.size());
+        auto layer_label = layer.scale_type == ScaleType::log ? "log10(" + layer.label + ")" : layer.label;
+        max_label_width = std::max(max_label_width, layer_label.size());
         auto range_str = FormatMinMax(layer.min_range, layer.max_range);
         max_range_width = std::max(max_range_width, range_str.size());
       }
@@ -1024,8 +1038,9 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
             }
           }
         }
+        auto layer_label = layer.scale_type == ScaleType::log ? "log10(" + layer.label + ")" : layer.label;
         draw_text(&host_images(i, 0), w, total_h, max_label_width / 2,
-                  h + (ilabel + 1 + timebar) * t - 9, layer.label, 255, 255, 255);
+                  h + (ilabel + 1 + timebar) * t - 9, layer_label, 255, 255, 255);
         draw_text(&host_images(i, 0), w, total_h, w - max_range_width / 2,
                   h + (ilabel + 1 + timebar) * t - 9,
                   FormatMinMax(layer.min_range, layer.max_range), 255, 255, 255);

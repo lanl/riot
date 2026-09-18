@@ -29,6 +29,15 @@ namespace RayTrace {
 
 namespace rt = particles::ray_tracer;
 
+// Machine-epsilon-scaled tolerances used by snap_to_face to handle finite
+// precision in face/particle position comparisons. kFaceEps is the band within
+// which a particle is treated as sitting on a cell face; kFaceNudge is how far
+// it is then pushed across that face so the next cell-index calculation lands
+// in the cell being entered. kFaceNudge must stay comfortably larger than
+// kFaceEps.
+constexpr Real kFaceEps = 10 * std::numeric_limits<Real>::epsilon();
+constexpr Real kFaceNudge = 20 * kFaceEps;
+
 KOKKOS_FORCEINLINE_FUNCTION
 Real sign(const Real val) { return (val > 0) - (val < 0); };
 
@@ -131,53 +140,51 @@ class IntegratorBase : public CellInfo {
 
   KOKKOS_INLINE_FUNCTION
   void snap_to_face() {
-    // both of these fuzz factors deal with finite precision related to face/particle
-    // position comparisons and calculations.  The nudge pushes the particle just a bit
-    // more into the cell it is entering to ensure the index calc comes out right in
-    // the next cell the particle enters
-    constexpr Real fuzzy_face = 10 * std::numeric_limits<Real>::epsilon();
-    constexpr Real fuzzy_nudge = 20 * std::numeric_limits<Real>::epsilon();
+    // kFaceEps / kFaceNudge (defined at namespace scope) handle finite precision
+    // in face/particle position comparisons. The nudge pushes the particle just a
+    // bit past the face it is entering so the index calc comes out right in the
+    // next cell.
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       loop_3d([&]<int d>() {
-        if (std::abs(xc[d - 1] - xlo<d>()) < fuzzy_face)
-          xc[d - 1] = xlo<d>() + 10 * sign(v[d - 1]) * fuzzy_nudge;
+        if (std::abs(xc[d - 1] - xlo<d>()) < kFaceEps)
+          xc[d - 1] = xlo<d>() + sign(v[d - 1]) * kFaceNudge;
         x[d - 1] = xc[d - 1];
-        if (std::abs(xc[d - 1] - xhi<d>()) < fuzzy_face)
-          xc[d - 1] = xhi<d>() + 10 * sign(v[d - 1]) * fuzzy_nudge;
+        if (std::abs(xc[d - 1] - xhi<d>()) < kFaceEps)
+          xc[d - 1] = xhi<d>() + sign(v[d - 1]) * kFaceNudge;
         x[d - 1] = xc[d - 1];
       });
     } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
       Real vr = (x[0] * v[0] + x[1] * v[1]) / xc[0];
-      if (std::abs(xc[0] - xlo<X1DIR>()) < fuzzy_face) {
-        Real correction = (xlo<X1DIR>() + 10 * sign(vr) * fuzzy_nudge) / xc[0];
+      if (std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps) {
+        Real correction = (xlo<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
         x[0] *= correction;
         x[1] *= correction;
         xc[0] *= correction;
       }
-      if (std::abs(xc[0] - xhi<X1DIR>()) < fuzzy_face) {
-        Real correction = (xhi<X1DIR>() + 10 * sign(vr) * fuzzy_nudge) / xc[0];
+      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) {
+        Real correction = (xhi<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
         x[0] *= correction;
         x[1] *= correction;
         xc[0] *= correction;
       }
-      if (std::abs(x[2] - xlo<X2DIR>()) < fuzzy_face) {
-        x[2] = xlo<X2DIR>() + 10 * sign(v[2]) * fuzzy_nudge;
+      if (std::abs(x[2] - xlo<X2DIR>()) < kFaceEps) {
+        x[2] = xlo<X2DIR>() + sign(v[2]) * kFaceNudge;
         xc[1] = x[2];
-      } else if (std::abs(x[2] - xhi<X2DIR>()) < fuzzy_face) {
-        x[2] = xhi<X2DIR>() + 10 * sign(v[2]) * fuzzy_nudge;
+      } else if (std::abs(x[2] - xhi<X2DIR>()) < kFaceEps) {
+        x[2] = xhi<X2DIR>() + sign(v[2]) * kFaceNudge;
         xc[1] = x[2];
       }
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
       Real vr = (x[0] * v[0] + x[1] * v[1] + x[2] * v[2]) / xc[0];
-      if (std::abs(xc[0] - xlo<X1DIR>()) < fuzzy_face) {
-        Real correction = (xlo<X1DIR>() + 10 * sign(vr) * fuzzy_nudge) / xc[0];
+      if (std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps) {
+        Real correction = (xlo<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
         x[0] *= correction;
         x[1] *= correction;
         x[2] *= correction;
         xc[0] *= correction;
       }
-      if (std::abs(xc[0] - xhi<X1DIR>()) < fuzzy_face) {
-        Real correction = (xhi<X1DIR>() + 10 * sign(vr) * fuzzy_nudge) / xc[0];
+      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) {
+        Real correction = (xhi<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
         x[0] *= correction;
         x[1] *= correction;
         x[2] *= correction;

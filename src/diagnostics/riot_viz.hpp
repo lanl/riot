@@ -47,9 +47,59 @@ inline std::unordered_map<std::string, GradType> GradTypeMap{
     {"none", GradType::none},
     {"magnitude", GradType::mag},
     {"log_magnitude", GradType::log_mag}};
+enum class ScaleType { linear, log };
+inline std::unordered_map<std::string, ScaleType> ScaleTypeMap{
+    {"linear", ScaleType::linear},
+    {"log", ScaleType::log}};
+
+template <typename T>
+T GetType(const std::string &key, const std::unordered_map<std::string, T> &map) {
+  auto it = map.find(key);
+  if (it != map.end()) return it->second;
+
+  if (parthenon::Globals::my_rank == 0) {
+    std::stringstream ss;
+    if constexpr (std::is_same_v<T, VizType>) {
+      ss << "Invalid key for VizTypeMap.  Available options are:" << std::endl;
+    } else if constexpr (std::is_same_v<T, GradType>) {
+      ss << "Invalid key for GradTypeMap.  Available options are:" << std::endl;
+    } else {
+      PARTHENON_FAIL("Unexpected map type.");
+    }
+    for (const auto &[key, value] : map) {
+      ss << "  " << key << std::endl;
+    }
+    PARTHENON_THROW(ss.str());
+  }
+  return T();
+}
+
+template <typename T>
+T clamp(const T& val, const T& min_val, const T& max_val) {
+  return std::min(std::max(val, min_val), max_val);
+}
 
 namespace vr = particles::riot_viz;
 using DataBox = Spiner::DataBox<Real>;
+
+// Ray-march robustness factors. These are deliberately distinct because they
+// live at different scales and cannot be interchanged:
+//   kMarchTiny     - tiny absolute guard against degenerate denominators and
+//                    zero-length steps (also the alpha off-mesh sentinel and
+//                    the dump-time comparison tolerance).
+//   kStepOvershoot - relative amount (times min cell size) a step is extended
+//                    past a face so the crossing is unambiguous.
+//   kAxisStepFrac  - largest step permitted near a coordinate axis, as a
+//                    fraction of the cylindrical/spherical radius.
+//   kGeomTol       - relative tolerance for placing/testing points on the
+//                    domain boundary during host-side camera setup.
+//   kBoundaryBand  - relative band for detecting that a host point coincides
+//                    with a block's outer radius.
+constexpr Real kMarchTiny = 1.e-14;
+constexpr Real kStepOvershoot = 1.e-8;
+constexpr Real kAxisStepFrac = 0.1;
+constexpr Real kGeomTol = 1.e-12;
+constexpr Real kBoundaryBand = 1.e-6;
 
 inline DataBox MakeNormalizedDataBox(const std::vector<Real> &input) {
   DataBox output(input.size());
@@ -93,6 +143,7 @@ using vec3d_t = std::vector<std::vector<std::vector<T>>>;
 struct RenderingParamsVec {
   vec2d_t<VizType> type;
   vec2d_t<int> pack_idx, alpha_pack_idx;
+  vec2d_t<ScaleType> field_scale;
   vec2d_t<Real> range_min, range_max, alpha_range_min, alpha_range_max;
   vec2d_t<GradType> use_grad, alpha_use_grad;
   std::vector<Real> alpha_tol;
@@ -208,7 +259,7 @@ class VectorView1D {
 struct RenderingParams {
 
   RenderingParams(vec2d_t<VizType> &t, vec2d_t<int> &pack_idx,
-                  vec2d_t<int> &alpha_pack_idx, vec2d_t<Real> &range_min,
+                  vec2d_t<int> &alpha_pack_idx, vec2d_t<ScaleType> &field_scale, vec2d_t<Real> &range_min,
                   vec2d_t<Real> &range_max, vec2d_t<Real> &alpha_range_min,
                   vec2d_t<Real> &alpha_range_max, vec2d_t<GradType> &use_grad,
                   vec2d_t<GradType> &alpha_use_grad, std::vector<Real> &alpha_tol,
@@ -219,7 +270,7 @@ struct RenderingParams {
                   std::vector<Real> &yl, std::vector<Real> &zl,
                   std::vector<Real> &ambient, std::vector<Real> &diffuse,
                   vec3d_t<mask_tuple_t> &mask, vec3d_t<int> &mask_id)
-      : type(t), pack_idx(pack_idx), alpha_pack_idx(alpha_pack_idx), range_min(range_min),
+      : type(t), pack_idx(pack_idx), alpha_pack_idx(alpha_pack_idx), field_scale(field_scale), range_min(range_min),
         range_max(range_max), alpha_range_min(alpha_range_min),
         alpha_range_max(alpha_range_max), use_grad(use_grad),
         alpha_use_grad(alpha_use_grad), alpha_tol(alpha_tol), r(r), g(g), b(b), a(a),
@@ -254,7 +305,7 @@ struct RenderingParams {
   }
 
   explicit RenderingParams(RenderingParamsVec &rv)
-      : RenderingParams(rv.type, rv.pack_idx, rv.alpha_pack_idx, rv.range_min,
+      : RenderingParams(rv.type, rv.pack_idx, rv.alpha_pack_idx, rv.field_scale, rv.range_min,
                         rv.range_max, rv.alpha_range_min, rv.alpha_range_max, rv.use_grad,
                         rv.alpha_use_grad, rv.alpha_tol, rv.r, rv.g, rv.b, rv.a,
                         rv.contours, rv.rc, rv.gc, rv.bc, rv.ac, rv.slice_x, rv.slice_n,
@@ -262,14 +313,18 @@ struct RenderingParams {
                         rv.mask_id) {}
 
   KOKKOS_INLINE_FUNCTION
-  PixelVal val_to_rgba(const int outer, const int inner, const Real val,
+  PixelVal val_to_rgba(const int outer, const int inner, Real val,
                        const Real aval) const {
+    if (field_scale(outer, inner) == ScaleType::log) {
+      if (val <= 0.0) return {0.0, 0.0, 0.0, 0.0};
+      val = std::log10(val);
+    }
     Real v = (val - range_min(outer, inner)) /
              (range_max(outer, inner) - range_min(outer, inner));
     Real av = (aval - alpha_range_min(outer, inner)) /
               (alpha_range_max(outer, inner) - alpha_range_min(outer, inner));
-    v = std::clamp(v, 0.0, 1.0);
-    av = std::clamp(av, 0.0, 1.0);
+    v = clamp(v, 0.0, 1.0);
+    av = clamp(av, 0.0, 1.0);
     return {r(outer, inner).interpToReal(v), g(outer, inner).interpToReal(v),
             b(outer, inner).interpToReal(v), a(outer, inner).interpToReal(av)};
   }
@@ -287,6 +342,7 @@ struct RenderingParams {
 
   VectorView2D<VizType> type;
   VectorView2D<int> pack_idx, alpha_pack_idx;
+  VectorView2D<ScaleType> field_scale;
   VectorView2D<Real> range_min, range_max, alpha_range_min, alpha_range_max;
   VectorView2D<GradType> use_grad, alpha_use_grad;
   VectorView1D<Real> alpha_tol;
@@ -471,7 +527,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       // this step pushed me off the mesh
       // make alpha negative as a sentinel
       // move particle back on mesh so it doesn't get removed
-      a = -(a + 1.e-14);
+      a = -(a + kMarchTiny);
       xc[0] = 0.5 * (context.x_min_ + context.x_max_);
       xc[1] = 0.5 * (context.y_min_ + context.y_max_);
       xc[2] = 0.5 * (context.z_min_ + context.z_max_);
@@ -524,7 +580,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
             nc[d - 1];
         h = std::min(h, ht);
       });
-      Real ht = std::max(0.1 * xc[0], min_size());
+      Real ht = std::max(kAxisStepFrac * xc[0], min_size());
       h = std::min(h, ht);
     } else {
       const Real rcyl = std::sqrt(x[0] * x[0] + x[1] * x[1]);
@@ -534,7 +590,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
            (nr > 0) * RayTrace::IntegratorBase<VarPack_t>::template dx<X1DIR>() - xc[0]) /
           nr;
       h = std::min(h, ht);
-      ht = std::max(0.1 * rcyl, min_size());
+      ht = std::max(kAxisStepFrac * rcyl, min_size());
       h = std::min(h, ht);
     }
     return h;
@@ -544,7 +600,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     bool initial_mask = all_mask(x, mask);
     // step size til next cell face
     auto h = distance_to_face();
-    h = std::max(h, 1.e-13);
+    h = std::max(h, kMarchTiny);
     if (!initial_mask) {
       // see if I can skip everything else
       std::array<Real, 3> temp;
@@ -572,7 +628,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         Real n_dot_v = rp.slice_n(cam_id, ilay, 0) * v[0] +
                        rp.slice_n(cam_id, ilay, 1) * v[1] +
                        rp.slice_n(cam_id, ilay, 2) * v[2];
-        if (std::abs(n_dot_v) > 1.e-14) {
+        if (std::abs(n_dot_v) > kMarchTiny) {
           Real xp = rp.slice_x(cam_id, ilay, 0) - x[0];
           Real yp = rp.slice_x(cam_id, ilay, 1) - x[1];
           Real zp = rp.slice_x(cam_id, ilay, 2) - x[2];
@@ -580,7 +636,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
                          rp.slice_n(cam_id, ilay, 1) * yp +
                          rp.slice_n(cam_id, ilay, 2) * zp;
           Real ht = n_dot_p / n_dot_v;
-          if (ht > 0.0 && ht <= h + 1.e-14) {
+          if (ht > 0.0 && ht <= h + kMarchTiny) {
             h = ht;
             slice_id = ilay;
             contour_id = -1;
@@ -590,20 +646,22 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       // figure out distance to contours
       else if (rp.type(cam_id, ilay) == VizType::contour ||
                rp.type(cam_id, ilay) == VizType::contour_slice) {
-        std::array<Real, 3> final_x;
+        std::array<Real, 3> final_x{x[0] + h * v[0],
+                                    x[1] + h * v[1],
+                                    x[2] + h * v[2]};
         if (!mask[ilay]) {
-          for (int d = 0; d < 3; d++)
-            final_x[d] = x[d] + h * v[d];
           if (!rp.masks(cam_id, ilay, final_x[0], final_x[1], final_x[2])) continue;
         }
         data[ilay] = VizData(rp, ilay, this);
         Real initial = get_value(ilay);
         auto final_coords = cart_to_coord(final_x);
         Real final = get_value(ilay, final_coords[0], final_coords[1], final_coords[2]);
+        Real ht_min = 1.0;
         for (int i = 0; i < rp.ncontours(cam_id, ilay); i++) {
           Real ht = (rp.contours(cam_id, ilay, i) - initial) / (final - initial);
-          if (ht > 0.0 && ht < 1) {
+          if (ht > 0.0 && ht < ht_min) {
             h *= ht;
+            ht_min = ht;
             layer_id = ilay;
             contour_id = i;
             slice_id = -1;
@@ -611,7 +669,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         }
       }
     }
-    h += 1.e-8 * min_size();
+    h += kStepOvershoot * min_size();
 
     // half step
     for (int d = 0; d < 3; d++)
@@ -753,6 +811,7 @@ struct LayerInfo {
   bool colorbar;
   Real min_range, max_range;
   VizType type;
+  ScaleType scale_type;
 };
 
 struct CameraInfo {
