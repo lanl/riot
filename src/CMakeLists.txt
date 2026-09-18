@@ -59,6 +59,7 @@ set (SRC_LIST
   mhd/mhd.cpp
   mhd/mhd.hpp
   mhd/mhd_helpers.hpp
+  mhd/riemann_mhd.hpp
 
   mix/anon_fluxes.cpp
   mix/mix.cpp

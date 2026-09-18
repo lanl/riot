@@ -12,12 +12,15 @@
 //========================================================================================
 // This file was made in part with generative AI.
 //
-// Unit tests for the ideal-MHD primitives in src/mhd/mhd_helpers.hpp, plus the discrete
-// vector-potential curl / divergence identity that constrained transport depends on.
+// Unit tests for the ideal-MHD primitives in src/mhd/mhd_helpers.hpp and the MHD Riemann
+// solvers in src/mhd/riemann_mhd.hpp, plus the discrete vector-potential curl /
+// divergence identity that constrained transport depends on.
 //
 // Test IDs match plan_histories/artemis_mhd_port/TEST_LEDGER.md:
 //   U01  primitive -> conserved -> primitive round trip with a magnetic field
 //   U01b unit-convention invariance: the same physical state at mu0 = 1 and mu0 = 4*pi
+//   U02  MHD flux consistency, normal-induction-flux vanishing, hydro limit, and
+//        invariance under cyclic relabelling of the axes
 //   U03  fast magnetosonic speed: parallel, perpendicular, oblique, and b -> 0
 //   U04  discrete curl of a vector potential is discretely divergence free
 //
@@ -39,6 +42,7 @@
 using namespace parthenon::package::prelude;
 
 #include "mhd/mhd_helpers.hpp"
+#include "mhd/riemann_mhd.hpp"
 #include "variables.hpp"
 
 using Catch::Approx;
@@ -182,8 +186,8 @@ TEST_CASE("U03: fast speed satisfies its defining quadratic for oblique fields",
     Real bmod, rho, bn, bt1, bt2;
   };
   const Case cases[] = {
-      {2.0, 1.0, 0.5, 0.25, -0.75}, {5.0, 0.3, -1.2, 0.4, 0.9},
-      {0.4, 3.3, 0.1, 2.2, -1.4},   {1.0, 1.0, 1.0, 1.0, 1.0},
+      {2.0, 1.0, 0.5, 0.25, -0.75},   {5.0, 0.3, -1.2, 0.4, 0.9},
+      {0.4, 3.3, 0.1, 2.2, -1.4},     {1.0, 1.0, 1.0, 1.0, 1.0},
       {9.0, 0.05, 0.03, -0.02, 0.01},
   };
 
@@ -285,9 +289,9 @@ TEST_CASE("Face-to-cell B averages a linearly varying face field", "[mhd][faces]
 
   Real bx, by, bz;
   MHD::FaceToCellB(pv, 0, 1, 1, 1, bx, by, bz);
-  CHECK(bx == Approx(2.0).margin(kTightTol));  // (1 + 3)/2
-  CHECK(by == Approx(2.0).margin(kTightTol));  // (-2 + 6)/2
-  CHECK(bz == Approx(0.5).margin(kTightTol));  // uniform
+  CHECK(bx == Approx(2.0).margin(kTightTol)); // (1 + 3)/2
+  CHECK(by == Approx(2.0).margin(kTightTol)); // (-2 + 6)/2
+  CHECK(bz == Approx(0.5).margin(kTightTol)); // uniform
 }
 
 TEST_CASE("Face-to-cell B keeps transverse components in a collapsed direction",
@@ -335,8 +339,8 @@ struct StaggeredGrid {
 
   StaggeredGrid()
       : a1((n1) * (n2 + 1) * (n3 + 1)), a2((n1 + 1) * (n2) * (n3 + 1)),
-        a3((n1 + 1) * (n2 + 1) * (n3)), b1((n1 + 1) * n2 * n3),
-        b2(n1 * (n2 + 1) * n3), b3(n1 * n2 * (n3 + 1)) {}
+        a3((n1 + 1) * (n2 + 1) * (n3)), b1((n1 + 1) * n2 * n3), b2(n1 * (n2 + 1) * n3),
+        b3(n1 * n2 * (n3 + 1)) {}
 
   static int IdxA1(int i, int j, int k) { return (k * (n2 + 1) + j) * (n1) + i; }
   static int IdxA2(int i, int j, int k) { return (k * (n2) + j) * (n1 + 1) + i; }
@@ -398,23 +402,20 @@ struct StaggeredGrid {
     for (int k = 0; k < n3; ++k)
       for (int j = 0; j < n2; ++j)
         for (int i = 0; i <= n1; ++i)
-          b1[IdxB1(i, j, k)] =
-              (a3[IdxA3(i, j + 1, k)] - a3[IdxA3(i, j, k)]) / d2 -
-              (a2[IdxA2(i, j, k + 1)] - a2[IdxA2(i, j, k)]) / d3;
+          b1[IdxB1(i, j, k)] = (a3[IdxA3(i, j + 1, k)] - a3[IdxA3(i, j, k)]) / d2 -
+                               (a2[IdxA2(i, j, k + 1)] - a2[IdxA2(i, j, k)]) / d3;
 
     for (int k = 0; k < n3; ++k)
       for (int j = 0; j <= n2; ++j)
         for (int i = 0; i < n1; ++i)
-          b2[IdxB2(i, j, k)] =
-              (a1[IdxA1(i, j, k + 1)] - a1[IdxA1(i, j, k)]) / d3 -
-              (a3[IdxA3(i + 1, j, k)] - a3[IdxA3(i, j, k)]) / d1;
+          b2[IdxB2(i, j, k)] = (a1[IdxA1(i, j, k + 1)] - a1[IdxA1(i, j, k)]) / d3 -
+                               (a3[IdxA3(i + 1, j, k)] - a3[IdxA3(i, j, k)]) / d1;
 
     for (int k = 0; k <= n3; ++k)
       for (int j = 0; j < n2; ++j)
         for (int i = 0; i < n1; ++i)
-          b3[IdxB3(i, j, k)] =
-              (a2[IdxA2(i + 1, j, k)] - a2[IdxA2(i, j, k)]) / d1 -
-              (a1[IdxA1(i, j + 1, k)] - a1[IdxA1(i, j, k)]) / d2;
+          b3[IdxB3(i, j, k)] = (a2[IdxA2(i + 1, j, k)] - a2[IdxA2(i, j, k)]) / d1 -
+                               (a1[IdxA1(i, j + 1, k)] - a1[IdxA1(i, j, k)]) / d2;
   }
 
   // Discrete divergence from the face flux balance -- the same form as
@@ -425,10 +426,9 @@ struct StaggeredGrid {
     for (int k = 0; k < n3; ++k)
       for (int j = 0; j < n2; ++j)
         for (int i = 0; i < n1; ++i) {
-          const Real div =
-              (b1[IdxB1(i + 1, j, k)] - b1[IdxB1(i, j, k)]) / d1 +
-              (b2[IdxB2(i, j + 1, k)] - b2[IdxB2(i, j, k)]) / d2 +
-              (b3[IdxB3(i, j, k + 1)] - b3[IdxB3(i, j, k)]) / d3;
+          const Real div = (b1[IdxB1(i + 1, j, k)] - b1[IdxB1(i, j, k)]) / d1 +
+                           (b2[IdxB2(i, j + 1, k)] - b2[IdxB2(i, j, k)]) / d2 +
+                           (b3[IdxB3(i, j, k + 1)] - b3[IdxB3(i, j, k)]) / d3;
           worst = std::max(worst, std::abs(div));
         }
     return worst;
@@ -436,9 +436,12 @@ struct StaggeredGrid {
 
   Real MaxAbsField() const {
     Real m = 0.0;
-    for (Real v : b1) m = std::max(m, std::abs(v));
-    for (Real v : b2) m = std::max(m, std::abs(v));
-    for (Real v : b3) m = std::max(m, std::abs(v));
+    for (Real v : b1)
+      m = std::max(m, std::abs(v));
+    for (Real v : b2)
+      m = std::max(m, std::abs(v));
+    for (Real v : b3)
+      m = std::max(m, std::abs(v));
     return m;
   }
 };
@@ -487,4 +490,231 @@ TEST_CASE("U04: a uniform field is exactly divergence free", "[mhd][divb]") {
   CHECK(g.b3[StaggeredGrid::IdxB3(2, 1, 1)] == Approx(1.1).margin(1.0e-12));
 
   CHECK(g.MaxAbsDivergence() <= 1.0e-13);
+}
+
+//========================================================================================
+// U02 -- MHD Riemann flux consistency
+//========================================================================================
+namespace {
+
+// An MHD state. `u` is VOLUMETRIC internal energy and `c` the acoustic sound speed
+// sqrt(bmod/rho), matching the argument conventions of RIOT's hydro solvers.
+struct MHDState {
+  Real rho, v1, v2, v3, u, P, c, b1, b2, b3;
+};
+
+struct MHDFlux {
+  Real f_v1, f_v2, f_v3, f_eng;
+  Real f_b1, f_b2, f_b3;
+  Real v1face, v2face, v3face, riemann_vel;
+  Real smax;
+};
+
+template <int DIR>
+Real Normal(const MHDState &s) {
+  if constexpr (DIR == X1DIR) return s.v1;
+  if constexpr (DIR == X2DIR) return s.v2;
+  return s.v3;
+}
+template <int DIR>
+Real NormalB(const MHDState &s) {
+  if constexpr (DIR == X1DIR) return s.b1;
+  if constexpr (DIR == X2DIR) return s.b2;
+  return s.b3;
+}
+
+// The EXACT physical ideal-MHD flux of a single state, written independently of the
+// solver so that agreement is evidence rather than tautology:
+//   F_rho = rho vn
+//   F_mi  = rho vn vi + delta_i,n (P + B^2/2mu0) - bn bi/mu0
+//   F_E   = (E + P + B^2/2mu0) vn - bn (v.B)/mu0,   E = u + 1/2 rho v^2 + B^2/2mu0
+//   F_bi  = vn bi - vi bn        (normal component identically zero)
+template <int DIR>
+MHDFlux ExactMHDFlux(const MHDState &s, const Real mu0) {
+  const Real vn = Normal<DIR>(s);
+  const Real bn = NormalB<DIR>(s);
+  const Real pb = 0.5 * (SQR(s.b1) + SQR(s.b2) + SQR(s.b3)) / mu0;
+  const Real ptot = s.P + pb;
+  const Real e = s.u + 0.5 * s.rho * (SQR(s.v1) + SQR(s.v2) + SQR(s.v3)) + pb;
+  const Real vdb = s.v1 * s.b1 + s.v2 * s.b2 + s.v3 * s.b3;
+
+  MHDFlux f{};
+  f.f_v1 = s.rho * vn * s.v1 - bn * s.b1 / mu0 + (DIR == X1DIR) * ptot;
+  f.f_v2 = s.rho * vn * s.v2 - bn * s.b2 / mu0 + (DIR == X2DIR) * ptot;
+  f.f_v3 = s.rho * vn * s.v3 - bn * s.b3 / mu0 + (DIR == X3DIR) * ptot;
+  f.f_eng = (e + ptot) * vn - bn * vdb / mu0;
+  f.f_b1 = (DIR == X1DIR) ? 0.0 : (vn * s.b1 - s.v1 * bn);
+  f.f_b2 = (DIR == X2DIR) ? 0.0 : (vn * s.b2 - s.v2 * bn);
+  f.f_b3 = (DIR == X3DIR) ? 0.0 : (vn * s.b3 - s.v3 * bn);
+  f.riemann_vel = vn;
+  return f;
+}
+
+template <class Fill>
+MHDFlux RunOnDevice(Fill fill) {
+  Kokkos::View<MHDFlux> d_flux("mhd_flux");
+  Kokkos::parallel_for(
+      "run mhd riemann solver", 1, KOKKOS_LAMBDA(const int) {
+        MHDFlux f{};
+        fill(f);
+        d_flux() = f;
+      });
+  auto h_flux = Kokkos::create_mirror_view(d_flux);
+  Kokkos::deep_copy(h_flux, d_flux);
+  return h_flux();
+}
+
+// The normal field is a single shared value, so it is taken from the left state and
+// passed as `bn` -- exactly as the reconstruction substitution arranges.
+template <int DIR>
+MHDFlux RunMHDHLLE(const MHDState &l, const MHDState &r, const Real mu0) {
+  const Real bn = NormalB<DIR>(l);
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+    f.smax = MHD::lr_to_flux_mhd_hlle<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+  });
+}
+
+void CheckMHDConsistent(const MHDFlux &got, const MHDFlux &want, const Real scale) {
+  const Real tol = 1.0e-12 * scale;
+  CHECK(std::abs(got.f_v1 - want.f_v1) <= tol);
+  CHECK(std::abs(got.f_v2 - want.f_v2) <= tol);
+  CHECK(std::abs(got.f_v3 - want.f_v3) <= tol);
+  CHECK(std::abs(got.f_eng - want.f_eng) <= tol);
+  CHECK(std::abs(got.f_b1 - want.f_b1) <= tol);
+  CHECK(std::abs(got.f_b2 - want.f_b2) <= tol);
+  CHECK(std::abs(got.f_b3 - want.f_b3) <= tol);
+  CHECK(std::abs(got.riemann_vel - want.riemann_vel) <= tol);
+}
+
+// Characteristic magnitude of the flux, so tolerances are relative rather than absolute
+// and the strongly magnetized cases are genuinely tested.
+Real FluxScale(const MHDFlux &f) {
+  return std::max({std::abs(f.f_v1), std::abs(f.f_v2), std::abs(f.f_v3),
+                   std::abs(f.f_eng), std::abs(f.f_b1), std::abs(f.f_b2),
+                   std::abs(f.f_b3), 1.0});
+}
+
+const MHDState kStates[] = {
+    // rho    v1     v2    v3     u     P     c     b1     b2     b3
+    {1.0, 0.0, 0.0, 0.0, 1.0, 0.6, 1.0, 0.0, 0.0, 0.0},        // hydro limit, static
+    {1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.75, 1.0, 0.0},      // Brio-Wu-like
+    {2.5, -0.4, 0.9, 0.2, 3.0, 2.0, 1.1, 0.5, -1.1, 0.3},      // fully oblique
+    {0.125, 0.6, 0.0, -0.3, 1.0e-3, 0.1, 0.9, 3.0, -2.0, 1.5}, // low beta
+    {1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.4, -0.7},       // purely transverse field
+    {1.0, 2.5, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0},        // super-fast, aligned
+};
+
+} // namespace
+
+TEST_CASE("U02: MHD HLLE is consistent -- equal states give the exact MHD flux",
+          "[mhd][riemann]") {
+  // The workhorse invariant: for identical left and right states the numerical flux must
+  // reduce to the exact physical flux of that state. This pins every term at once --
+  // the Maxwell stress -bn bi/mu0, the total-pressure term, the Poynting flux
+  // -bn (v.B)/mu0, and the induction signs -- and it is checked in all three sweep
+  // directions, so a component-permutation error cannot survive.
+  for (const Real mu0 : {1.0, 4.0 * M_PI}) {
+    for (const auto &s : kStates) {
+      {
+        const auto want = ExactMHDFlux<X1DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLE<X1DIR>(s, s, mu0), want, FluxScale(want));
+      }
+      {
+        const auto want = ExactMHDFlux<X2DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLE<X2DIR>(s, s, mu0), want, FluxScale(want));
+      }
+      {
+        const auto want = ExactMHDFlux<X3DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLE<X3DIR>(s, s, mu0), want, FluxScale(want));
+      }
+    }
+  }
+}
+
+TEST_CASE("U02: normal induction flux is identically zero", "[mhd][riemann]") {
+  // A nonzero normal induction flux would leak into the EMF assembly and destroy the
+  // divergence-free property that constrained transport exists to maintain. It must be
+  // exactly 0.0, not merely small, and must stay so for UNEQUAL states.
+  const Real mu0 = 1.0;
+  const auto &l = kStates[2];
+  const auto &r = kStates[3];
+  CHECK(RunMHDHLLE<X1DIR>(l, r, mu0).f_b1 == 0.0);
+  CHECK(RunMHDHLLE<X2DIR>(l, r, mu0).f_b2 == 0.0);
+  CHECK(RunMHDHLLE<X3DIR>(l, r, mu0).f_b3 == 0.0);
+}
+
+TEST_CASE("U02: transverse field advects when the normal field vanishes",
+          "[mhd][riemann]") {
+  // With bn = 0 the induction flux must reduce to pure advection vn*bt, with no tension
+  // term. This isolates the bn-proportional terms: if bn were accidentally taken from a
+  // reconstructed (rather than shared) slot, this would fail.
+  const Real mu0 = 1.0;
+  MHDState s{1.0, 0.7, -0.4, 0.25, 1.0, 1.0, 1.0, 0.0, 1.3, -0.9};
+  const auto f = RunMHDHLLE<X1DIR>(s, s, mu0);
+  CHECK(f.f_b1 == 0.0);
+  CHECK(f.f_b2 == Approx(s.v1 * s.b2).margin(1.0e-12));
+  CHECK(f.f_b3 == Approx(s.v1 * s.b3).margin(1.0e-12));
+}
+
+TEST_CASE("U02: zero field reduces to the exact Euler flux", "[mhd][riemann]") {
+  // The hydro limit (test H02 at the simulation level). With B = 0 every magnetic term
+  // must drop out and leave the pure Euler flux, independently of mu0.
+  for (const Real mu0 : {1.0, 4.0 * M_PI}) {
+    MHDState s{1.3, 0.4, -0.6, 0.2, 2.0, 1.5, 1.1, 0.0, 0.0, 0.0};
+    const auto want = ExactMHDFlux<X2DIR>(s, mu0);
+    const auto got = RunMHDHLLE<X2DIR>(s, s, mu0);
+    CheckMHDConsistent(got, want, FluxScale(want));
+    CHECK(got.f_b1 == Approx(0.0).margin(1.0e-14));
+    CHECK(got.f_b2 == 0.0);
+    CHECK(got.f_b3 == Approx(0.0).margin(1.0e-14));
+    // Pressure must appear in the normal momentum component only.
+    CHECK(got.f_v2 == Approx(s.rho * s.v2 * s.v2 + s.P).margin(1.0e-12));
+  }
+}
+
+TEST_CASE("U02: solver is invariant under cyclic relabelling of the axes",
+          "[mhd][riemann]") {
+  // Rotate a state cyclically (1->2->3->1) and sweep the correspondingly rotated
+  // direction: every flux component must permute the same way. This is a pure
+  // index-bookkeeping test and is the cheapest way to catch a mis-permuted component,
+  // which is otherwise a subtle multidimensional-only bug.
+  const Real mu0 = 1.7;
+  const MHDState a{1.4, 0.5, -0.3, 0.8, 2.0, 1.1, 1.05, 0.6, -0.9, 0.4};
+  const MHDState b{1.4, 0.8, 0.5, -0.3, 2.0, 1.1, 1.05, 0.4, 0.6, -0.9}; // cycled
+  const MHDState c{1.4, -0.3, 0.8, 0.5, 2.0, 1.1, 1.05, -0.9, 0.4, 0.6}; // cycled twice
+
+  const auto fa = RunMHDHLLE<X1DIR>(a, a, mu0);
+  const auto fb = RunMHDHLLE<X2DIR>(b, b, mu0);
+  const auto fc = RunMHDHLLE<X3DIR>(c, c, mu0);
+
+  const Real tol = 1.0e-12 * FluxScale(fa);
+  // Momentum components permute with the axes.
+  CHECK(std::abs(fa.f_v1 - fb.f_v2) <= tol);
+  CHECK(std::abs(fa.f_v2 - fb.f_v3) <= tol);
+  CHECK(std::abs(fa.f_v3 - fb.f_v1) <= tol);
+  CHECK(std::abs(fa.f_v1 - fc.f_v3) <= tol);
+  // Induction components likewise.
+  CHECK(std::abs(fa.f_b2 - fb.f_b3) <= tol);
+  CHECK(std::abs(fa.f_b3 - fb.f_b1) <= tol);
+  // Energy is a scalar and must be identical.
+  CHECK(std::abs(fa.f_eng - fb.f_eng) <= tol);
+  CHECK(std::abs(fa.f_eng - fc.f_eng) <= tol);
+  CHECK(std::abs(fa.smax - fb.smax) <= tol);
+}
+
+TEST_CASE("U02: signal speed bounds the fluid and fast speeds", "[mhd][riemann]") {
+  // The returned value feeds the CFL vote, so it must not underestimate the true
+  // characteristic speeds. An underestimate here is the kind of error that only shows up
+  // as a late-time instability at a resolution nobody tested.
+  const Real mu0 = 1.0;
+  for (const auto &s : kStates) {
+    const Real cf = MHD::FastMagnetosonicSpeed(
+        s.rho * s.c * s.c, s.rho, SQR(s.b1) + SQR(s.b2) + SQR(s.b3), s.b1, mu0);
+    const Real smax = RunMHDHLLE<X1DIR>(s, s, mu0).smax;
+    CHECK(smax >= std::abs(s.v1) - 1.0e-12);
+    CHECK(smax >= cf - 1.0e-12);
+  }
 }

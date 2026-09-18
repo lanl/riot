@@ -697,8 +697,20 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
 
   // strength params
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
-  auto v = riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
-                          ccbulk::velocity, ccbulk::max_signal>(md);
+
+  // MHD: the magnetic field stiffens the fastest signal, so it must enter the CFL vote.
+  // The direction-independent bound sqrt(a^2 + vA^2) is used rather than the true
+  // directional fast speed: a bound is what CFL safety requires, and evaluating the
+  // directional fast speed at every face here would cost far more for a strictly
+  // smaller timestep. This follows the donor (artemis/src/gas/gas.cpp:543-643) and reads
+  // the cell-centered field, which MHD::SetDerivedMagneticFields keeps consistent with
+  // the authoritative face state.
+  const bool do_mhd = pm->packages.Get("riot")->Param<bool>("do_mhd");
+  const Real mu0 = do_mhd ? pm->packages.Get("mhd")->template Param<Real>("mu0") : 1.0;
+
+  auto v =
+      riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
+                     ccbulk::velocity, ccbulk::max_signal, ccbulk::magnetic_field>(md);
   const int ndim = pm->ndim;
 
   using rt = RiotUtils::ReductionType<Kokkos::Min<Real>>;
@@ -714,8 +726,16 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           const Real bulk_modulus = pv(ccbulk::bulk_modulus(), idx);
           const Real shear_modulus =
               (do_strength) ? pv(ccbulk::shear_modulus(), idx) : 0.0;
-          const Real cs =
-              std::sqrt(ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho));
+          Real b2 = 0.0;
+          if (do_mhd) {
+            b2 = SQR(pv(ccbulk::magnetic_field(0), idx)) +
+                 SQR(pv(ccbulk::magnetic_field(1), idx)) +
+                 SQR(pv(ccbulk::magnetic_field(2), idx));
+          }
+          // Adding b2/mu0 to the bulk modulus turns c_s into the fast-speed bound
+          // sqrt((K + B^2/mu0)/rho); with b2 = 0 this is bitwise the hydro expression.
+          const Real cs = std::sqrt(
+              ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus + b2 / mu0), rho));
           Real denom = 0.0;
           for (int d = 0; d < ndim; d++) {
             const Real vphys =

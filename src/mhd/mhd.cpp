@@ -103,14 +103,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // FillGhost on the cell-centered field: the reconstruction stencil reads it in the
   // ghost zones, and it is cheaper to communicate it than to re-derive it there.
   std::vector<int> bfield_arr_size(1, 3);
-  m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::Intensive,
-                Metadata::OneCopy, Metadata::FillGhost, Metadata::WithFluxes,
-                Metadata::Vector},
+  m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::Intensive, Metadata::OneCopy,
+                Metadata::FillGhost, Metadata::WithFluxes, Metadata::Vector},
                bfield_arr_size);
   mhd->AddField<ccbulk::magnetic_field>(m);
 
-  m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::Intensive,
-                Metadata::OneCopy, Metadata::FillGhost, Metadata::WithFluxes});
+  m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::Intensive, Metadata::OneCopy,
+                Metadata::FillGhost, Metadata::WithFluxes});
   mhd->AddField<ccbulk::magnetic_energy>(m);
 
   // Pure diagnostic. Not FillGhost: it is never read by a kernel, only reduced and
@@ -177,8 +176,7 @@ void SetDerivedMagneticFields(MeshData<Real> *md, IndexDomain domain) {
           pv(ccbulk::magnetic_field(0), kji) = bx;
           pv(ccbulk::magnetic_field(1), kji) = by;
           pv(ccbulk::magnetic_field(2), kji) = bz;
-          pv(ccbulk::magnetic_energy(), kji) =
-              MagneticEnergyDensity(bx, by, bz, mu0);
+          pv(ccbulk::magnetic_energy(), kji) = MagneticEnergyDensity(bx, by, bz, mu0);
 
           // Discrete divergence as the signed sum of magnetic FLUXES through the cell
           // faces, divided by cell volume. Computing it this way -- rather than from

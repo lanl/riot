@@ -202,13 +202,50 @@ mesh-level items are not yet run and are not claimed.
 
 ---
 
-## Gates G3–G5
+---
+
+## Gate G3 — MHD fluxes and wave speeds
+
+Unit-level portion complete. `ctest` **34/34** (18 pre-existing + 16 MHD).
+
+| ID | Test | Threshold | Result | Status |
+| --- | --- | --- | --- | --- |
+| U02 | HLLE consistency: equal L/R states reproduce the exact analytic MHD flux — 6 states × 3 sweep directions × both `mu0` conventions (36 combinations) | scaled ≤ `1e-12` | passed everywhere | **PASS** |
+| U02 | Normal induction flux is **exactly** `0.0`, for *unequal* L/R states, in all three directions | exact `== 0.0` | exact | **PASS** |
+| U02 | With `bn = 0`, transverse induction reduces to pure advection `v_n b_t` (no tension term) | ≤ `1e-12` | passed | **PASS** |
+| U02 | Zero field reduces to the exact Euler flux, with pressure in the normal momentum component only | ≤ `1e-12` | passed | **PASS** |
+| U02 | Invariance under cyclic relabelling of the axes: momentum and induction components permute, energy and `smax` are invariant | ≤ `1e-12` | passed | **PASS** |
+| U02 | Returned signal speed bounds both `\|v_n\|` and the fast speed | ≤ `1e-12` slack | passed | **PASS** |
+| G3.1 | Hydro regression suite unchanged after the MHD solver and the CFL change | 7/7, numeric outputs MD5-identical | *in progress* |
+
+Test-design notes:
+
+- The exact-flux reference in `ExactMHDFlux` is written **independently** of the solver,
+  from the governing equations, so agreement is evidence rather than tautology. It pins
+  the Maxwell stress `−b_n b_i/μ₀`, the total-pressure term, the Poynting flux
+  `−b_n(v·B)/μ₀`, and the induction signs simultaneously.
+- Consistency is checked at **both** `μ₀ = 1` and `μ₀ = 4π`, so a `μ₀` factor applied in
+  one term but not another cannot pass.
+- The low-beta state (`u = 1e-3`, `|B|² ≈ 15`) makes the energy-flux comparison a real
+  cancellation test.
+- Cyclic-relabelling invariance is a pure index-bookkeeping test. It is cheap and is the
+  most reliable way to catch a mis-permuted component, which would otherwise be a
+  multidimensional-only bug surfacing much later.
+
+**Outstanding for G3** (needs the flux-path wiring, not yet written): 1D Brio–Wu against
+the donor, and the end-to-end zero-field hydro limit H02.
+
+**G3 verdict: PARTIAL.** The solver itself is verified at unit level. It is not yet
+called by anything.
+
+---
+
+## Gates G4–G5
 
 **NOT RUN.** Definitions and frozen thresholds are in the approved plan.
 
 | Gate | Scope | Status |
 | --- | --- | --- |
-| G3 | Flux consistency (U02), zero-field hydro limit (H02), 1D Brio–Wu vs donor | NOT RUN |
 | G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | NOT RUN |
 | G5 | HLLD/LLF coverage, degeneracies, reconstruction certification, restart (R01) | NOT RUN |
 
