@@ -56,6 +56,10 @@ set (SRC_LIST
   microphysics/pte_closure_ideal.cpp
   microphysics/strength_models.hpp
 
+  mhd/mhd.cpp
+  mhd/mhd.hpp
+  mhd/mhd_helpers.hpp
+
   mix/anon_fluxes.cpp
   mix/mix.cpp
   mix/mix.hpp

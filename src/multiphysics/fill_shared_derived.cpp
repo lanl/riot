@@ -27,6 +27,7 @@ using parthenon::IndexSplit;
 // RIOT includes
 #include "hydro/hydro.hpp"
 #include "ionization/ionization.hpp"
+#include "mhd/mhd_helpers.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "microphysics/pte_closure.hpp"
 #include "microphysics/strength_models.hpp"
@@ -56,23 +57,35 @@ void FillInteriorDerived(MeshData<Real> *md) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
 
+  namespace fbulk = face_variables::bulk;
+
   auto pm = md->GetParentPointer();
   auto riot = pm->packages.Get("riot");
   auto materials = pm->packages.Get("materials");
   const bool do_ionization = riot->Param<bool>("do_ionization");
   const bool use_general_pte = materials->Param<bool>("use_general_pte");
 
+  // See ADR-002: with MHD enabled, ccbulk::total_material_energy carries magnetic
+  // energy too, so it must be removed here to recover a thermal energy that is safe to
+  // hand to the EOS/closure.
+  const bool do_mhd = riot->Param<bool>("do_mhd");
+  const Real mu0 = do_mhd ? pm->packages.Get("mhd")->template Param<Real>("mu0") : 1.0;
+
   auto v = riot::MakePack<ccmat::rho, ccbulk::rho, ccbulk::momentum, ccbulk::velocity,
                           ccbulk::total_material_energy, ccbulk::internal_energy,
                           ccbulk::electron_internal_energy, ccbulk::pressure,
                           ccbulk::electron_pressure, ccmat::ionization_zbar,
-                          cm::ionization_zbar>(md);
+                          cm::ionization_zbar, fbulk::magnetic_field>(md);
 
   if (v.GetNBlocks() == 0) return;
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
+  // Offsets to the upper face in each direction; zero in a collapsed dimension.
+  auto di = idx_space.GetDelta(X1DIR);
+  auto dj = idx_space.GetDelta(X2DIR);
+  auto dk = idx_space.GetDelta(X3DIR);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
@@ -96,8 +109,14 @@ void FillInteriorDerived(MeshData<Real> *md) {
           pv(ccbulk::velocity(0), kji) = pv(ccbulk::momentum(0), kji) * irho;
           pv(ccbulk::velocity(1), kji) = pv(ccbulk::momentum(1), kji) * irho;
           pv(ccbulk::velocity(2), kji) = pv(ccbulk::momentum(2), kji) * irho;
+          // Magnetic energy is subtracted from the conserved total BEFORE the thermal
+          // energy is formed, so that no magnetic energy can reach the EOS as heat.
+          // Face state is valid on IndexDomain::interior here because the constrained-
+          // transport face update precedes PreCommFillDerived in the task graph.
+          const Real emag =
+              do_mhd ? MHD::CellMagneticEnergyFromFaces(pv, kji, di, dj, dk, mu0) : 0.0;
           pv(ccbulk::internal_energy(), kji) =
-              pv(ccbulk::total_material_energy(), kji) -
+              pv(ccbulk::total_material_energy(), kji) - emag -
               0.5 * pv(ccbulk::rho(), kji) *
                   (SQR(pv(ccbulk::velocity(0), kji)) + SQR(pv(ccbulk::velocity(1), kji)) +
                    SQR(pv(ccbulk::velocity(2), kji)));
@@ -177,6 +196,13 @@ void PostCommsFillDerived(MeshData<Real> *md) {
   const Real mass_frac_thresh = hydro->Param<Real>("mass_frac_thresh");
   const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
 
+  // See ADR-002. This is the one place in the physics path that rebuilds the conserved
+  // total energy from scratch, so it is the one place that must add magnetic energy back
+  // in. Every other writer of total_material_energy accumulates a delta and so stays
+  // correct unchanged.
+  const bool do_mhd = riot->Param<bool>("do_mhd");
+  const Real mu0 = do_mhd ? pm->packages.Get("mhd")->template Param<Real>("mu0") : 1.0;
+
   auto v =
       riot::MakePack<ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
                      ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho,
@@ -187,12 +213,16 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                      ccbulk::bulk_modulus, ccbulk::temperature,
                      ccbulk::electron_internal_energy, ccbulk::electron_temperature,
                      ccbulk::electron_pressure, ccbulk::electron_number_density,
-                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter>(
-          md);
+                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter,
+                     face_variables::bulk::magnetic_field>(md);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
+  // Offsets to the upper face in each direction; zero in a collapsed dimension.
+  auto di = idx_space.GetDelta(X1DIR);
+  auto dj = idx_space.GetDelta(X2DIR);
+  auto dk = idx_space.GetDelta(X3DIR);
   idx_space.template AddPerPointScratch<Real>(1);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -330,8 +360,14 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           const Real vsq = SQR(pv(ccbulk::velocity(0), kji)) +
                            SQR(pv(ccbulk::velocity(1), kji)) +
                            SQR(pv(ccbulk::velocity(2), kji));
+          // Magnetic energy is added back through the SAME helper that removed it in
+          // FillInteriorDerived, which is what guarantees the two cannot disagree about
+          // the face-to-cell convention. Face ghosts are valid here because this runs
+          // after the boundary exchange, so IndexDomain::entire is safe.
+          const Real emag =
+              do_mhd ? MHD::CellMagneticEnergyFromFaces(pv, kji, di, dj, dk, mu0) : 0.0;
           pv(ccbulk::total_material_energy(), kji) =
-              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq;
+              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq + emag;
         });
       });
 

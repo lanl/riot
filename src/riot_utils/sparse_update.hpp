@@ -142,7 +142,29 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using parthenon::PDOpt;
   using parthenon::variable_names::any;
-  std::vector<MetadataFlag> flags({Metadata::WithFluxes});
+  // NOTE(): Metadata::Cell and Metadata::Independent are both REQUIRED here, not
+  // merely descriptive. This kernel is a cell-centered flux divergence: it walks a
+  // TE::CC index space and weights fluxes with FaceArea/CellVolume. Two classes of
+  // field would be silently corrupted if they matched this pack:
+  //
+  //   - Face-centered evolved fields (MHD's constrained-transport B lives on faces).
+  //     Their storage has one extra element in the normal direction, their update is
+  //     a Stokes curl over edge fluxes weighted by edge length / face area, and it
+  //     carries a sign flip this loop does not have. Metadata::Cell excludes them;
+  //     they are updated by MHD::ApplyFaceUpdate instead.
+  //   - Derived fields that carry a flux register purely as scratch (MHD stores the
+  //     transverse induction fluxes and the face magnetic pressure this way). They
+  //     must not receive a flux divergence at all. Metadata::Independent excludes
+  //     them.
+  //
+  // Both flags are already carried by every Metadata::WithFluxes field that this
+  // kernel is meant to update, so adding them is a no-op for existing physics --
+  // which is what makes the change verifiable against an unchanged baseline. Note
+  // that requiring Metadata::Conserved instead would NOT be safe: advected scalars
+  // (scalars.cpp) and level sets (levelsets.cpp) are updated here but are not
+  // flagged Conserved.
+  std::vector<MetadataFlag> flags(
+      {Metadata::WithFluxes, Metadata::Cell, Metadata::Independent});
 
   auto pm = umd->GetParentPointer();
   const int ndim = pm->ndim;
@@ -258,13 +280,99 @@ TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
   return TaskStatus::complete;
 }
 
+namespace impl {
+//----------------------------------------------------------------------------------------
+//! \fn  void sparse_update::impl::DeepCopyOneFaceElement
+//! \brief Copy every packed variable on a single face topological element.
+//!
+//! Templated on the topological element (rather than taking it as an argument) so the
+//! KOKKOS_LAMBDA below sits directly in a function body. A KOKKOS_LAMBDA nested inside
+//! another lambda is not portable -- nvcc rejects an extended __device__ lambda defined
+//! within another lambda -- so a per-element helper is used instead of a loop over a
+//! runtime element list.
+//!
+//! The index space is built on FACE_TE, so its extents and flat-index memory indexer
+//! match face storage: one extra element along the face normal, and (correctly) no
+//! extra element in a collapsed dimension, since IndexShape guards the topological
+//! offset with `entire_ncells_[d] == 1 ? 0 : ... + TopologicalOffset(el)`
+//! (external/parthenon/src/mesh/domain.hpp:222-240). All three elements are therefore
+//! safe to copy unconditionally regardless of dimensionality -- which is required,
+//! because a transverse face field is physically nonzero and evolving even when its
+//! normal direction is collapsed (B2/B3 in 1D, B3 in 2D).
+template <parthenon::TopologicalElement FACE_TE, typename Pack_t, typename T>
+void DeepCopyOneFaceElement(const Pack_t &dst, const Pack_t &src, T *from,
+                            const int nblocks) {
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, FACE_TE);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
+          auto vsrc = RiotLoop::make_var_view(idx_range, src, FACE_TE, var);
+          auto vdst = RiotLoop::make_var_view(idx_range, dst, FACE_TE, var);
+          RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
+        }
+      });
+}
+} // namespace impl
+
+//----------------------------------------------------------------------------------------
+//! \fn  TaskStatus sparse_update::DeepCopyFaceData
+//! \brief Face-aware companion to DeepCopyData.
+//!
+//! DeepCopyData walks a TE::CC index space, so it would silently TRUNCATE a
+//! face-centered field: face storage carries one extra element along its normal
+//! direction, and the last face plane would never be copied. That is invisible on a
+//! first RK stage and shows up as a wrong second stage, so it is copied here instead
+//! with per-element bounds.
+template <typename F, typename T>
+TaskStatus DeepCopyFaceData(const std::vector<F> &flags, T *to, T *from) {
+  Kokkos::Profiling::pushRegion("Task_DeepCopyFace");
+  using TE = parthenon::TopologicalElement;
+
+  auto desc = riot::MakePackDescriptor(flags, to);
+  const auto &dst = riot::GetPack(desc, to);
+  const auto &src = riot::GetPack(desc, from);
+
+  const int nblocks = src.GetNBlocks();
+  if (nblocks == 0) {
+    Kokkos::Profiling::popRegion(); // Task_DeepCopyFace
+    return TaskStatus::complete;
+  }
+
+  impl::DeepCopyOneFaceElement<TE::F1>(dst, src, from, nblocks);
+  impl::DeepCopyOneFaceElement<TE::F2>(dst, src, from, nblocks);
+  impl::DeepCopyOneFaceElement<TE::F3>(dst, src, from, nblocks);
+
+  Kokkos::Profiling::popRegion(); // Task_DeepCopyFace
+  return TaskStatus::complete;
+}
+
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyIndependentData
 //! \brief
+//!
+//! Metadata::Cell is required so that face-centered independent fields are not fed to
+//! the cell-centered copy kernel, which would truncate them. Face-centered independent
+//! state is copied by DeepCopyIndependentFaceData. Today every non-operator-split
+//! independent field is cell-centered, so adding the flag is a no-op; MHD's
+//! constrained-transport field is the first exception.
 template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
-  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent, Metadata::Cell}),
+                      to, from);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  TaskStatus sparse_update::DeepCopyIndependentFaceData
+//! \brief Stage-register copy for face-centered independent state (MHD face B).
+//!
+//! A no-op (zero packed blocks) when no face-centered independent field is registered,
+//! so this task is safe to add to the task list unconditionally.
+template <typename T>
+TaskStatus DeepCopyIndependentFaceData(T *to, T *from) {
+  return DeepCopyFaceData(
+      std::vector<MetadataFlag>({Metadata::Independent, Metadata::Face}), to, from);
 }
 
 } // namespace sparse_update

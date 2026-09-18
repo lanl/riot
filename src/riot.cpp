@@ -20,6 +20,7 @@
 #include "laser/laser.hpp"
 #include "levelsets/levelsets.hpp"
 #include "materials/materials.hpp"
+#include "mhd/mhd.hpp"
 #include "mix/mix.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
 #include "plugins.hpp"
@@ -98,6 +99,10 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                            "Enable prescribed sources as a function of time");
   const bool do_tracers =
       pin->GetOrAddBoolean("physics", "tracers", false, "Enable tracer particles");
+  const bool do_mhd = pin->GetOrAddBoolean(
+      "physics", "mhd", false,
+      "Enable ideal MHD with face-centered constrained transport (Cartesian, "
+      "uniform-grid, single-material, ideal-gas only)");
 
   // check for compatibility
   if (do_strength) PARTHENON_REQUIRE(do_hydro, "Strength requires hydro.")
@@ -121,6 +126,77 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
 
+  // -------------------------------------------------------------------------------------
+  // Ideal-MHD supported-configuration gate.
+  //
+  // The certified matrix is Cartesian, uniform-grid, single-material, ideal-gas, one
+  // temperature (plan_histories/artemis_mhd_port/adr/004-support-matrix.md). Everything
+  // outside it is refused here rather than run untested. These are NOT statements that
+  // the coupling is impossible -- each rejected package writes or reads energy, adds a
+  // stress, or adds a signal speed that has not been audited against the magnetic
+  // terms. Removing any one of these lines requires the corresponding validation gate
+  // to pass first, and CAPABILITY_MATRIX.md to be updated with the test IDs that
+  // justify the new claim.
+  if (do_mhd) {
+    PARTHENON_REQUIRE(do_hydro, "MHD requires hydro.");
+
+    // Single material: the common-field/common-velocity model for a volume-additive
+    // material mixture is a physics modeling assumption that requires scientific
+    // review, not just an implementation. Materials are declared as <material0>,
+    // <material1>, ... blocks (see Materials::Initialize).
+    PARTHENON_REQUIRE(!pin->DoesBlockExist("material1"),
+                      "MHD with more than one material is not yet supported: the "
+                      "common magnetic field / common velocity mixture model needs "
+                      "scientific review. Use a single <material0> block.");
+
+    PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(),
+                      "MHD is only supported in Cartesian coordinates. Curvilinear "
+                      "constrained transport needs face/edge metrics and magnetic "
+                      "geometry source terms that are not yet implemented.");
+
+    // AMR: the face field does carry divergence-preserving refinement operators, but
+    // registering an operator is not evidence that refinement works, and the donor's
+    // own MHD tests never exercise AMR, so there is no reference solution for it.
+    const std::string refinement =
+        pin->GetOrAddString("parthenon/mesh", "refinement", "none");
+    PARTHENON_REQUIRE(refinement == "none",
+                      "MHD with mesh refinement is not yet validated. Divergence-"
+                      "preserving prolongation and coarse/fine EMF correction are "
+                      "registered but untested; set parthenon/mesh/refinement = none.");
+
+    PARTHENON_REQUIRE(
+        !pin->GetOrAddBoolean("materials", "use_general_pte", false),
+        "MHD with the general PTE closure is not yet supported. The mixed-cell "
+        "closure and the general-EOS acoustic derivative both need separate "
+        "validation; set materials/use_general_pte = false.");
+
+    PARTHENON_REQUIRE(!fixed_fluid, "MHD with a frozen fluid background is not "
+                                    "supported: the induction equation transports the "
+                                    "field with the fluid velocity.");
+
+    // Every other physics package. Each would need its own energy/stress/signal-speed
+    // audit against the magnetic terms before it can co-run.
+    PARTHENON_REQUIRE(!do_strength, "MHD with material strength is not yet supported "
+                                    "(combined stresses and signal speeds need review).")
+    PARTHENON_REQUIRE(!do_mix, "MHD with the BHR mix model is not yet supported.")
+    PARTHENON_REQUIRE(!do_tn, "MHD with thermonuclear burn is not yet supported.")
+    PARTHENON_REQUIRE(!do_ionization, "MHD with ionization is not yet supported: the "
+                                      "two-temperature electron energy/entropy "
+                                      "coupling needs separate validation.")
+    PARTHENON_REQUIRE(!do_levelsets, "MHD with levelsets is not yet supported.")
+    PARTHENON_REQUIRE(!do_multigroup_diffusion,
+                      "MHD with multigroup diffusion is not yet supported.")
+    PARTHENON_REQUIRE(!do_radiation_transport,
+                      "MHD with radiation transport is not yet supported.")
+    PARTHENON_REQUIRE(!do_lasers, "MHD with lasers is not yet supported.")
+    PARTHENON_REQUIRE(!do_prescribed_sources,
+                      "MHD with prescribed sources is not yet supported.")
+    PARTHENON_REQUIRE(!do_gravity, "MHD with gravity is not yet supported (the "
+                                   "gravitational work term needs an energy audit).")
+    PARTHENON_REQUIRE(!do_scalars, "MHD with passive scalars is not yet supported.")
+    PARTHENON_REQUIRE(!do_tracers, "MHD with tracer particles is not yet supported.")
+  }
+
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
   riot->AddParam("do_strength", do_strength);
@@ -138,6 +214,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_ionization", do_ionization);
   riot->AddParam("do_prescribed_sources", do_prescribed_sources);
   riot->AddParam("do_tracers", do_tracers);
+  riot->AddParam("do_mhd", do_mhd);
 
   // determine riot verbosity
   const bool verbose = pin->GetOrAddBoolean("riot", "verbose", true);
@@ -177,6 +254,10 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     packages.Add(mat_pkg);
     packages.Add(Hydro::Initialize(pin.get(), mat_pkg.get()));
   }
+  // MHD registers immediately after hydro: it needs the hydro/materials fields to
+  // exist, and every other package's compatibility with it has already been refused
+  // above.
+  if (do_mhd) packages.Add(MHD::Initialize(pin.get()));
   if (do_strength)
     packages.Add(Strength::Initialize(pin.get(), packages.Get("materials").get()));
   if (do_mix) packages.Add(Mix::Initialize(pin.get()));
