@@ -43,7 +43,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   auto light_z = pin->GetOrAdd<Real>(cam_block, "light_z", 0.0);
   auto ambient = pin->GetOrAdd<Real>(cam_block, "light_ambient", 1.0);
   auto diffuse = pin->GetOrAdd<Real>(cam_block, "light_diffuse", 0.0);
-  auto opacity_threshold = pin->GetOrAdd<Real>(cam_block, "opacity_threshold", 1.e-2, "Opacity to stop ray trace");
+  auto opacity_threshold = pin->GetOrAdd<Real>(cam_block, "opacity_threshold", 1.e-2,
+                                               "Opacity to stop ray trace");
 
   rp.xl.push_back(light_x);
   rp.yl.push_back(light_y);
@@ -56,7 +57,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   int ncolorbars = 0;
   std::vector<VizType> layer_type;
   std::vector<int> layer_pack_idx, layer_alpha_pack_idx;
-  std::vector<Real> layer_range_min, layer_range_max, layer_alpha_range_min, layer_alpha_range_max;
+  std::vector<Real> layer_range_min, layer_range_max, layer_alpha_range_min,
+      layer_alpha_range_max;
   std::vector<GradType> layer_use_grad, layer_alpha_use_grad;
   std::vector<DataBox> layer_r, layer_g, layer_b, layer_a;
   std::vector<std::vector<Real>> layer_c, layer_rc, layer_gc, layer_bc, layer_ac;
@@ -68,7 +70,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     auto field = pin->Get<std::string>(layer, "field");
     auto field_use_grad = pin->GetOrAdd<std::string>(layer, "field_use_grad", "none");
     auto field_alpha = pin->GetOrAdd<std::string>(layer, "field_alpha", field);
-    auto field_alpha_use_grad = pin->GetOrAdd<std::string>(layer, "field_alpha_use_grad", "none");
+    auto field_alpha_use_grad =
+        pin->GetOrAdd<std::string>(layer, "field_alpha_use_grad", "none");
     auto label = pin->GetOrAdd<std::string>(layer, "label", field);
 
     // volume render, slice, and contour_slice params
@@ -99,17 +102,27 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     if (type == "slice") {
       // stick slice_alpha in contour_alpha
       slice_alpha = std::clamp(slice_alpha, 0.0, 1.0);
-      if (contour_alpha.size() == 0) contour_alpha.push_back(slice_alpha);
-      else contour_alpha[0] = slice_alpha;
+      if (contour_alpha.size() == 0)
+        contour_alpha.push_back(slice_alpha);
+      else
+        contour_alpha[0] = slice_alpha;
     }
 
     // contour_slice params
 
     if (contours.size() > 0) {
-      PARTHENON_REQUIRE_THROWS(contours.size() == contour_red.size(), "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(contours.size() == contour_green.size(), "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(contours.size() == contour_blue.size(), "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(contours.size() == contour_alpha.size(), "size of contour list must match across values and colors");
+      PARTHENON_REQUIRE_THROWS(
+          contours.size() == contour_red.size(),
+          "size of contour list must match across values and colors");
+      PARTHENON_REQUIRE_THROWS(
+          contours.size() == contour_green.size(),
+          "size of contour list must match across values and colors");
+      PARTHENON_REQUIRE_THROWS(
+          contours.size() == contour_blue.size(),
+          "size of contour list must match across values and colors");
+      PARTHENON_REQUIRE_THROWS(
+          contours.size() == contour_alpha.size(),
+          "size of contour list must match across values and colors");
     }
 
     for (int i = 0; i < contour_alpha.size(); i++) {
@@ -121,7 +134,9 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     auto cont_blue_dev = RiotUtils::VectorToDevice(contour_blue, "contour blue");
     auto cont_alpha_dev = RiotUtils::VectorToDevice(contour_alpha, "contour alpha");
 
-    std::vector<Real> slice_x{std::numeric_limits<Real>::max(), std::numeric_limits<Real>::max(), std::numeric_limits<Real>::max()};
+    std::vector<Real> slice_x{std::numeric_limits<Real>::max(),
+                              std::numeric_limits<Real>::max(),
+                              std::numeric_limits<Real>::max()};
     std::vector<Real> slice_n = {0.0, 0.0, 0.0};
     if ((slice_pos.size() == slice_normal.size()) && slice_pos.size() == 3) {
       slice_x = {slice_pos[0], slice_pos[1], slice_pos[2]};
@@ -172,13 +187,10 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     layer_masks.push_back(masks_vec);
     layer_mask_id.push_back(mask_id);
 
-
-
     // add this layer to the camera
-    camera.layer.emplace_back(MakeNormalizedDataBox(red),
-                              MakeNormalizedDataBox(green),
-                              MakeNormalizedDataBox(blue),
-                              MakeNormalizedDataBox(alpha), label, colorbar, cmin, cmax, VizTypeMap.at(type));
+    camera.layer.emplace_back(MakeNormalizedDataBox(red), MakeNormalizedDataBox(green),
+                              MakeNormalizedDataBox(blue), MakeNormalizedDataBox(alpha),
+                              label, colorbar, cmin, cmax, VizTypeMap.at(type));
   }
 
   rp.type.push_back(layer_type);
@@ -218,17 +230,16 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   // now setup the rays this camera's contribution to the scene
   auto normalize = [&](std::vector<Real> &vec) {
     auto mag = std::sqrt(vec[0] * vec[0] + vec[1] * vec[1] + vec[2] * vec[2]);
-    vec[0] /= mag;  vec[1] /= mag;  vec[2] /= mag;
+    vec[0] /= mag;
+    vec[1] /= mag;
+    vec[2] /= mag;
   };
   auto cross = [&](std::vector<Real> &a, std::vector<Real> &b) {
-    return std::vector<Real>({a[1] * b[2] - a[2] * b[1],
-                              a[2] * b[0] - a[0] * b[2],
+    return std::vector<Real>({a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
                               a[0] * b[1] - a[1] * b[0]});
   };
 
-  std::vector<Real> nhat0({floc[0] - cloc[0],
-                           floc[1] - cloc[1],
-                           floc[2] - cloc[2]});
+  std::vector<Real> nhat0({floc[0] - cloc[0], floc[1] - cloc[1], floc[2] - cloc[2]});
   Real cdist = sqrt(nhat0[0] * nhat0[0] + nhat0[1] * nhat0[1] + nhat0[2] * nhat0[2]);
   normalize(up);
   normalize(nhat0);
@@ -357,7 +368,7 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
         PARTHENON_THROW("Unsupported coordinate system in volume renderer.");
       }
       if (lambda_use > 0.5 * std::numeric_limits<Real>::max()) {
-        //PARTHENON_WARN("Camera ray does not intersect domain, skipping.");
+        // PARTHENON_WARN("Camera ray does not intersect domain, skipping.");
         continue;
       }
 
@@ -367,9 +378,10 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
       int face_id;
       // reset position so it falls *exactly* on boundary
       if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-        trial[face_dir] = (nray[face_dir] > 0.0
-            ? xmin[face_dir] + (xmax[face_dir] - xmin[face_dir]) * 1.e-12
-            : xmax[face_dir] - (xmax[face_dir] - xmin[face_dir]) * 1.e-12);
+        trial[face_dir] =
+            (nray[face_dir] > 0.0
+                 ? xmin[face_dir] + (xmax[face_dir] - xmin[face_dir]) * 1.e-12
+                 : xmax[face_dir] - (xmax[face_dir] - xmin[face_dir]) * 1.e-12);
         face_id = 2 * face_dir + (nray[face_dir] < 0);
       } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
         if (face_dir == 1 && nray[2] > 0) {
@@ -386,7 +398,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
         }
       } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
         face_id = 1;
-        auto r = std::sqrt(trial[0] * trial[0] + trial[1] * trial[1] + trial[2] * trial[2]);
+        auto r =
+            std::sqrt(trial[0] * trial[0] + trial[1] * trial[1] + trial[2] * trial[2]);
         auto rb = xmax[0] * (1.0 - 1.e-14);
         trial[0] *= rb / r;
         trial[1] *= rb / r;
@@ -417,15 +430,19 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto t_viz = pin->GetOrAddVector<Real>("riot_viz", "t", {});
   auto tlim = pin->Get<Real>("parthenon/time", "tlim");
 
-  if (dt_viz > 0 && t_viz.size() > 0) PARTHENON_FAIL("Cannot set both dt and t for riot_viz");
-  PARTHENON_REQUIRE(dt_viz > 0 || t_viz.size() > 0, "Must set either dt or t in riot_viz");
+  if (dt_viz > 0 && t_viz.size() > 0)
+    PARTHENON_FAIL("Cannot set both dt and t for riot_viz");
+  PARTHENON_REQUIRE(dt_viz > 0 || t_viz.size() > 0,
+                    "Must set either dt or t in riot_viz");
   std::queue<Real> tdump;
   if (dt_viz > 0.0) {
     tdump.push(0.0);
-    while(tdump.back() + dt_viz < tlim + 1.e-14 * dt_viz) tdump.push(tdump.back() + dt_viz);
+    while (tdump.back() + dt_viz < tlim + 1.e-14 * dt_viz)
+      tdump.push(tdump.back() + dt_viz);
     if (std::abs(tlim - tdump.back()) < 1.e-14 * dt_viz) tdump.back() = tlim;
   } else {
-    for (auto &tnext : t_viz) tdump.push(tnext);
+    for (auto &tnext : t_viz)
+      tdump.push(tnext);
   }
   params.Add("tdump", tdump, true);
   int dump_id = 0;
@@ -436,7 +453,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("last_dump_time", tdump.back());
   bool timebar = pin->GetOrAdd<bool>("riot_viz", "timebar", false);
   params.Add("timebar", timebar);
-  auto timebar_rgb = pin->GetOrAddVector<Real>("riot_viz", "timebar_rgb", {1.0, 1.0, 1.0});
+  auto timebar_rgb =
+      pin->GetOrAddVector<Real>("riot_viz", "timebar_rgb", {1.0, 1.0, 1.0});
   params.Add("timebar_rgb", timebar_rgb);
 
   int ndim = 1 + (pin->GetInteger("parthenon/mesh", "nx2") > 1) +
@@ -454,20 +472,22 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       if (std::isdigit(suffix)) {
         auto id = atoi(block_name.substr(block_base.size()).c_str());
         PARTHENON_REQUIRE_THROWS(cam_block_ids.count(id) == 0,
-                                  "Two camera input blocks are numbered identically.");
+                                 "Two camera input blocks are numbered identically.");
         cam_block_ids.insert(id);
         AddCamera(pin, nimages, ndim, scene);
         auto &camera = scene.camera.back();
-        max_size = std::max(max_size, camera.nwidth * camera.nheight
-                                    + camera.ncolorbar * camera.colorbar_thickness * camera.nwidth
-                                    + timebar * 10 * camera.nwidth);
+        max_size = std::max(max_size, camera.nwidth * camera.nheight +
+                                          camera.ncolorbar * camera.colorbar_thickness *
+                                              camera.nwidth +
+                                          timebar * 10 * camera.nwidth);
         nimages++;
       }
     }
   }
 
   // don't forget the 4 because it's 4 channels (RGBA)
-  scene.images = ParArrayND<uint8_t>("Volume Render images", scene.camera.size(), 4 * max_size);
+  scene.images =
+      ParArrayND<uint8_t>("Volume Render images", scene.camera.size(), 4 * max_size);
 
   RenderingParams rparams(scene.rendering_params);
   params.Add("rendering_params", rparams);
@@ -496,7 +516,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("scene_info", scene, true);
   params.Add("orig_fields", orig_fields);
 
-  return pkg;  
+  return pkg;
 }
 
 bool TimeToRender(Mesh *pm, Real time) {
@@ -508,8 +528,10 @@ bool TimeToRender(Mesh *pm, Real time) {
   while (time >= t_next_dump) {
     render = true;
     dump_times->pop();
-    if (dump_times->size()) t_next_dump = dump_times->front();
-    else t_next_dump = std::numeric_limits<Real>::max();
+    if (dump_times->size())
+      t_next_dump = dump_times->front();
+    else
+      t_next_dump = std::numeric_limits<Real>::max();
   }
   return render;
 }
@@ -541,7 +563,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
     // note: this is where we would add slicing, cutouts, etc
     bool is_boundary = false;
     std::array<bool, 6> bound_flag;
-    for (int i = 0; i < 2*ndim; i++) {
+    for (int i = 0; i < 2 * ndim; i++) {
       if (pmb->boundary_flag[i] != parthenon::BoundaryFlag::block) {
         is_boundary = true;
         bound_flag[i] = true;
@@ -549,7 +571,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
         bound_flag[i] = false;
       }
     }
-    for (int i = 2*ndim; i < 6; i++) {
+    for (int i = 2 * ndim; i < 6; i++) {
       bound_flag[i] = true;
       is_boundary = true;
     }
@@ -616,7 +638,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
 
     // now make a device side array that lists the included points
     parthenon::ParArray2D<Real> camera_pts("camera points", total_number,
-                                          static_cast<int>(sample::nvalues));
+                                           static_cast<int>(sample::nvalues));
     parthenon::ParArray2D<int> camera_idx("camera indexing", total_number, 2);
     auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_pts);
     auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_idx);
@@ -667,9 +689,10 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
             y(pidx) = camera_pts(n, sample::y);
             z(pidx) = camera_pts(n, sample::z);
           } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-            Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x)
-                                + camera_pts(n, sample::y) * camera_pts(n, sample::y));
-            if (std::abs(rcyl - block_xmax[0])/block_xmax[0] < 1.e-6) rcyl = block_xmax[0] - 1.e-12;
+            Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
+                                  camera_pts(n, sample::y) * camera_pts(n, sample::y));
+            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < 1.e-6)
+              rcyl = block_xmax[0] - 1.e-12;
             const Real zcyl = camera_pts(n, sample::z);
             Real phi_cyl = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
             phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
@@ -677,9 +700,10 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
             y(pidx) = zcyl;
             z(pidx) = phi_cyl;
           } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-            const Real rsph = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x)
-                                      + camera_pts(n, sample::y) * camera_pts(n, sample::y)
-                                      + camera_pts(n, sample::z) * camera_pts(n, sample::z));
+            const Real rsph =
+                std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
+                          camera_pts(n, sample::y) * camera_pts(n, sample::y) +
+                          camera_pts(n, sample::z) * camera_pts(n, sample::z));
             const Real th = std::acos(camera_pts(n, sample::z) / rsph);
             Real phi_sph = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
             phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
@@ -713,33 +737,34 @@ TaskStatus Tracer(MeshData<Real> *md) {
   auto vrend = pm->packages.Get("riot_viz");
   auto render_params = vrend->Param<RenderingParams>("rendering_params");
   auto &scene_info = vrend->Param<SceneInfo>("scene_info");
-  auto desc = parthenon::MakePackDescriptor(md, scene_info.field);;
+  auto desc = parthenon::MakePackDescriptor(md, scene_info.field);
+  ;
   auto v = desc.GetPack(md);
 
   auto desc_ps =
       parthenon::MakeSwarmPackDescriptor<swarm_position::x, swarm_position::y,
-                                         swarm_position::z, rt::vx, rt::vy, rt::vz,
-                                         vr::r, vr::g, vr::b, vr::a>(
-          vr::particles::name());
+                                         swarm_position::z, rt::vx, rt::vy, rt::vz, vr::r,
+                                         vr::g, vr::b, vr::a>(vr::particles::name());
   auto ps = desc_ps.GetPack(md);
 
-  auto desc_ps_int = parthenon::MakeSwarmPackDescriptor<vr::camera_id>(vr::particles::name());
+  auto desc_ps_int =
+      parthenon::MakeSwarmPackDescriptor<vr::camera_id>(vr::particles::name());
   auto ps_int = desc_ps_int.GetPack(md);
 
-  return RayTrace::Trace<Composer, false, false>(ps, v, md->GetParentPointer(), ps_int, render_params);
+  return RayTrace::Trace<Composer, false, false>(ps, v, md->GetParentPointer(), ps_int,
+                                                 render_params);
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md) {
   using TE = parthenon::TopologicalElement;
 
   auto pm = md->GetMeshPointer();
-  auto orig_fields = pm->packages.Get("riot_viz")->Param<std::vector<std::string>>("orig_fields");
+  auto orig_fields =
+      pm->packages.Get("riot_viz")->Param<std::vector<std::string>>("orig_fields");
   auto node_fields = pm->packages.Get("riot_viz")->Param<SceneInfo>("scene_info").field;
-  auto desc_orig =
-      parthenon::MakePackDescriptor(md, orig_fields);
+  auto desc_orig = parthenon::MakePackDescriptor(md, orig_fields);
   auto vorig = desc_orig.GetPack(md);
-  auto desc_node =
-      parthenon::MakePackDescriptor(md, node_fields);
+  auto desc_node = parthenon::MakePackDescriptor(md, node_fields);
   auto vnode = desc_node.GetPack(md);
 
   PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == vnode.GetNBlocks(), "oops");
@@ -782,7 +807,7 @@ TaskCollection Render(Mesh *pm, Real time) {
   TaskCollection tc;
   TaskID none;
   // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
-  constexpr int num_partitions = 1; //pm->DefaultNumPartitions();
+  constexpr int num_partitions = 1; // pm->DefaultNumPartitions();
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
@@ -795,8 +820,7 @@ TaskCollection Render(Mesh *pm, Real time) {
     auto reset_comms = itl.AddTask(none, parthenon::ResetSwarmsCommunicationMesh, md_sp);
     auto send = itl.AddTask(reset_comms, parthenon::SendSwarmsMesh, md_sp);
     auto recv = itl.AddTask(send | reset_comms, parthenon::ReceiveSwarmsMesh, md_sp);
-    auto transport =
-        itl.AddTask(TQ::completion | TQ::global_sync, recv, Tracer, md);
+    auto transport = itl.AddTask(TQ::completion | TQ::global_sync, recv, Tracer, md);
   }
   auto &dump_reg = tc.AddRegion(1);
   auto &tl = dump_reg[0];
@@ -804,68 +828,48 @@ TaskCollection Render(Mesh *pm, Real time) {
   return tc;
 }
 
-void draw_char(uint8_t *rgba,
-               int width, int height,
-               int x0, int y0,
-               char c,
-               std::uint8_t r,
-               std::uint8_t g,
-               std::uint8_t b,
-               std::uint8_t a)
-{
-    const auto* glyph =(font8x8_basic[static_cast<unsigned char>(c)]);
+void draw_char(uint8_t *rgba, int width, int height, int x0, int y0, char c,
+               std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
+  const auto *glyph = (font8x8_basic[static_cast<unsigned char>(c)]);
 
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 0; x < 8; ++x) {
 
-            if (!(glyph[y] & (1u << x)))
-                continue;
+      if (!(glyph[y] & (1u << x))) continue;
 
-            const int px = x0 + x;
-            const int py = y0 + y;
+      const int px = x0 + x;
+      const int py = y0 + y;
 
-            if (px < 0 || px >= width ||
-                py < 0 || py >= height)
-                continue;
+      if (px < 0 || px >= width || py < 0 || py >= height) continue;
 
-            const std::size_t i =
-                4 * (static_cast<std::size_t>(py) * width + px);
+      const std::size_t i = 4 * (static_cast<std::size_t>(py) * width + px);
 
-            rgba[i + 0] = r;
-            rgba[i + 1] = g;
-            rgba[i + 2] = b;
-            rgba[i + 3] = a;
-        }
+      rgba[i + 0] = r;
+      rgba[i + 1] = g;
+      rgba[i + 2] = b;
+      rgba[i + 3] = a;
     }
+  }
 }
 
-void draw_text(uint8_t *rgba,
-               int width, int height,
-               int x, int y,
-               const std::string& text,
-               std::uint8_t r = 255,
-               std::uint8_t g = 255,
-               std::uint8_t b = 255,
-               std::uint8_t a = 255,
-               bool centered = true)
-{
+void draw_text(uint8_t *rgba, int width, int height, int x, int y,
+               const std::string &text, std::uint8_t r = 255, std::uint8_t g = 255,
+               std::uint8_t b = 255, std::uint8_t a = 255, bool centered = true) {
   int num_chars = text.size();
   int pixel_width = 8 * num_chars;
   int offset = centered ? pixel_width / 2 : 0;
-    for (char c : text) {
-        draw_char(rgba, width, height,
-                  x - offset, y, c, r, g, b, a);
+  for (char c : text) {
+    draw_char(rgba, width, height, x - offset, y, c, r, g, b, a);
 
-        x += 8;
-    }
+    x += 8;
+  }
 }
 
 std::string FormatReal(Real value) {
   std::ostringstream out;
 
   const Real magnitude = std::abs(value);
-  if (magnitude != 0.0 &&
-      (magnitude < 1.0e-3 || magnitude >= 1.0e4)) {
+  if (magnitude != 0.0 && (magnitude < 1.0e-3 || magnitude >= 1.0e4)) {
     out << std::scientific;
   } else {
     out << std::fixed;
@@ -876,8 +880,7 @@ std::string FormatReal(Real value) {
 }
 
 std::string FormatMinMax(double min_val, double max_val) {
-  return FormatReal(min_val) +
-         " / " + FormatReal(max_val);
+  return FormatReal(min_val) + " / " + FormatReal(max_val);
 }
 
 TaskStatus DumpImages(Mesh *pm, Real time) {
@@ -894,51 +897,55 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
   auto &images = scene_info->images;
   auto md = pm->mesh_data.Get("base").get();
 
-  auto desc_ps =
-      parthenon::MakeSwarmPackDescriptor<vr::r, vr::g, vr::b, vr::a>(
-          vr::particles::name());
+  auto desc_ps = parthenon::MakeSwarmPackDescriptor<vr::r, vr::g, vr::b, vr::a>(
+      vr::particles::name());
   auto ps = desc_ps.GetPack(md);
 
-  auto desc_ps_int = parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(vr::particles::name());
+  auto desc_ps_int = parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(
+      vr::particles::name());
   auto ps_int = desc_ps_int.GetPack(md);
-
 
   auto cast = [=](Real val) {
     return static_cast<std::uint8_t>(std::clamp(val, 0.0, 1.0) * 255.0 + 0.5);
   };
 
   int pix_set = 0;
-  parthenon::par_reduce(DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, ps.GetMaxFlatIndex(),
-    KOKKOS_LAMBDA(const int idx, int &num_set) {
-      auto [blk, n] = ps.GetBlockParticleIndices(idx);
-      auto &swarm_d = ps.GetContext(blk);
-      if (swarm_d.IsActive(n)) {
-        const int cam_id = ps_int(blk, vr::camera_id(), n);
-        const int pix_id = ps_int(blk, vr::pixel_id(), n);
+  parthenon::par_reduce(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, ps.GetMaxFlatIndex(),
+      KOKKOS_LAMBDA(const int idx, int &num_set) {
+        auto [blk, n] = ps.GetBlockParticleIndices(idx);
+        auto &swarm_d = ps.GetContext(blk);
+        if (swarm_d.IsActive(n)) {
+          const int cam_id = ps_int(blk, vr::camera_id(), n);
+          const int pix_id = ps_int(blk, vr::pixel_id(), n);
 
-        // remember that the sign of alpha may have been flipped to indicate this particle was done being integrated
-        const Real a = std::abs(ps(blk, vr::a(), n));
-        const Real r = (a > 0) ? ps(blk, vr::r(), n) / a : 0.0;
-        const Real g = (a > 0) ? ps(blk, vr::g(), n) / a : 0.0;
-        const Real b = (a > 0) ? ps(blk, vr::b(), n) / a : 0.0;
+          // remember that the sign of alpha may have been flipped to indicate this
+          // particle was done being integrated
+          const Real a = std::abs(ps(blk, vr::a(), n));
+          const Real r = (a > 0) ? ps(blk, vr::r(), n) / a : 0.0;
+          const Real g = (a > 0) ? ps(blk, vr::g(), n) / a : 0.0;
+          const Real b = (a > 0) ? ps(blk, vr::b(), n) / a : 0.0;
 
-        images(cam_id, 4 * pix_id + 0) = cast(r);
-        images(cam_id, 4 * pix_id + 1) = cast(g);
-        images(cam_id, 4 * pix_id + 2) = cast(b);
-        images(cam_id, 4 * pix_id + 3) = cast(a);
+          images(cam_id, 4 * pix_id + 0) = cast(r);
+          images(cam_id, 4 * pix_id + 1) = cast(g);
+          images(cam_id, 4 * pix_id + 2) = cast(b);
+          images(cam_id, 4 * pix_id + 3) = cast(a);
 
-        num_set++;
-        
-        swarm_d.MarkParticleForRemoval(n);
-      }
-    }, Kokkos::Sum<int>(pix_set));
+          num_set++;
+
+          swarm_d.MarkParticleForRemoval(n);
+        }
+      },
+      Kokkos::Sum<int>(pix_set));
 
   Kokkos::fence();
   auto host_images = images.GetHostMirrorAndCopy();
   if (parthenon::Globals::my_rank == 0)
-    MPI_Reduce(MPI_IN_PLACE, host_images.data(), host_images.size(), MPI_UINT8_T, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(MPI_IN_PLACE, host_images.data(), host_images.size(), MPI_UINT8_T, MPI_MAX,
+               0, MPI_COMM_WORLD);
   else
-    MPI_Reduce(host_images.data(), NULL, host_images.size(), MPI_UINT8_T, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(host_images.data(), NULL, host_images.size(), MPI_UINT8_T, MPI_MAX, 0,
+               MPI_COMM_WORLD);
   if (parthenon::Globals::my_rank == 0) {
     auto &camera = scene_info->camera;
     for (int i = 0; i < camera.size(); i++) {
@@ -976,7 +983,9 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
             host_images(i, j + 3) = 255;
           }
         }
-        draw_text(&host_images(i, 0), w, total_h, w / 2, h + 1, "Time = " + FormatReal(time), cast(1.0 - time_rgb[0]), cast(1.0 - time_rgb[1]), cast(1.0 - time_rgb[2]));
+        draw_text(&host_images(i, 0), w, total_h, w / 2, h + 1,
+                  "Time = " + FormatReal(time), cast(1.0 - time_rgb[0]),
+                  cast(1.0 - time_rgb[1]), cast(1.0 - time_rgb[2]));
       }
       for (auto &layer : camera[i].layer) {
         if (!layer.colorbar) continue;
@@ -990,10 +999,11 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
             host_images(i, j + 3) = 255;
             continue;
           }
-          Real x = (1.0 * (ix - max_label_width)) / (w - max_label_width - max_range_width);
+          Real x =
+              (1.0 * (ix - max_label_width)) / (w - max_label_width - max_range_width);
           int iy = t - (j - jstart) / (4 * w) - 1;
           Real a = layer.acmap.interpToReal(x);
-          int iyl = a * (t-2) + 1;
+          int iyl = a * (t - 2) + 1;
           if (iy == 0) {
             host_images(i, j + 0) = 0;
             host_images(i, j + 1) = 0;
@@ -1014,19 +1024,18 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
             }
           }
         }
-        draw_text(&host_images(i, 0), w, total_h, max_label_width / 2, h + (ilabel + 1 + timebar) * t - 9, layer.label, 255, 255, 255);
-        draw_text(&host_images(i, 0), w, total_h, w - max_range_width/2, h + (ilabel + 1 + timebar) * t - 9, FormatMinMax(layer.min_range, layer.max_range), 255, 255, 255);
+        draw_text(&host_images(i, 0), w, total_h, max_label_width / 2,
+                  h + (ilabel + 1 + timebar) * t - 9, layer.label, 255, 255, 255);
+        draw_text(&host_images(i, 0), w, total_h, w - max_range_width / 2,
+                  h + (ilabel + 1 + timebar) * t - 9,
+                  FormatMinMax(layer.min_range, layer.max_range), 255, 255, 255);
         ilabel++;
       }
 
       std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
-      if (!stbi_write_png(
-            name.c_str(),
-            w,
-            total_h,
-            4,              // RGBA
-            &host_images(i, 0),
-            w * 4)) {
+      if (!stbi_write_png(name.c_str(), w, total_h,
+                          4, // RGBA
+                          &host_images(i, 0), w * 4)) {
         throw std::runtime_error("Failed to write PNG");
       }
     }
@@ -1037,10 +1046,10 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
     md->GetSwarmData(b)->Get(vr::particles::name())->RemoveMarkedParticles();
   }
 
-  parthenon::par_for(DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, images.GetDim(2) - 1, 0, images.GetDim(1) - 1,
-    KOKKOS_LAMBDA(const int j, const int i) {
-      images(j, i) = 0;
-    });
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, images.GetDim(2) - 1,
+      0, images.GetDim(1) - 1,
+      KOKKOS_LAMBDA(const int j, const int i) { images(j, i) = 0; });
 
   return TaskStatus::complete;
 }
