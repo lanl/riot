@@ -8,9 +8,10 @@ Commits: `725a19a` (Stages 0-2), `f0af069` (Stage 3 solver), `4d1a8e0` (checkpoi
 `1350c20` (face memory-layout fix), `dced139` (flux wiring + CT + pgens)
 
 Current stage: **Stage 4 substantially complete.** Gates passed: G0, G1, G2, G3, and G4 in
-part (including MPI, P01). **MHD now runs end to end**: Brio-Wu agrees with the Athena++
-reference, the 2D and 3D field loops hold div B at roundoff, and results are bitwise
-independent of rank count. What remains in G4 is Orszag-Tang and the CPAW convergence rate.
+part (including Orszag-Tang and MPI). **MHD now runs end to end**: Brio-Wu agrees with the
+Athena++ reference, the 2D and 3D field loops hold div B at roundoff, Orszag-Tang holds it
+through a shock network, and results are bitwise independent of rank count. The only G4 item
+left is the CPAW convergence rate.
 
 ## Implemented and verified
 
@@ -26,9 +27,14 @@ independent of rank count. What remains in G4 is Orszag-Tang and the CPAW conver
   `MHDFluxes<DIR, FLUX_FN>` and `MHDFluxIndexSpace` (transverse-only bound extension).
 - **Upwind CT** (`src/mhd/emf.hpp`, `MHD::AssembleEdgeEMF`, `MHD::ApplyFaceUpdate`) with
   the five task-graph edges in `riot_driver.cpp`.
-- **Two problem generators**: `mhd_shock_tube` (Brio-Wu), `mhd_field_loop` (2D and 3D, with
-  a `loop_axis` option that rotates the setup onto each pair of edge directions). Inputs in
-  `inputs/mhd/`.
+- **Three problem generators**: `mhd_shock_tube` (Brio-Wu), `mhd_field_loop` (2D and 3D, with
+  a `loop_axis` option that rotates the setup onto each pair of edge directions), and
+  `mhd_orszag_tang`. Inputs in `inputs/mhd/`.
+- **Orszag-Tang verified** (TEST_LEDGER G4.4): the only case in the port combining shocks
+  with multi-D CT. div B at roundoff, mean rho/E conserved, the ADR-002 energy split exact to
+  1e-16, positivity with margin (no floor), and 1 vs 4 ranks bitwise identical. Runs
+  `mhd_hlle` rather than the donor's HLLD, which is why its criteria are conservation
+  identities rather than a pointwise reference.
 - **3D CT verified** (TEST_LEDGER G4.3): the Gardiner-Stone axial-field test passes in all
   three permutations with the axial field at roundoff, and 1-block vs 8-block results are
   bitwise identical.
@@ -44,7 +50,7 @@ independent of rank count. What remains in G4 is Orszag-Tang and the CPAW conver
 
 ## Not implemented
 
-`mhd_orszag_tang` and MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
+MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
 regression harness; HLLD and LLF; `mhd/monitor_divb` is registered but not yet consumed;
 restart of face state untested; test N01 (startup rejections) not run; U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
@@ -53,9 +59,22 @@ uniform-grid, so no coarse/fine flux or EMF correction is exercised.
 
 ## Next actions
 
-1. **Orszag-Tang pgen** — the remaining G4 item, and the one that exercises shocks with a
-   magnetic field. Checks: `max|divB| <= 1e-10`, mean rho to rtol 1e-12, mean E to 1e-8,
-   and the decomposition residual `|E - u - KE - E_mag| <= 1e-10`.
+1. ~~**Orszag-Tang pgen**~~ — **DONE, PASS** (TEST_LEDGER G4.4). To re-run:
+   ```
+   mkdir -p /tmp/mhdot && cd /tmp/mhdot
+   R=/Users/taitano/Documents/git/riot
+   for N in 1 4; do
+     mpiexec -n $N $R/build/src/riot -i $R/inputs/mhd/orszag_tang.rin \
+       parthenon/job/problem_id=ot_r$N
+   done
+   . $R/riot_venv/bin/activate
+   PYTHONPATH=$R/claude_sessions/mhd_runs \
+     python3 $R/claude_sessions/mhd_runs/analyze_orszag_tang.py ot_r1 ot_r4
+   ```
+   Pass `expect_heating=False` when checking the t=0 snapshot — the shock-heating criterion
+   is the one check that is meaningless before shocks form. Everything else IS meaningful at
+   t=0 and is a stronger statement there, because the analytic box means are exact for the
+   discrete initial state; that snapshot is what validates the pgen itself.
 2. ~~**MPI (P01)**~~ — **DONE, PASS** (TEST_LEDGER "P01 (complete)"). Bitwise identical to
    serial at 1/2/3/4/5/8 ranks across all three loop axes, 2D and 3D, and with shocks. To
    re-run it:
@@ -150,3 +169,18 @@ uniform-grid, so no coarse/fine flux or EMF correction is exercised.
   `. riot_venv/bin/activate && CFM=$(pwd)/riot_venv/bin/clang-format VERBOSE=1 ./script/format.sh`
 - Do not stage `external/parthenon`. It is dirty only from the nested Kokkos scratch-limit
   patch applied by the build from the tracked `riot_kokkos.patch`.
+- **Input decks are `.py` generators, not `.rin` files.** `.gitignore:59` ignores `*.rin`,
+  because in RIOT a `.rin` is a generated artifact: the tracked source is a Python script
+  under `inputs/` that calls `riot.input(...)` and ends with `riot.input.generate_input()`
+  (see any file under `inputs/advection/`). Hand-writing a `.rin` appears to work and then
+  silently fails to be committed — the four MHD decks were written that way at first and were
+  absent from every commit that claimed to add them, discovered only when `git add` refused
+  `inputs/mhd/orszag_tang.rin`. To regenerate:
+  ```
+  . riot_venv/bin/activate
+  cd inputs/mhd
+  PYTHONPATH=$PWD/../../script/inputs:$PWD/../../build/singularity-eos/python \
+    python3 orszag_tang.py     # -> orszag_tang.rin
+  ```
+  `script/inputs/riot.py` imports the built `singularity_eos` module, which is why the build
+  directory has to be on `PYTHONPATH` as well.

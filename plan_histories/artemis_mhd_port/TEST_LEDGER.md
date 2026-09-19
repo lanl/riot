@@ -246,7 +246,7 @@ called by anything.
 
 | Gate | Scope | Status |
 | --- | --- | --- |
-| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | PARTIAL — div B, 2D/3D field loop and MPI (P01) PASS; Orszag–Tang and the CPAW convergence rate NOT RUN |
+| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | PARTIAL — div B, 2D/3D field loop, Orszag–Tang (G4.4) and MPI (P01) PASS; only the CPAW convergence rate NOT RUN |
 | G5 | HLLD/LLF coverage, degeneracies, reconstruction certification, restart (R01) | NOT RUN |
 
 ## Permanently out of scope for this port (ADR-004)
@@ -551,3 +551,76 @@ correction at coarse/fine boundaries is tested. Single node, shared memory — n
 And bitwise agreement here depended on `dt` being reduction-order-independent in these cases;
 a problem where the CFL reduction does reorder would legitimately differ at roundoff without
 being a bug.
+
+## G4.4 — Orszag & Tang vortex: shocks plus multi-dimensional CT
+
+Added `mhd_orszag_tang` (`src/riot_pgen/mhd_problems.cpp`) and
+`inputs/mhd/orszag_tang.rin`. 64x64 unit square on 4 mesh blocks, gamma = 5/3, mu0 = 1,
+PLM + `mhd_hlle`, CFL 0.4, to t = 0.5 in 370 cycles. Analysis:
+`claude_sessions/mhd_runs/analyze_orszag_tang.py`.
+
+**Why this test was worth adding even after G4.3 and P01 passed.** Every other MHD case in
+the port is either one-dimensional (Brio-Wu) or smooth for all time (the field loop, whose
+exact solution is pure advection). This is the only one where constrained transport has to
+hold div B = 0 *while limiters are firing and the EMF stencil straddles discontinuities*. A
+CT defect masked by smoothness, or a shock-capturing defect masked by one-dimensionality,
+has nowhere left to hide.
+
+**Deviation from the donor, stated up front:** `artemis/inputs/orszag_tang/orszag_tang.in`
+runs HLLD, which this port does not have yet (Stage 5), so this deck runs `mhd_hlle`. That is
+why the acceptance criteria are conserved global quantities and the local energy split rather
+than a pointwise reference. None of the criteria is solver-specific — they are conservation
+and consistency statements — but a *failure* here would have to be checked against the solver
+difference before being attributed to the port.
+
+Thresholds are the donor's own (`artemis/tst/scripts/mhd/orszag_tang.py`), adopted verbatim
+and frozen before evaluation.
+
+### Results
+
+| Quantity | t = 0 | t = 0.5, 1 rank | t = 0.5, 4 ranks | Threshold |
+| --- | --- | --- | --- | --- |
+| all finite | yes | yes | yes | no NaN/Inf |
+| `min rho` | 2.21048532e-01 | 1.01171526e-01 | 1.01171526e-01 | > 0 |
+| `min P` | 1.32629119e-01 | 3.65275291e-02 | 3.65275291e-02 | > 0 |
+| `max abs(divB)` | **0.0** | 1.98951966e-13 | 1.98951966e-13 | <= 1e-10 |
+| `mean rho` | 2.21048532e-01 | 2.21048532e-01 | 2.21048532e-01 | rtol 1e-12 of 25/(36 pi) |
+| `max abs(mean momentum)` | 1.39e-17 | 6.94e-18 | 6.94e-18 | <= 1e-10 |
+| `mean E` | 3.49256681e-01 | 3.49256681e-01 | 3.49256681e-01 | rtol 1e-8 of 0.34925668067288668 |
+| `max abs(E - u - KE - Emag)` | 8.33e-17 | 1.01e-16 | 1.01e-16 | <= 1e-10 |
+| `mean u` | 1.98943679e-01 | 2.50419244e-01 | 2.50419244e-01 | >= U0 + 1e-3 E0 at t>0 |
+
+**PASS at both rank counts, and 1 vs 4 ranks is bitwise identical** across all seven fields.
+
+Positivity holds with margin (`min P` is 28% of its initial value, not clinging to a floor),
+so no clipping was needed — which matters because a floored solve can pass conservation
+checks while hiding a defect.
+
+### Reading the divergence number
+
+`max abs(divB) = 1.99e-13` is larger than the field loop's `5e-15`, and that is a units
+artifact rather than a degradation: this field is O(b0) = O(0.28) whereas the loop field is
+O(1e-3), and `div_magnetic_field` carries units of B/length. Normalized the same way as
+`eta` elsewhere in this ledger, `1.99e-13 * dx / max|B| = 1.99e-13 / 64 / 0.28 ~ 1.1e-14` —
+i.e. roundoff, consistent with every other CT result here.
+
+### The t = 0 column is a pgen check, not a formality
+
+Every criterion except shock heating is meaningful at t = 0, and is a *stronger* statement
+there: the initial mean of `sin^2` over a cell-centered grid spanning whole periods is exactly
+1/2, so the analytic box means `rho0`, `E0 = P0/(gamma-1) + rho0 v0^2/2 + b0^2/2` are exact for
+the discrete initial state, not accurate to O(dx^2). They are matched, and `max abs(divB)` is
+**identically zero**. That confirms the field really is divergence free by construction and
+that `AddMagneticEnergyToTotal` produced exactly the ADR-002 total. The shock-heating
+criterion is the one check that cannot apply at t = 0 (no shocks yet); the analysis script
+takes `expect_heating=False` for that snapshot rather than reporting a spurious failure.
+
+### Why no vector potential here
+
+Rule 3 of the pgen contract asks for a discrete curl "where the field is not trivially
+divergence free by construction". This field is: `B1 = -b0 sin(2 pi y)` depends only on x2 and
+`B2 = b0 sin(4 pi x)` only on x1, so on the staggered mesh the two x1-faces of any cell carry
+identical B1 and the two x2-faces identical B2. Each term of the discrete divergence vanishes
+separately and exactly at any resolution — which the t = 0 row confirms empirically. Writing B
+pointwise also matches the donor exactly, whereas a node-differenced potential would give the
+O(dx^2) finite-difference sine instead.
