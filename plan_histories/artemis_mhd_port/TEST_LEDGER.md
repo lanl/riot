@@ -1676,6 +1676,36 @@ that is **four blocks along x1**, precisely the failing layout. It gives relativ
 **3.244e-15** and its regression test passes at a 1e-10 threshold. RIOT in the same layout
 gives 4.4e-08. Same Parthenon pin, same `nghost = 2`.
 
+#### The single-point control was not enough; here is the matched sweep
+
+A single donor data point leaves two holes: the donor's `divB` might be a different diagnostic,
+and one layout is not a trend. Both are now closed.
+
+**The diagnostic is the same quantity.** `artemis/src/derived/fill_derived.cpp:266` computes
+`divB` as the signed sum of face area times face B over the cell volume, with the same
+`multid`/`threed` collapse as RIOT's `SetDerivedMagneticFields`. Formula for formula identical,
+so the two numbers are comparable. (Had the donor differenced the CELL-centered field instead,
+its "clean" value would have been meaningless -- that form does not vanish for a discretely
+divergence-free field.)
+
+**The sweep.** Both codes, `nx1 = 64`, `nx2 = 32`, one block in x2, run to a full crossing, only
+the meshblock size varying:
+
+| blocks along x1 | Artemis `max abs(divB)` | RIOT `max abs(divB)` |
+| --- | --- | --- |
+| 2 | 1.123e-16 | 1.300e-16 |
+| **4** | **1.123e-16** | **1.412e-09** |
+| **8** | **1.123e-16** | **4.139e-10** |
+
+The donor is not merely below threshold -- it is **identical to the last digit** across all three
+decompositions, i.e. bitwise decomposition-invariant. RIOT is flat only at two blocks and then
+loses seven orders. That is as clean an attribution as this comparison can produce: the defect
+was introduced by the port.
+
+The donor run used its deck's own `tlim` (2.24, one crossing, 702 cycles) rather than the
+`nlim = 200` of the first control, so it is not a case of the donor stopping before the
+triggering event.
+
 ### Why every earlier test missed it
 
 Every CT test recorded above used at most TWO blocks along any axis:

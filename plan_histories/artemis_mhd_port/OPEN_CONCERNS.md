@@ -47,9 +47,20 @@ block's divergence budget no longer balances. The `mhd/monitor_divb` trace shows
 event at cycle 67-68 and then a value frozen to the last digit for the rest of the run — CT
 faithfully preserving an error it cannot undo.
 
-**Attribution: the port's, not the donor's.** The donor's own default field-loop deck is four
-blocks along x1 and it reports relative div B of 3.2e-15 with the same Parthenon pin and the same
-`nghost = 2`. Control command in TEST_LEDGER D01.
+**Attribution: the port's, not the donor's — established by a matched sweep, not one data point.**
+Both codes at `nx1 = 64, nx2 = 32`, one block in x2, full crossing, only the meshblock size
+varying:
+
+| blocks along x1 | Artemis | RIOT |
+| --- | --- | --- |
+| 2 | 1.123e-16 | 1.300e-16 |
+| 4 | 1.123e-16 | **1.412e-09** |
+| 8 | 1.123e-16 | **4.139e-10** |
+
+The donor is identical to the last digit across all three, i.e. bitwise decomposition-invariant.
+Its `divB` diagnostic was also checked to be the same quantity (face-area-weighted flux balance
+over cell volume, `artemis/src/derived/fill_derived.cpp:266`) — had it differenced the
+cell-centered field instead, its clean value would have proved nothing. Commands in TEST_LEDGER D01.
 
 **Why it survived everything.** Every CT test in the ledger used at most two blocks per axis,
 because that is what the four MHD decks ship with. P01 swept the RANK count (1/2/3/4/5/8) but
