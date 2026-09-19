@@ -33,6 +33,7 @@ communication agree on one state.
 | [`CAPABILITY_MATRIX.md`](CAPABILITY_MATRIX.md) | Per-capability validated / implemented-unverified / rejected status |
 | [`TEST_LEDGER.md`](TEST_LEDGER.md) | Every test run: command, threshold, result, artifact |
 | [`CHECKPOINT.md`](CHECKPOINT.md) | Current state and the next safe action |
+| [`DEFERRED_STAGES.md`](DEFERRED_STAGES.md) | **Stages 6–9: what was planned and NOT built** — AMR, curvilinear geometry, general EOS, two-temperature, multi-material, per-source-package coupling. Their gates, ordering constraints, and what needs scientific review before any code. Read before proposing to extend the port. |
 | [`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) | **Doubts about work already done** — where a defect could still be hiding behind a passing test. Distinct from CHECKPOINT's "not implemented" list. Read before claiming any capability. |
 
 The original planning documents produced before any local source audit are in

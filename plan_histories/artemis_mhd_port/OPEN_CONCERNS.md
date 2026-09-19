@@ -286,6 +286,34 @@ sharply checked for those two states**. Their real value is as NaN-regression ca
 separate finiteness test does assert strictly. Recorded so nobody later reads that test as
 tighter than it is.
 
+## C15 — Sparse physics is disabled globally under MHD rather than made CT-aware [LOW, but a
+## real performance loss and the fix is known]
+
+The D01 fix forces `physics/sparse_physics` off whenever MHD is on
+(`src/riot.cpp:303`). That is correct — constrained transport cannot tolerate a skipped block —
+but it is the blunt version of the fix. Every MHD run now updates every block every cycle, so a
+problem with large quiescent regions loses the whole optimization. The cost is unmeasured and
+problem-dependent: it scales with the fraction of blocks that would have been deactivated.
+
+**The targeted fix is known but unimplemented**: make a block carrying a constrained-transport
+field *ineligible for deactivation*, instead of disabling the optimization for the whole run.
+That keeps the saving for cell-centered physics in the same run.
+
+Why it was not done that way: it is a change to **shared** machinery
+(`riot::GetPack`'s `block_active_flag` filtering and the deallocation-threshold logic) that
+every physics package goes through, so it needs its own validation — precisely the class of
+change that concern C1 existed to test. Patching only the MHD packs is NOT an alternative: the
+EMF is assembled from hydro flux registers and `Hydro::CalculateFluxes` packs through the same
+helper, so a deactivated block has no fluxes to build an EMF from either.
+
+**Severity is LOW because behavior is correct today** — this is lost performance, not a wrong
+answer, and the disable is documented in the MHD chapter and warned about at runtime.
+
+**Revisit when**: an MHD production problem is large enough for the saving to matter, or when
+Stage 6 (AMR) is attempted — block activation and refinement interact, so doing both at once
+is likely cheaper than doing them separately. See
+[`DEFERRED_STAGES.md`](DEFERRED_STAGES.md) Stage 6.
+
 ## C11 — U05 is exercised but not pinned [LOW]
 
 The face-aware stage-register copy is used by every two-stage RK MHD run, so it is certainly

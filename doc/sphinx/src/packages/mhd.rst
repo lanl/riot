@@ -273,6 +273,17 @@ never to enable a divergence-cleaning step to conceal it.
    again. It was found on a field loop with four blocks along one axis,
    where the blocks outside the loop stop changing and are deactivated.
 
+   **This has a real cost.** An MHD run updates every block every
+   cycle, so problems with large quiescent regions — where sparse
+   physics would otherwise skip most of the mesh — lose that saving
+   entirely. The cost is not measured here because it is
+   problem-dependent: it scales with the fraction of blocks that would
+   have been deactivated. If it matters for a production problem, the
+   correct fix is to make a block carrying a constrained-transport
+   field ineligible for deactivation, rather than disabling the
+   optimization globally. That is unimplemented, and it is a change to
+   shared machinery needing its own validation.
+
 Two solver-health counters are reported **unconditionally**, whenever
 they increase, as a cumulative count and as a per-cell-per-step rate:
 

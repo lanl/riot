@@ -51,8 +51,8 @@ precedent for a not-yet-implemented combination. With `mhd = true`, reject:
 multigroup diffusion, radiation transport, lasers, prescribed sources, scalars,
 tracers. Each is rejected because it writes or reads energy, adds stresses, or
 adds signal speeds that have not been audited against the magnetic terms — not
-because coupling is impossible. Stage 9 of the supplied plan enumerates the
-per-package contract each would need.
+because coupling is impossible. The per-package contract each would need is
+enumerated in [`../DEFERRED_STAGES.md`](../DEFERRED_STAGES.md) under Stage 9.
 
 **Configuration** — `nmat > 1`; non-Cartesian coordinates; `refinement != none`;
 `use_general_pte`; `fixed_fluid`; non-ideal EOS; the hydro-only Riemann solvers
