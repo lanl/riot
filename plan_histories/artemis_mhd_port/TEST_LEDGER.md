@@ -246,7 +246,7 @@ called by anything.
 
 | Gate | Scope | Status |
 | --- | --- | --- |
-| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | PARTIAL — div B, 2D/3D field loop, Orszag–Tang (G4.4) and MPI (P01) PASS; only the CPAW convergence rate NOT RUN |
+| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | **PASS** — div B, 2D/3D field loop, Orszag–Tang (G4.4), CPAW order of accuracy (G4.5) and MPI (P01) all PASS. Oblique CPAW propagation not covered; see G4.5. |
 | G5 | HLLD/LLF coverage, degeneracies, reconstruction certification, restart (R01) | NOT RUN |
 
 ## Permanently out of scope for this port (ADR-004)
@@ -624,3 +624,84 @@ identical B1 and the two x2-faces identical B2. Each term of the discrete diverg
 separately and exactly at any resolution — which the t = 0 row confirms empirically. Writing B
 pointwise also matches the donor exactly, whereas a node-differenced potential would give the
 O(dx^2) finite-difference sine instead.
+
+## G4.5 — Circularly polarized Alfven wave: order of accuracy
+
+Added `mhd_cpaw` (`src/riot_pgen/mhd_problems.cpp`), `inputs/mhd/cpaw.py`, and
+`claude_sessions/mhd_runs/analyze_cpaw.py`. rho = 1, P = 0.1, `b_par` = 1, amplitude 0.1,
+mu0 = 1, PLM + `mhd_hlle`, CFL 0.4. The wave direction spans [0,1] with the two transverse
+directions kept short (4 cells over 0.125) but **nondegenerate**, so the run is genuinely 3D
+and every transverse face exchange and EMF component is live while costing almost nothing.
+
+**Why this test rather than the donor's linwave.** The donor has no CPAW; its `linwave` uses 7
+linear eigenmodes at amplitude 1e-6, which probes only the linearized system. The CPAW is an
+**exact nonlinear** solution — the perpendicular field rotates at constant magnitude, so |B|
+is uniform, the magnetic pressure gradient vanishes identically, and the wave translates at
+v_A with no steepening at amplitude 0.1. It is therefore an *analytic* oracle (class 1 in the
+verification plan) rather than a donor comparison, and it tests order of accuracy at finite
+amplitude, which a linear mode cannot.
+
+**Why the port needed it at all.** Every earlier MHD test checks either an identity that holds
+at roundoff (div B, axial field, conservation) or agreement with a reference at ONE
+resolution. None of them would notice a scheme that is stable, conservative, divergence free
+and merely *first* order — the signature of a subtly wrong EMF average or reconstruction.
+
+`tlim` is one full period (v_A = 1, wavelength 1), so the exact solution at the final time is
+the initial condition and L1 is measured directly against the t=0 snapshot: no analytic
+evaluator at t>0, no interpolation. L1 is the mean absolute error of the two perpendicular B
+components and the two perpendicular velocities, normalized by the initial amplitude.
+
+Frozen threshold, adopted from the donor's linwave criterion: successive-resolution ratio
+<= 0.35 (equivalently observed order >= 1.51).
+
+### Convergence, wave along x1
+
+| N | L1 | ratio | observed order | eta(divB) | \|B\| spread |
+| --- | --- | --- | --- | --- | --- |
+| 16 | 5.690184e-02 | — | — | **0.0** | 1.344e-03 |
+| 32 | 1.938062e-02 | 0.3406 | 1.554 | **0.0** | 7.566e-04 |
+| 64 | 5.822398e-03 | 0.3004 | 1.735 | **0.0** | 2.936e-04 |
+| 128 | 1.637264e-03 | 0.2812 | 1.830 | **0.0** | 1.307e-04 |
+
+**PASS.** Observed order rises monotonically 1.55 → 1.73 → 1.83 toward 2, which is the
+expected behaviour for PLM on a smooth profile with extrema: the limiter clips at the sine
+peaks and costs local order most severely at coarse resolution. The important reading is the
+*trend*: an asymptotically second-order scheme approaches 2 from below, whereas a scheme that
+is genuinely first order somewhere would plateau. The 16→32 ratio of 0.3406 sits close to the
+0.35 threshold and would be worth investigating on its own; the trend is what settles it.
+
+`eta` (normalized max|div B|) is **identically zero** at every resolution, and the parallel
+field component drifts by exactly zero — both are algebraic identities of this setup, and
+neither is merely small.
+
+### Direction permutations and reversed propagation
+
+`wave_dir` = 1/2/3 rotates the wave onto each axis; `travel_sign` = -1 reverses propagation,
+which is what would catch an induction-term sign error that a standing pattern hides.
+
+| Case | L1(32) | L1(64) | L1(128) | ratios | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| wave_dir 1 | 1.938062e-02 | 5.822398e-03 | 1.637264e-03 | 0.3004, 0.2812 | PASS |
+| wave_dir 2 | 1.938062e-02 | 5.822398e-03 | 1.637264e-03 | 0.3004, 0.2812 | PASS |
+| wave_dir 3 | 1.938062e-02 | 5.822398e-03 | 1.637264e-03 | 0.3004, 0.2812 | PASS |
+| wave_dir 1, reversed | 1.938062e-02 | 5.822398e-03 | 1.637264e-03 | 0.3004, 0.2812 | PASS |
+
+The error is **identical to every printed digit across all three axes**. That is exact
+rotational isotropy of the discretization, and it is a strong statement: any asymmetry in how
+the three EMF components or face directions are assembled would show up here as a
+direction-dependent error. Verified that this is not an artifact of comparing the same data —
+the assembled arrays have genuinely different shapes per orientation, `(3,4,4,64)` vs
+`(3,4,64,4)` vs `(3,64,4,4)`; the perpendicular amplitude decays identically 0.1 → 0.098856 in
+each; `b_par` is uniform to exactly 0 in each; and the reversed run differs from the forward
+one by `max|dV| = 1.973e-01`, i.e. 2 v_perp, as a sign flip requires.
+
+### MPI
+
+64 cells on 4 blocks, 1 rank vs 4 ranks: **bitwise identical** across all seven fields.
+
+### Limitation, stated rather than glossed
+
+This is an **axis-aligned** wave. A wave propagating along a box diagonal additionally couples
+all three EMF components simultaneously and is a strictly stronger test of the CT
+discretization; it is NOT covered here. The axis sweep above establishes that each direction
+is individually correct and mutually consistent, not that oblique propagation is.

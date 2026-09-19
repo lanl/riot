@@ -7,11 +7,11 @@ Branch: `taitano/mhd-porting`
 Commits: `725a19a` (Stages 0-2), `f0af069` (Stage 3 solver), `4d1a8e0` (checkpoint),
 `1350c20` (face memory-layout fix), `dced139` (flux wiring + CT + pgens)
 
-Current stage: **Stage 4 substantially complete.** Gates passed: G0, G1, G2, G3, and G4 in
-part (including Orszag-Tang and MPI). **MHD now runs end to end**: Brio-Wu agrees with the
-Athena++ reference, the 2D and 3D field loops hold div B at roundoff, Orszag-Tang holds it
-through a shock network, and results are bitwise independent of rank count. The only G4 item
-left is the CPAW convergence rate.
+Current stage: **Stage 4 complete. Gates G0, G1, G2, G3 and G4 all pass.** Brio-Wu agrees
+with the Athena++ reference; the 2D and 3D field loops hold div B at roundoff; Orszag-Tang
+holds it through a shock network; the CPAW converges at second order with error identical
+across all three axes; and every result is bitwise independent of rank count. Remaining known
+gaps are listed under "Not implemented" — none of them blocks G4.
 
 ## Implemented and verified
 
@@ -35,6 +35,11 @@ left is the CPAW convergence rate.
   1e-16, positivity with margin (no floor), and 1 vs 4 ranks bitwise identical. Runs
   `mhd_hlle` rather than the donor's HLLD, which is why its criteria are conservation
   identities rather than a pointwise reference.
+- **Order of accuracy verified** (TEST_LEDGER G4.5): `mhd_cpaw`, an exact NONLINEAR solution
+  and so an analytic oracle rather than a donor one. Observed L1 order rises 1.55 -> 1.73 ->
+  1.83 toward 2 over N = 16..128, with div B and parallel-field drift identically zero. The
+  error is identical to every printed digit across all three wave axes, i.e. exact rotational
+  isotropy. Axis-aligned only; oblique propagation is not covered.
 - **3D CT verified** (TEST_LEDGER G4.3): the Gardiner-Stone axial-field test passes in all
   three permutations with the axial field at roundoff, and 1-block vs 8-block results are
   bitwise identical.
@@ -55,7 +60,8 @@ regression harness; HLLD and LLF; `mhd/monitor_divb` is registered but not yet c
 restart of face state untested; test N01 (startup rejections) not run; U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
-uniform-grid, so no coarse/fine flux or EMF correction is exercised.
+uniform-grid, so no coarse/fine flux or EMF correction is exercised. The CPAW is axis-aligned
+only, so no test propagates a wave obliquely to the grid.
 
 ## Next actions
 
@@ -94,9 +100,24 @@ uniform-grid, so no coarse/fine flux or EMF correction is exercised.
    it, not mpich). Sweep `mhd_field_loop/loop_axis` — with `loop_axis=3` the F3 exchange
    carries only zeros, so one axis alone does not test all three face directions. Include a
    rank count that does not divide the 8 blocks evenly.
-3. **3D circularly polarized Alfven wave**, for order-of-accuracy rather than for branch
-   coverage. The 3D EMF branches are now exercised AND checked (G4.3), so this is no longer
-   the coverage gap it was; it is now about convergence rate.
+3. ~~**Circularly polarized Alfven wave**~~ — **DONE, PASS** (TEST_LEDGER G4.5). To re-run:
+   ```
+   mkdir -p /tmp/mhdcpaw && cd /tmp/mhdcpaw
+   R=/Users/taitano/Documents/git/riot
+   for N in 16 32 64 128; do
+     $R/build/src/riot -i $R/inputs/mhd/cpaw.rin parthenon/job/problem_id=d1_n$N \
+       parthenon/mesh/nx1=$N parthenon/meshblock/nx1=$((N/2))
+   done
+   . $R/riot_venv/bin/activate
+   PYTHONPATH=$R/claude_sessions/mhd_runs \
+     python3 $R/claude_sessions/mhd_runs/analyze_cpaw.py d1_n16 d1_n32 d1_n64 d1_n128
+   ```
+   To sweep `wave_dir`, the LONG axis must move with it: set that direction to N over [0,1]
+   and the other two to 4 cells over 0.125, adjusting `parthenon/meshblock` to match or
+   Parthenon aborts with "Block size is not evenly divisible into the base mesh size". Note
+   the shell is zsh, where an unquoted `$VAR` holding several arguments is **not**
+   word-split — build override lists as an array and expand `"${arr[@]}"`, or the whole list
+   arrives as one argument and produces exactly that divisibility abort.
 4. **`tst/scripts/mhd/`** harness, adopting the donor's own thresholds.
 5. Stage 5: HLLD (keep its degeneracy guards verbatim, DONOR_KERNELS.md section 13), LLF,
    reconstruction certification, restart equivalence.

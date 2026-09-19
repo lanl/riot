@@ -51,6 +51,8 @@
 
 #include "riot_pgen/pgen.hpp"
 
+#include <cmath>
+
 #include <singularity-eos/eos/eos.hpp>
 
 #include "mhd/mhd.hpp"
@@ -376,3 +378,335 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
 }
 
 } // namespace mhd_field_loop
+
+//========================================================================================
+// Orszag & Tang (1979) vortex
+//========================================================================================
+namespace mhd_orszag_tang {
+
+//----------------------------------------------------------------------------------------
+//! \fn  void mhd_orszag_tang::ProblemGenerator
+//! \brief The Orszag-Tang vortex: smooth initial data that decays into a network of
+//!        interacting MHD shocks.
+//!
+//! On the unit square with periodic boundaries, in units where the box is [0,1]^2:
+//!
+//!   rho = 25/(36 pi),  P = 5/(12 pi),  gamma = 5/3
+//!   v   = v0 * (-sin(2 pi y),  sin(2 pi x),  0)
+//!   B   = b0 * (-sin(2 pi y),  sin(4 pi x),  0),   b0 = 1/sqrt(4 pi)
+//!
+//! WHY THIS TEST EARNS ITS PLACE. Every other MHD case in this port is either
+//! one-dimensional (Brio-Wu) or smooth for all time (the field loop, whose exact solution
+//! is pure advection). This is the only one that combines strong shocks with genuinely
+//! multi-dimensional constrained transport, so it is the only place where the CT update
+//! has to stay divergence free while limiters are firing and the EMF stencil is sampling
+//! discontinuous states. A CT bug that is masked by smoothness, or a shock-capturing bug
+//! that is masked by one-dimensionality, has nowhere left to hide.
+//!
+//! It is checked by conserved global quantities and by the local energy decomposition
+//! rather than against a pointwise reference, because the shock network is chaotic: two
+//! correct codes disagree pointwise at late times, so a pointwise gold file would encode
+//! this build rather than the physics. The invariants used instead are exact statements:
+//! mean density and mean total energy are conserved by construction, mean momentum stays
+//! zero by symmetry, and `E - u - KE - E_mag` is identically zero if and only if the
+//! energy convention of ADR-002 is applied consistently.
+//!
+//! NO VECTOR POTENTIAL IS NEEDED, and that is a property of this field rather than an
+//! approximation. B1 depends only on x2 and B2 only on x1, so on the staggered mesh the
+//! two x1-faces of any cell carry identical B1 and its two x2-faces carry identical B2.
+//! Each term of the discrete divergence therefore vanishes separately and exactly, for
+//! any resolution. Writing B pointwise here also matches the donor
+//! (`artemis/src/pgen/orszag_tang.hpp:128-148`) exactly, which a node-differenced
+//! potential would not: that would give the O(dx^2) finite-difference sine rather than
+//! the sine.
+void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+  using parthenon::MakePackDescriptor;
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace fbulk = face_variables::bulk;
+  using namespace RiotEOS;
+
+  RequireMHD(pmb, "mhd_orszag_tang");
+  auto &rc = pmb->meshblock_data.Get();
+  AllocateAll(pmb, rc);
+
+  static auto desc =
+      MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
+                         ccbulk::total_material_energy, ccbulk::momentum,
+                         fbulk::magnetic_field>((pmb->resolved_packages).get());
+  auto v = desc.GetPack(rc.get());
+
+  // Donor defaults (artemis/src/pgen/orszag_tang.hpp:76-79), written as the closed forms
+  // so the numbers are auditable rather than copied decimals.
+  const Real rho0 = pin->GetOrAddReal("mhd_orszag_tang", "rho0", 25.0 / (36.0 * M_PI));
+  const Real p0 = pin->GetOrAddReal("mhd_orszag_tang", "P0", 5.0 / (12.0 * M_PI));
+  const Real v0 = pin->GetOrAddReal("mhd_orszag_tang", "v0", 1.0);
+  const Real b0 = pin->GetOrAddReal("mhd_orszag_tang", "b0", 1.0 / std::sqrt(4.0 * M_PI));
+
+  const int nummat =
+      v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
+  PARTHENON_REQUIRE(nummat == 1, "mhd_orszag_tang is a single-material setup");
+
+  const int ndim = pmb->pmy_mesh->ndim;
+  PARTHENON_REQUIRE(ndim >= 2, "mhd_orszag_tang needs at least two dimensions");
+
+  auto eos_vec = pmb->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
+  auto &coords = pmb->coords;
+
+  // Coordinates are normalized to the box so the setup is periodic on whatever domain the
+  // input deck specifies, not only on the unit square.
+  const Real x1min = pmb->pmy_mesh->mesh_size.xmin(parthenon::X1DIR);
+  const Real x2min = pmb->pmy_mesh->mesh_size.xmin(parthenon::X2DIR);
+  const Real lx1 = pmb->pmy_mesh->mesh_size.xmax(parthenon::X1DIR) - x1min;
+  const Real lx2 = pmb->pmy_mesh->mesh_size.xmax(parthenon::X2DIR) - x2min;
+
+  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
+  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+
+  pmb->par_for(
+      "ProblemGenerator::mhd_orszag_tang", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        const Real x = (coords.Xc<parthenon::X1DIR>(i) - x1min) / lx1;
+        const Real y = (coords.Xc<parthenon::X2DIR>(j) - x2min) / lx2;
+        const Real vx = -v0 * std::sin(2.0 * M_PI * y);
+        const Real vy = v0 * std::sin(2.0 * M_PI * x);
+        const Real uu = energy_from_rho_P(eos_vec(0), rho0, p0);
+
+        v(0, ccmat::volume_fraction(0), k, j, i) = 1.0;
+        v(0, ccmat::rho(0), k, j, i) = rho0;
+        v(0, ccbulk::momentum(0), k, j, i) = rho0 * vx;
+        v(0, ccbulk::momentum(1), k, j, i) = rho0 * vy;
+        v(0, ccbulk::momentum(2), k, j, i) = 0.0;
+        v(0, ccmat::internal_energy(0), k, j, i) = uu;
+        v(0, ccbulk::total_material_energy(), k, j, i) =
+            uu + 0.5 * rho0 * (SQR(vx) + SQR(vy));
+      });
+
+  // B1 lives at (x1f, x2c, x3c), so it is sampled at the CELL-CENTERED x2 -- and depends
+  // on nothing else, which is what makes d_1 B1 vanish identically (see the note above).
+  auto f1 = pmb->cellbounds.GetBoundsI(IndexDomain::entire, TE::F1);
+  pmb->par_for(
+      "ProblemGenerator::mhd_orszag_tang_b1", kb.s, kb.e, jb.s, jb.e, f1.s, f1.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        const Real y = (coords.Xc<parthenon::X2DIR>(j) - x2min) / lx2;
+        v(0, TE::F1, fbulk::magnetic_field(), k, j, i) = -b0 * std::sin(2.0 * M_PI * y);
+      });
+
+  // B2 lives at (x1c, x2f, x3c), so it is sampled at the cell-centered x1. Note the 4 pi:
+  // the field has twice the wavenumber of the velocity in x1, which is what gives the
+  // vortex its two magnetic islands.
+  auto j2 = pmb->cellbounds.GetBoundsJ(IndexDomain::entire, TE::F2);
+  pmb->par_for(
+      "ProblemGenerator::mhd_orszag_tang_b2", kb.s, kb.e, j2.s, j2.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        const Real x = (coords.Xc<parthenon::X1DIR>(i) - x1min) / lx1;
+        v(0, TE::F2, fbulk::magnetic_field(), k, j, i) = b0 * std::sin(4.0 * M_PI * x);
+      });
+
+  // B3 is zero, and unlike the donor this is written unconditionally rather than only in
+  // 3D: RIOT allocates the F3 slice even when x3 is collapsed, and leaving it
+  // uninitialized would let whatever the allocator returned reach FaceToCellB.
+  auto k3 = pmb->cellbounds.GetBoundsK(IndexDomain::entire, TE::F3);
+  pmb->par_for(
+      "ProblemGenerator::mhd_orszag_tang_b3", k3.s, k3.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        v(0, TE::F3, fbulk::magnetic_field(), k, j, i) = 0.0;
+      });
+
+  MHD::AddMagneticEnergyToTotal(pmb);
+}
+
+} // namespace mhd_orszag_tang
+
+//========================================================================================
+// Circularly polarized Alfven wave (Toth 2000; Gardiner & Stone 2005 section 5.2)
+//========================================================================================
+namespace mhd_cpaw {
+
+//----------------------------------------------------------------------------------------
+//! \fn  void mhd_cpaw::ProblemGenerator
+//! \brief A circularly polarized Alfven wave propagating along one coordinate axis.
+//!
+//! With the wave along direction `d` and the two perpendicular directions (a, b) taken in
+//! cyclic order, wavenumber k = 2 pi / L_d:
+//!
+//!   rho = rho0,  P = P0
+//!   B_d = b_par,   B_a = amp sin(k x_d),        B_b = amp cos(k x_d)
+//!   v_d = 0,       v_a = -s B_a / sqrt(rho0),   v_b = -s B_b / sqrt(rho0)
+//!
+//! where s = +1 for a wave travelling along +d. The Alfven speed is
+//! v_A = b_par / sqrt(rho0), so one period is T = L_d sqrt(rho0) / b_par.
+//!
+//! WHY THIS TEST IS DIFFERENT FROM EVERYTHING ELSE IN THE PORT. It is an **exact
+//! nonlinear** solution of ideal MHD, not a linearization: because the perpendicular
+//! field rotates at constant magnitude, |B|^2 = b_par^2 + amp^2 is uniform, so the
+//! magnetic pressure gradient vanishes identically and the wave translates at v_A without
+//! steepening or dispersing *at finite amplitude*. That makes it an ANALYTIC oracle —
+//! oracle class 1 in the verification plan — rather than a donor comparison. It matters
+//! here because the donor has no CPAW: its `linwave` test uses 7 linear eigenmodes at
+//! amplitude 1e-6, which probes the linearized system only. A scheme can be second order
+//! on linear waves and lose that on a finite amplitude one.
+//!
+//! Its specific job in this port is **order of accuracy**. Every MHD test so far checks
+//! identities that hold at roundoff (div B, axial field, conservation) or agreement with
+//! a reference at one resolution. None of them would notice a scheme that is stable,
+//! conservative, divergence free and only *first* order — which is exactly what a subtly
+//! wrong EMF averaging or reconstruction would produce. Running this at several
+//! resolutions and fitting the L1 slope is what closes that gap.
+//!
+//! Choose `tlim` to be a whole number of periods and the exact solution at that time is
+//! the initial condition again, so the L1 error needs no analytic evaluator at t > 0 --
+//! it is measured directly against the t = 0 snapshot.
+//!
+//! `wave_dir` rotates the setup onto each axis, so all three face directions carry the
+//! nonuniform components in turn.
+//!
+//! **This is an axis-aligned wave, not an obliquely propagating one.** A wave along a box
+//! diagonal would additionally couple the three EMF components; that is a strictly
+//! stronger test and is NOT covered here. Recorded as a limitation rather than glossed.
+//!
+//! div B = 0 holds by construction, exactly, for the same reason as in Orszag-Tang: B_d
+//! is uniform, and each perpendicular component depends only on x_d, so on the staggered
+//! mesh the two faces bounding any cell in that component's own normal direction carry
+//! identical values and its term in the discrete divergence cancels.
+void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+  using parthenon::MakePackDescriptor;
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace fbulk = face_variables::bulk;
+  using namespace RiotEOS;
+
+  RequireMHD(pmb, "mhd_cpaw");
+  auto &rc = pmb->meshblock_data.Get();
+  AllocateAll(pmb, rc);
+
+  static auto desc =
+      MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
+                         ccbulk::total_material_energy, ccbulk::momentum,
+                         fbulk::magnetic_field>((pmb->resolved_packages).get());
+  auto v = desc.GetPack(rc.get());
+
+  const Real rho0 = pin->GetOrAddReal("mhd_cpaw", "rho", 1.0);
+  const Real p0 = pin->GetOrAddReal("mhd_cpaw", "P", 0.1);
+  const Real b_par = pin->GetOrAddReal("mhd_cpaw", "b_par", 1.0);
+  const Real amp = pin->GetOrAddReal("mhd_cpaw", "amp", 0.1);
+  const int wdir = pin->GetOrAddInteger("mhd_cpaw", "wave_dir", 1);
+  // +1 travels along +wave_dir, -1 along -wave_dir. Both are exact solutions; running
+  // each is what detects a sign error in the induction term that a standing pattern would
+  // hide.
+  const Real sgn = pin->GetOrAddReal("mhd_cpaw", "travel_sign", 1.0);
+  PARTHENON_REQUIRE(wdir >= 1 && wdir <= 3, "mhd_cpaw/wave_dir must be 1, 2, or 3");
+  PARTHENON_REQUIRE(amp > 0.0, "mhd_cpaw/amp must be positive");
+  PARTHENON_REQUIRE(b_par != 0.0, "mhd_cpaw/b_par must be nonzero (it sets v_A)");
+
+  const int nummat =
+      v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
+  PARTHENON_REQUIRE(nummat == 1, "mhd_cpaw is a single-material setup");
+
+  const int ndim = pmb->pmy_mesh->ndim;
+  PARTHENON_REQUIRE(ndim >= wdir, "mhd_cpaw/wave_dir needs that direction to be active");
+
+  auto eos_vec = pmb->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
+  auto &coords = pmb->coords;
+
+  // Wavenumber from the domain extent along the wave direction, so one wavelength always
+  // spans the box and the setup stays periodic at any resolution.
+  const auto &msize = pmb->pmy_mesh->mesh_size;
+  const Real dmin = (wdir == 1)   ? msize.xmin(parthenon::X1DIR)
+                    : (wdir == 2) ? msize.xmin(parthenon::X2DIR)
+                                  : msize.xmin(parthenon::X3DIR);
+  const Real dmax = (wdir == 1)   ? msize.xmax(parthenon::X1DIR)
+                    : (wdir == 2) ? msize.xmax(parthenon::X2DIR)
+                                  : msize.xmax(parthenon::X3DIR);
+  const Real kwave = 2.0 * M_PI / (dmax - dmin);
+  const Real vperp = -sgn * amp / std::sqrt(rho0);
+
+  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
+  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+
+  pmb->par_for(
+      "ProblemGenerator::mhd_cpaw", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        // Phase from the CELL-CENTERED coordinate along the wave direction. The cell
+        // average of the face values of each perpendicular component reduces to exactly
+        // this, so the cell-centered velocity and the face-derived cell-centered field
+        // stay consistent -- which they must, or the initial state is not an exact
+        // solution.
+        const Real xd = (wdir == 1)   ? coords.Xc<parthenon::X1DIR>(i)
+                        : (wdir == 2) ? coords.Xc<parthenon::X2DIR>(j)
+                                      : coords.Xc<parthenon::X3DIR>(k);
+        const Real ph = kwave * (xd - dmin);
+        const Real sn = std::sin(ph);
+        const Real cs = std::cos(ph);
+
+        // Perpendicular pair in cyclic order: wave along 1 -> (2,3), 2 -> (3,1), 3 ->
+        // (1,2).
+        const int pa = (wdir == 1) ? 1 : ((wdir == 2) ? 2 : 0);
+        const int pb = (wdir == 1) ? 2 : ((wdir == 2) ? 0 : 1);
+
+        const Real uu = energy_from_rho_P(eos_vec(0), rho0, p0);
+        v(0, ccmat::volume_fraction(0), k, j, i) = 1.0;
+        v(0, ccmat::rho(0), k, j, i) = rho0;
+        v(0, ccbulk::momentum(0), k, j, i) = 0.0;
+        v(0, ccbulk::momentum(1), k, j, i) = 0.0;
+        v(0, ccbulk::momentum(2), k, j, i) = 0.0;
+        // {wdir-1, pa, pb} is a permutation of {0,1,2}, so the parallel component keeps
+        // the zero written above and the two perpendicular ones are overwritten here.
+        v(0, ccbulk::momentum(pa), k, j, i) = rho0 * vperp * sn;
+        v(0, ccbulk::momentum(pb), k, j, i) = rho0 * vperp * cs;
+        v(0, ccmat::internal_energy(0), k, j, i) = uu;
+        v(0, ccbulk::total_material_energy(), k, j, i) =
+            uu + 0.5 * rho0 * SQR(vperp) * (SQR(sn) + SQR(cs));
+      });
+
+  // Each face component: uniform b_par if this face is normal to the wave direction,
+  // otherwise the sine or cosine evaluated at the cell-centered wave coordinate. Written
+  // as one lambda body per element because each has its own bounds in its normal
+  // direction.
+  auto f1 = pmb->cellbounds.GetBoundsI(IndexDomain::entire, TE::F1);
+  pmb->par_for(
+      "ProblemGenerator::mhd_cpaw_b1", kb.s, kb.e, jb.s, jb.e, f1.s, f1.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        Real b1 = b_par;
+        if (wdir == 2) {
+          // wave along 2: perpendicular pair is (3, 1), so x1 carries the COSINE.
+          b1 = amp * std::cos(kwave * (coords.Xc<parthenon::X2DIR>(j) - dmin));
+        } else if (wdir == 3) {
+          // wave along 3: perpendicular pair is (1, 2), so x1 carries the SINE.
+          b1 = amp * std::sin(kwave * (coords.Xc<parthenon::X3DIR>(k) - dmin));
+        }
+        v(0, TE::F1, fbulk::magnetic_field(), k, j, i) = b1;
+      });
+
+  auto j2 = pmb->cellbounds.GetBoundsJ(IndexDomain::entire, TE::F2);
+  pmb->par_for(
+      "ProblemGenerator::mhd_cpaw_b2", kb.s, kb.e, j2.s, j2.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        Real b2 = b_par;
+        if (wdir == 1) {
+          b2 = amp * std::sin(kwave * (coords.Xc<parthenon::X1DIR>(i) - dmin));
+        } else if (wdir == 3) {
+          b2 = amp * std::cos(kwave * (coords.Xc<parthenon::X3DIR>(k) - dmin));
+        }
+        v(0, TE::F2, fbulk::magnetic_field(), k, j, i) = b2;
+      });
+
+  auto k3 = pmb->cellbounds.GetBoundsK(IndexDomain::entire, TE::F3);
+  pmb->par_for(
+      "ProblemGenerator::mhd_cpaw_b3", k3.s, k3.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+        Real b3 = b_par;
+        if (wdir == 1) {
+          b3 = amp * std::cos(kwave * (coords.Xc<parthenon::X1DIR>(i) - dmin));
+        } else if (wdir == 2) {
+          b3 = amp * std::sin(kwave * (coords.Xc<parthenon::X2DIR>(j) - dmin));
+        }
+        v(0, TE::F3, fbulk::magnetic_field(), k, j, i) = b3;
+      });
+
+  MHD::AddMagneticEnergyToTotal(pmb);
+}
+
+} // namespace mhd_cpaw
