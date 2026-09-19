@@ -705,3 +705,140 @@ This is an **axis-aligned** wave. A wave propagating along a box diagonal additi
 all three EMF components simultaneously and is a strictly stronger test of the CT
 discretization; it is NOT covered here. The axis sweep above establishes that each direction
 is individually correct and mutually consistent, not that oblique propagation is.
+
+---
+
+## Gate G5 (in progress)
+
+### G5.1 — HLLD solver
+
+`MHD::lr_to_flux_mhd_hlld` added to `src/mhd/riemann_mhd.hpp`, ported from
+`artemis/src/utils/fluxes/riemann/hlld.hpp:40-430` (single-material branch; the donor's
+species >= 1 HLLC fallback is not carried over). Selected with `hydro/riemann = mhd_hlld`.
+Every robustness guard from DONOR_KERNELS.md section 13 is transcribed with its exact
+constants.
+
+Two deliberate structural notes, both recorded because they are the parts a future reader is
+most likely to "fix" wrongly:
+
+- **HLLD works in the rotated (normal, t_a, t_b) frame**, unlike the HLLE above which is
+  written componentwise in global coordinates. This is forced: the rotational-discontinuity
+  jump mixes the two transverse components through `sgn(b_n)`, so there is no componentwise
+  form. The permutation is the cyclic right-handed one, matching `RiotUtils::DirBasis`.
+- **Its wave-speed estimate is `min/max(v_n -+ c_f)`, not the Roe average** the HLLE uses.
+  That is the donor's choice, kept because HLLD's star states and their degeneracy
+  tolerances were derived and tuned against that bound.
+
+Restricted to an ideal gas, as the donor is (`hydro.cpp` rejects `mhd_hlld` with
+`use_general_pte`). HLLE carries no such restriction — it needs only the bulk modulus.
+
+#### Unit tests: `ctest` 41/41 (34 before, 7 new)
+
+| Test | What it pins |
+| --- | --- |
+| HLLD consistency | equal states give the EXACT MHD flux, all 6 `kStates`, all 3 directions, mu0 = 1 and 4pi |
+| normal induction flux | exactly `0.0`, all 3 directions, asymmetric states |
+| cyclic relabelling | flux components permute with the axes — the sharpest check on the rotated frame |
+| degeneracy consistency | 10 states that trip each guard, all 3 directions, both mu0 |
+| finiteness | all 100 ordered pairs of degenerate states: no NaN/Inf, `smax > 0`, normal induction exactly 0 |
+| stationary contact | zero mass flux and zero transverse induction flux |
+| HLLD != HLLE | the two are genuinely different fluxes on a real jump |
+
+That last one exists because no consistency test can detect an over-eager degeneracy guard
+that silently routes every call to the HLLE fallback — which would leave HLLD "correct" and
+useless.
+
+**Two test-authoring errors found and fixed while writing these, both worth recording because
+each looked like a solver bug:**
+
+1. *Tolerance model.* The degeneracy consistency test first failed with induction error
+   3.8e-12 against a 1e-12 tolerance, then energy error 1.7e2. Neither is a solver defect:
+   HLLD forms star states as differences of conserved-state-sized quantities multiplied by the
+   wave speeds, so its roundoff floor is `eps * |s| * |U|`, not `eps * |flux|`. Near-vacuum
+   (rho = 1e-8) gives `s ~ 1.7e4` and `eps*s*|B| ~ 3.8e-12`; the 1e6 transverse field gives
+   `E ~ 1e12`, `s ~ 1.4e6` and `eps*s*E ~ 3e2`. Both measured values sit within a factor of
+   two of those predictions, i.e. the arithmetic is as accurate as double precision allows.
+   The tolerance now states that model explicitly rather than being loosened to fit. Honest
+   limit: for the two 1e6-field states (beta ~ 1e-12, far outside the certified regime) the
+   resulting absolute tolerance is large and consistency there is conditioning-limited, not a
+   sharp check — their value is as NaN regression cases, which the finiteness test asserts
+   strictly.
+2. *A wrong premise.* A test asserted HLLD and HLLE must differ on a stationary contact. They
+   agree there **exactly**, and that is correct: with `v = 0` and `P`, `b_n`, `|b_t|`
+   continuous, `ptl == ptr` so `sm = 0`, and HLLD's `sm >= 0` branch reduces to
+   `fl_mx + ptl` — the same value HLLE averages from two identical inputs. The
+   solvers-differ check moved to a state with a real velocity jump.
+
+#### G5.2 — Brio & Wu, HLLE vs HLLD against the independent Athena++ reference
+
+Analysis: `claude_sessions/mhd_runs/analyze_brio_wu.py`. 512 zones on 2 blocks, t = 0.08,
+gamma = 2, mu0 = 1, PLM.
+
+**A coordinate reconciliation was required and is the reason to keep this in a script.** The
+Athena++ reference `athena_bw.std` is on `[0,1]` with the discontinuity at x = 0.5 (2048
+zones, first cell center 1/4096); `inputs/mhd/brio_wu.py` uses `[-0.5, 0.5]` with the jump at
+x = 0. Comparing without the 0.5 shift gives a normalized L1 of ~0.45 on every field —
+large enough to read as a catastrophic solver bug when it is purely a frame mismatch. The
+verification plan lists this reconciliation as a required pre-comparison step; this is the
+case it means.
+
+Structural invariants, both solvers, **all exactly zero**:
+`max|Bx - 0.75| = 0`, `max|Bz| = 0`, `max|vz| = 0`, `max|divB| = 0`; `min rho` and `min P`
+positive with margin.
+
+Normalized L1 against Athena++ (mean absolute difference / reference dynamic range):
+
+| field | HLLE | HLLD | ratio HLLD/HLLE |
+| --- | --- | --- | --- |
+| rho | 2.659044e-03 | 1.723601e-03 | 0.648 |
+| press | 2.280626e-03 | 1.523292e-03 | 0.668 |
+| vx | 5.799217e-03 | 4.633461e-03 | 0.799 |
+| vy | 4.006543e-03 | 2.749096e-03 | 0.686 |
+| By | 1.689883e-03 | 1.186258e-03 | 0.702 |
+
+**HLLD is more accurate on every field.** This relative statement is what is asserted, and it
+is immune to the calibration problem below: HLLD resolves five waves including the contact and
+the two rotational discontinuities, and the Brio-Wu compound structure (a slow shock attached
+to a rotational discontinuity) is exactly where that shows.
+
+**The donor's `_profile_tolerance = 3.8e-3` is NOT used as a threshold here**, and should not
+be. It is calibrated against `brio_wu.std`, which is Artemis's *own* gold file, at the donor's
+resolution and solver. Against a third-party reference it is the wrong yardstick; it is
+printed for orientation only. An absolute threshold for RIOT still needs to be frozen against
+a matched run — unchanged from the earlier note in this ledger.
+
+#### G5.3 — HLLD does not disturb constrained transport
+
+| Case | HLLE | HLLD | Reading |
+| --- | --- | --- | --- |
+| 2D field loop `eta` | 5.267631e-15 | 5.930142e-15 | both roundoff |
+| 2D field loop axial field | 0.0 | **0.0** | exact |
+| 2D field loop `emag_retained` | 0.8711372 | **0.8751974** | HLLD less diffusive |
+| 2D field loop `dE/E` | 2.22e-16 | **0.0** | — |
+| Orszag-Tang | PASS | **PASS** | `max|divB|` 3.27e-13, all criteria met |
+| Orszag-Tang mean `u` | 0.2504192 | 0.2469889 | HLLD dissipates less into heat |
+| CPAW order (N = 16..128) | 1.55/1.73/1.83 | 1.56/1.73/1.84 | indistinguishable |
+
+The field-loop energy retention and the Orszag-Tang heating both move in the direction lower
+numerical diffusion predicts, which is independent corroboration that the new solver is doing
+what it claims rather than merely running.
+
+CPAW barely distinguishes the two solvers, and that is expected rather than disappointing:
+for a smooth wave with no contact or shock the error is dominated by PLM reconstruction, not
+by the flux function. It is why Brio-Wu is the solver test and CPAW is the order test.
+
+#### G5.4 — hydro unchanged with MHD off, after the HLLD addition
+
+`src/hydro/{riemann.hpp,hydro.cpp,calculate_fluxes.cpp}` were all touched, so this is
+re-checked rather than assumed. The change is additive — one new enum value, one new `switch`
+case, one new templated free function, one new startup guard — so no hydro code path is
+altered.
+
+```
+cd tst && python run_tests.py hydro --reuse_build --save_build
+```
+
+**PASS — 7 out of 7.** `adiabatic_compression` 75.4 s · `carbuncle` 159 s · `gacc` 4.92 s ·
+`linwave` 41.7 s · `linwave_mm` 51.5 s · `rt_amr` 145 s · `rt_unigrid` 304 s.
+
+Unit tests `ctest` **41/41**.

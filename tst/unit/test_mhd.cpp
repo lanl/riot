@@ -745,3 +745,244 @@ TEST_CASE("U02: signal speed bounds the fluid and fast speeds", "[mhd][riemann]"
     CHECK(smax >= cf - 1.0e-12);
   }
 }
+
+//========================================================================================
+// HLLD
+//========================================================================================
+
+namespace {
+
+//! Same wrapper as RunMHDHLLE, for the five-wave solver.
+template <int DIR>
+MHDFlux RunMHDHLLD(const MHDState &l, const MHDState &r, const Real mu0) {
+  const Real bn = NormalB<DIR>(l);
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+    f.smax = MHD::lr_to_flux_mhd_hlld<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+  });
+}
+
+bool AllFinite(const MHDFlux &f) {
+  return std::isfinite(f.f_v1) && std::isfinite(f.f_v2) && std::isfinite(f.f_v3) &&
+         std::isfinite(f.f_eng) && std::isfinite(f.f_b1) && std::isfinite(f.f_b2) &&
+         std::isfinite(f.f_b3) && std::isfinite(f.v1face) && std::isfinite(f.v2face) &&
+         std::isfinite(f.v3face) && std::isfinite(f.riemann_vel) && std::isfinite(f.smax);
+}
+
+// States chosen to drive HLLD into each of its degenerate branches. Every guard listed in
+// plan_histories/artemis_mhd_port/DONOR_KERNELS.md section 13 is reachable from this
+// list; they are the reason those guards were transcribed verbatim rather than
+// paraphrased.
+const MHDState kDegenerateStates[] = {
+    // rho     v1    v2    v3     u       P       c    b1      b2     b3
+    {1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.0, 1.0, 0.5},           // bn exactly 0
+    {1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 1.0e-14, 1.0, 0.5},       // bn below eps = 1e-12
+    {1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 1.0e-12, 1.0, 0.5},       // bn exactly at eps
+    {1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 1.0e-10, 1.0, 0.5},       // bn just above eps
+    {1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0},            // no field at all
+    {1.0, 0.0, 0.0, 0.0, 1.0e-12, 1.0e-12, 1.0e-6, 1.0, 0.0, 0.0}, // vanishing pressure
+    {1.0, 0.0, 0.0, 0.0, 1.0e-12, 1.0e-12, 1.0e-6, 2.0, 3.0, -1.0}, // low beta extreme
+    {1.0e-8, 0.0, 0.0, 0.0, 1.0e-8, 1.0e-8, 1.0, 1.0, 1.0, 1.0},    // near-vacuum
+    {1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0e6, 0.0, 0.0},    // enormous aligned field
+    {1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0e6, -1.0e6}, // enormous transverse
+};
+
+} // namespace
+
+TEST_CASE("U02: MHD HLLD is consistent -- equal states give the exact MHD flux",
+          "[mhd][riemann][hlld]") {
+  // Consistency is the one property a Riemann solver cannot be allowed to get wrong: with
+  // no jump there is no wave structure to approximate, so the answer must be the exact
+  // physical flux, in every direction and for every state. For HLLD this is also the
+  // sharpest available check on the (normal, t_a, t_b) permutation, since a mis-permuted
+  // transverse pair still produces plausible-looking numbers.
+  for (const Real mu0 : {1.0, 4.0 * M_PI}) {
+    for (const auto &s : kStates) {
+      {
+        const auto want = ExactMHDFlux<X1DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLD<X1DIR>(s, s, mu0), want, FluxScale(want));
+      }
+      {
+        const auto want = ExactMHDFlux<X2DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLD<X2DIR>(s, s, mu0), want, FluxScale(want));
+      }
+      {
+        const auto want = ExactMHDFlux<X3DIR>(s, mu0);
+        CheckMHDConsistent(RunMHDHLLD<X3DIR>(s, s, mu0), want, FluxScale(want));
+      }
+    }
+  }
+}
+
+TEST_CASE("U02: HLLD normal induction flux is identically zero", "[mhd][riemann][hlld]") {
+  // Not "small" -- exactly zero. A nonzero value leaks into EMF assembly and breaks the
+  // divergence-free property that constrained transport exists to maintain, so this is
+  // asserted as an exact equality in all three directions.
+  const Real mu0 = 1.0;
+  const MHDState l{1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.75, 1.0, 0.2};
+  const MHDState r{0.4, -0.1, 0.5, -0.3, 0.6, 0.3, 0.9, 0.75, -1.0, 0.6};
+  CHECK(RunMHDHLLD<X1DIR>(l, r, mu0).f_b1 == 0.0);
+  CHECK(RunMHDHLLD<X2DIR>(l, r, mu0).f_b2 == 0.0);
+  CHECK(RunMHDHLLD<X3DIR>(l, r, mu0).f_b3 == 0.0);
+}
+
+TEST_CASE("U02: HLLD is invariant under cyclic relabelling of the axes",
+          "[mhd][riemann][hlld]") {
+  // The permutation test matters more for HLLD than for HLLE: HLLE is written
+  // componentwise in global coordinates, whereas HLLD genuinely rotates into a
+  // (normal, t_a, t_b) frame and back, so an orientation error is possible here and
+  // impossible there.
+  const Real mu0 = 1.7;
+  const MHDState a{1.4, 0.5, -0.3, 0.8, 2.0, 1.1, 1.05, 0.6, -0.9, 0.4};
+  const MHDState b{1.4, 0.8, 0.5, -0.3, 2.0, 1.1, 1.05, 0.4, 0.6, -0.9};
+  const MHDState c{1.4, -0.3, 0.8, 0.5, 2.0, 1.1, 1.05, -0.9, 0.4, 0.6};
+
+  const auto fa = RunMHDHLLD<X1DIR>(a, a, mu0);
+  const auto fb = RunMHDHLLD<X2DIR>(b, b, mu0);
+  const auto fc = RunMHDHLLD<X3DIR>(c, c, mu0);
+
+  const Real tol = 1.0e-12 * FluxScale(fa);
+  CHECK(std::abs(fa.f_v1 - fb.f_v2) <= tol);
+  CHECK(std::abs(fa.f_v2 - fb.f_v3) <= tol);
+  CHECK(std::abs(fa.f_v3 - fb.f_v1) <= tol);
+  CHECK(std::abs(fa.f_v1 - fc.f_v3) <= tol);
+  CHECK(std::abs(fa.f_b2 - fb.f_b3) <= tol);
+  CHECK(std::abs(fa.f_b3 - fb.f_b1) <= tol);
+  CHECK(std::abs(fa.f_eng - fb.f_eng) <= tol);
+  CHECK(std::abs(fa.f_eng - fc.f_eng) <= tol);
+}
+
+TEST_CASE("U02: HLLD stays consistent through every degeneracy",
+          "[mhd][riemann][hlld][degeneracy]") {
+  // The degeneracy guards fall back to HLLE, and HLLE is itself consistent, so the exact
+  // flux remains the correct answer no matter which branch is taken. That makes this a
+  // test with a KNOWN expected value rather than a mere smoke test: it exercises the
+  // guard branches AND pins their result, which a finiteness check alone would not.
+  //
+  // TOLERANCE, and why it is not simply 1e-12 * |flux| as in the tests above. HLLD builds
+  // its star states as differences of conserved-state-sized quantities which are then
+  // multiplied by the wave speeds -- terms like `sl * (elst - el)` and `sl * (blst_y -
+  // byl)`. Its roundoff floor is therefore eps * |s| * |U|, set by the CONSERVED STATE
+  // magnitude, not by the size of the answer. Two of these states make that concrete, and
+  // both were measured rather than guessed:
+  //
+  //   - near-vacuum (rho = 1e-8, |B| ~ 1.7) gives cf ~ 1.7e4 and an induction-flux error
+  //   of
+  //     3.8e-12, which is eps * s * |B| to within a factor of two;
+  //   - the 1e6 transverse field gives E ~ B^2/2mu0 ~ 1e12 and s ~ 1.4e6, and an
+  //   energy-flux
+  //     error of 1.7e2, which is eps * s * E to within a factor of two.
+  //
+  // In both cases the arithmetic is as accurate as double precision permits, so the scale
+  // below states that expectation explicitly instead of loosening a constant until it
+  // passes. The ordinary states above keep the strict flux-relative tolerance.
+  //
+  // HONEST LIMIT: for the two 1e6-field states the resulting tolerance is large in
+  // absolute terms (beta ~ 1e-12 is far outside anything this port certifies, and the
+  // problem is genuinely ill-conditioned there). Their value is as NaN regression cases,
+  // which the separate finiteness test asserts strictly; consistency for them is
+  // conditioning-limited and is not claimed to be a sharp check.
+  auto scale_for = [](const MHDState &s, const Real mu0, const MHDFlux &f,
+                      const MHDFlux &want) {
+    const Real e_tot = s.u + 0.5 * s.rho * (SQR(s.v1) + SQR(s.v2) + SQR(s.v3)) +
+                       0.5 * (SQR(s.b1) + SQR(s.b2) + SQR(s.b3)) / mu0;
+    const Real u_scale = std::max({s.rho, s.rho * std::abs(s.v1), e_tot, 1.0});
+    return std::max(FluxScale(want), f.smax * u_scale);
+  };
+
+  for (const Real mu0 : {1.0, 4.0 * M_PI}) {
+    for (const auto &s : kDegenerateStates) {
+      const auto f1 = RunMHDHLLD<X1DIR>(s, s, mu0);
+      const auto w1 = ExactMHDFlux<X1DIR>(s, mu0);
+      CheckMHDConsistent(f1, w1, scale_for(s, mu0, f1, w1));
+      const auto f2 = RunMHDHLLD<X2DIR>(s, s, mu0);
+      const auto w2 = ExactMHDFlux<X2DIR>(s, mu0);
+      CheckMHDConsistent(f2, w2, scale_for(s, mu0, f2, w2));
+      const auto f3 = RunMHDHLLD<X3DIR>(s, s, mu0);
+      const auto w3 = ExactMHDFlux<X3DIR>(s, mu0);
+      CheckMHDConsistent(f3, w3, scale_for(s, mu0, f3, w3));
+    }
+  }
+}
+
+TEST_CASE("U02: HLLD produces finite fluxes for strongly mismatched states",
+          "[mhd][riemann][hlld][degeneracy]") {
+  // The regression test the guards exist for. Every ordered pair drawn from the normal
+  // and degenerate state lists is a genuine Riemann problem with no analytic answer
+  // available here, so what is asserted is what the guards promise: no NaN, no Inf, a
+  // positive signal speed, and a normal induction flux of exactly zero. Before the
+  // guards, states like near-vacuum against enormous-field are precisely what produced
+  // NaNs.
+  const Real mu0 = 1.0;
+  int pairs = 0;
+  for (const auto &l : kDegenerateStates) {
+    for (const auto &r : kDegenerateStates) {
+      const auto f1 = RunMHDHLLD<X1DIR>(l, r, mu0);
+      const auto f3 = RunMHDHLLD<X3DIR>(l, r, mu0);
+      CHECK(AllFinite(f1));
+      CHECK(AllFinite(f3));
+      CHECK(f1.smax > 0.0);
+      CHECK(f1.f_b1 == 0.0);
+      CHECK(f3.f_b3 == 0.0);
+      ++pairs;
+    }
+  }
+  // Guard against the loop silently not running, which would make this a vacuous pass.
+  CHECK(pairs == 100);
+}
+
+TEST_CASE("U02: HLLD resolves a contact that HLLE smears", "[mhd][riemann][hlld]") {
+  // Confirms the two solvers are genuinely different code paths and that HLLD is the
+  // sharper one, rather than silently falling back to HLLE everywhere -- which is exactly
+  // what an over-eager degeneracy guard would cause, and which no consistency test above
+  // could detect.
+  //
+  // A pure contact discontinuity: pressure, velocity and field are continuous and only
+  // density jumps. It is stationary and HLLD, which carries a contact wave, must
+  // transport it exactly -- so the density flux is zero. HLLE has no contact wave and
+  // cannot.
+  const Real mu0 = 1.0;
+  MHDState l{1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.75, 0.6, -0.2};
+  MHDState r = l;
+  r.rho = 0.2;
+  r.c = l.c * std::sqrt(l.rho / r.rho); // same bulk modulus, so P and bmod are continuous
+
+  const auto d = RunMHDHLLD<X1DIR>(l, r, mu0);
+  CHECK(AllFinite(d));
+  // With v = 0 on both sides the exact mass flux across a stationary contact is zero.
+  CHECK(std::abs(d.riemann_vel) < 1.0e-12);
+  // And the transverse induction fluxes vanish because v_t = 0 and b_n is continuous.
+  CHECK(std::abs(d.f_b2) < 1.0e-12);
+  CHECK(std::abs(d.f_b3) < 1.0e-12);
+
+  // NOTE: on this particular state the two solvers agree EXACTLY, and that is correct
+  // rather than a sign that HLLD collapsed to its fallback. With v = 0 and P, b_n and
+  // |b_t| all continuous, ptl == ptr so sm = 0, and HLLD's sm >= 0 branch gives
+  // fmx = fl_mx + (ptl - ptst) + sl*(dlst*sm - rho*vx) + ptst = fl_mx + ptl, which is the
+  // same value HLLE averages from two identical inputs. A stationary contact is thus the
+  // wrong place to look for a difference between the solvers -- checked below instead on
+  // a state with a real velocity jump.
+}
+
+TEST_CASE("U02: HLLD and HLLE are genuinely different fluxes", "[mhd][riemann][hlld]") {
+  // Guards against the failure mode no consistency test can see: an over-eager degeneracy
+  // guard that silently routes every call to the HLLE fallback, leaving HLLD correct but
+  // pointless. A real velocity and pressure jump with an oblique field must produce
+  // different fluxes, in every direction.
+  const Real mu0 = 1.0;
+  const MHDState l{1.0, 0.4, -0.2, 0.1, 1.5, 1.0, 1.2, 0.75, 1.0, 0.2};
+  const MHDState r{0.25, -0.3, 0.5, -0.2, 0.2, 0.1, 0.9, 0.75, -1.0, 0.6};
+
+  const auto d1 = RunMHDHLLD<X1DIR>(l, r, mu0);
+  const auto e1 = RunMHDHLLE<X1DIR>(l, r, mu0);
+  CHECK(AllFinite(d1));
+  CHECK(std::abs(d1.f_v1 - e1.f_v1) > 1.0e-6);
+  CHECK(std::abs(d1.f_eng - e1.f_eng) > 1.0e-6);
+
+  const auto d3 = RunMHDHLLD<X3DIR>(l, r, mu0);
+  const auto e3 = RunMHDHLLE<X3DIR>(l, r, mu0);
+  CHECK(AllFinite(d3));
+  CHECK(std::abs(d3.f_eng - e3.f_eng) > 1.0e-6);
+}

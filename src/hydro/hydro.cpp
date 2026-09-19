@@ -106,12 +106,15 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
 
   // Choose Riemann Solver
   // TODO(JMM): Move Carbuncle correction into HLLC solver
-  std::string solver = pin->GetOrAddString(
-      "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "mhd_hlle"},
-      "Riemann solver to use");
+  std::string solver =
+      pin->GetOrAddString("hydro", "riemann", "hllc",
+                          std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc",
+                                                   "hll", "mhd_hlle", "mhd_hlld"},
+                          "Riemann solver to use");
   if (solver == "mhd_hlle") {
     params.Add("riemann_solver", RiemannSolver::mhd_hlle);
+  } else if (solver == "mhd_hlld") {
+    params.Add("riemann_solver", RiemannSolver::mhd_hlld);
   } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
@@ -141,12 +144,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // Both are rejected here. `physics/mhd` was already added by riot.cpp before this
   // package is registered, so this read is just a lookup.
   const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
-  const bool solver_is_mhd = (solver == "mhd_hlle");
+  const bool solver_is_mhd = (solver == "mhd_hlle" || solver == "mhd_hlld");
   PARTHENON_REQUIRE(do_mhd == solver_is_mhd,
                     do_mhd ? "MHD requires an MHD Riemann solver; set hydro/riemann to "
-                             "one of: mhd_hlle."
+                             "one of: mhd_hlle, mhd_hlld."
                            : "hydro/riemann = " + solver +
                                  " is an MHD solver but <physics>/mhd is off.");
+
+  // HLLD's star-state derivation and its degeneracy tolerances assume an ideal gas, as
+  // the donor's own PARTHENON_REQUIRE does (DONOR_KERNELS.md section 13). HLLE has no
+  // such restriction: it only needs the bulk modulus, which RIOT supplies for any EOS.
+  if (solver == "mhd_hlld") {
+    const bool general_pte =
+        pin->GetOrAddBoolean("multiphysics", "use_general_pte", false);
+    PARTHENON_REQUIRE(!general_pte,
+                      "hydro/riemann = mhd_hlld requires an ideal gas; use mhd_hlle "
+                      "for a general EOS.");
+  }
 
   // Thornber's low-Mach correction
   bool lm_correction =
