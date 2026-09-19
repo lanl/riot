@@ -492,9 +492,69 @@ Its species-`n >= 1` HLLC branch (lines 427-545) is not ported — single materi
 | `artemis_integrator.hpp:157-259` | `MHD::ApplyFaceUpdate` | pending (Stage 4) |
 | `artemis_integrator.hpp:30-90` (face branch) | `sparse_update::DeepCopyFaceData` | ported |
 | `riemann/hlle.hpp` | `src/mhd/riemann_mhd.hpp` | pending (Stage 3) |
-| `riemann/hlld.hpp`, `llf.hpp` | `src/mhd/riemann_mhd.hpp` | pending (Stage 5) |
+| `riemann/hlld.hpp`, `llf.hpp` | `src/mhd/riemann_mhd.hpp` | **ported** (sections 13, 14) |
 | `reconstruction/reconstruction.hpp:111-121` | `src/hydro/` recon path | pending (Stage 3), deviation §11 |
 | `fluid_fluxes.hpp:75-94, 451-491` | `src/hydro/calculate_fluxes.cpp` | pending (Stage 3) |
 | `gas/gas.cpp:543-643` | `Hydro::EstimateTimestepMesh` | pending (Stage 3) |
 | `refinement/{prolongation,restriction}.hpp` | — | **skipped**: RIOT's Parthenon already provides them |
 | `geometry/*` edge scale factors | — | **deferred**: curvilinear out of scope; see §4c |
+
+---
+
+## 14. LLF (Rusanov), `artemis/src/utils/fluxes/riemann/llf.hpp`
+
+The `FLUID_TYPE != Fluid::radiation` specialization, `do_mhd` branch only. The scheme in
+full:
+
+```
+F = 1/2 (F_L + F_R) - 1/2 a (U_R - U_L),   a = max(|v_n| + c_f)      [Toro Eq. 10.43]
+```
+
+Donor kernel, magnetic terms verbatim (`llf.hpp`, inside the `if (do_mhd)` blocks):
+
+```cpp
+pbl = MHD::MagneticEnergyDensity(wl_ibx, wl_iby, wl_ibz, mu0);
+pbr = MHD::MagneticEnergyDensity(wr_ibx, wr_iby, wr_ibz, mu0);
+p.flux(b, dir, IBM, k, j, i) = 0.5 * (pbl + pbr);
+fsum_mx -= (SQR(wl_ibx) + SQR(wr_ibx)) / mu0;
+fsum_my -= (wl_ibx * wl_iby + wr_ibx * wr_iby) / mu0;
+fsum_mz -= (wl_ibx * wl_ibz + wr_ibx * wr_ibz) / mu0;
+vdBl = wl_ivx * wl_ibx + wl_ivy * wl_iby + wl_ivz * wl_ibz;
+vdBr = wr_ivx * wr_ibx + wr_ivy * wr_iby + wr_ivz * wr_ibz;
+el += pbl;
+er += pbr;
+fsum_e += 2.0 * (pbl * wl_ivx + pbr * wr_ivx) - (wl_ibx * vdBl + wr_ibx * vdBr) / mu0;
+fsum_by = (wl_ivx * wl_iby - wl_ivy * wl_ibx) + (wr_ivx * wr_iby - wr_ivy * wr_ibx);
+fsum_bz = (wl_ivx * wl_ibz - wl_ivz * wl_ibx) + (wr_ivx * wr_ibz - wr_ivz * wr_ibx);
+
+qa = MHD::FastMagnetosonicSpeed(wl_ibl, wl_idn, wl_ibx, wl_iby, wl_ibz, mu0);
+qb = MHD::FastMagnetosonicSpeed(wr_ibl, wr_idn, wr_ibx, wr_iby, wr_ibz, mu0);
+a  = std::max((std::abs(wl_ivx) + qa), (std::abs(wr_ivx) + qb));
+
+du_by = a * (wr_iby - wl_iby);
+du_bz = a * (wr_ibz - wl_ibz);
+...
+p.flux(b, dir, field::cell::B(IBXG), k, j, i) = 0.0;   // normal slot, EXACTLY zero
+p.flux(b, dir, field::cell::B(IBYG), k, j, i) = 0.5 * (fsum_by - du_by);
+p.flux(b, dir, field::cell::B(IBZG), k, j, i) = 0.5 * (fsum_bz - du_bz);
+```
+
+### What this port changes, and why each change is safe
+
+| Donor | RIOT (`MHD::lr_to_flux_mhd_llf`) | Reason |
+| --- | --- | --- |
+| gas + total pressure to separate `p.flux(IPR)` and `p.flux(IBM)` registers | `ptot_flux = 0.5*(ptot_l + ptot_r)` added to the normal momentum component | RIOT's convention folds total pressure into the normal momentum flux; the value is the same, since the donor's two registers sum to `0.5*(ptot_l + ptot_r)` |
+| `el` built as hydro energy, then `el += pbl` | `el` formed with `+ pbl` in one expression | Same value. Both the energy flux and `du_e` use the total, matching the donor's post-increment usage |
+| `fsum_e += 2*(pb*vx) - bx*vdB/mu0` on top of `(el_hyd + p_gas)*vx` | `fsum_e = (el + ptot)*vn - bn*vdb/mu0` in one expression | Algebraically identical: `(el_hyd + p_gas)v + 2 p_B v = (el_hyd + p_B + p_gas + p_B) v = (el + ptot) v`. The donor's own comment gives the same derivation for the factor of 2 |
+| normal-slot induction flux assigned `0.0` | same, `(DIR == XnDIR) ? 0.0 : ...` | Structural under the shared-`bn` substitution here, but written explicitly for the same reason as in HLLE: anything nonzero leaks into the EMF |
+| per-species loop, dust/radiation specializations | single material, gas only | Multi-material is rejected at startup (ADR-004); radiation MHD is out of scope |
+
+### Two properties worth stating explicitly
+
+- **No degeneracy guards, and that is correct.** LLF has no intermediate states, so there is
+  nothing to degenerate. Unlike HLLD it needs no `eps` fallback, no `deg_tol`, and no
+  non-finite bail-out. Do not "add guards for consistency with HLLD" — there is nothing for
+  them to guard.
+- **No ideal-gas restriction.** Like HLLE it consumes only the bulk modulus via
+  `FastMagnetosonicSpeed`, so it is valid for a general EOS. HLLD's
+  `PARTHENON_REQUIRE(!use_general_pte)` must NOT be copied here.

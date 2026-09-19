@@ -80,6 +80,14 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   stays open for the behaviour itself, which is RIOT-wide and worth raising upstream. That A/B
   also showed the uninterrupted `noh` run bitwise identical between the two binaries, which
   extends H01's hydro-unchanged evidence to a second problem and pgen path.
+- **LLF ported and verified** (TEST_LEDGER G5.8): the third and last MHD solver,
+  `hydro/riemann = mhd_llf`. No degeneracy guards (nothing to degenerate) and no ideal-gas
+  restriction (bulk modulus only, like HLLE) -- do not copy HLLD's `use_general_pte` guard
+  here. 6 new unit tests, `ctest` **47/47**. The diffusivity ordering HLLD < HLLE < LLF is
+  strictly monotone on all five Brio-Wu fields with no exceptions, and is corroborated by
+  field-loop magnetic-energy retention 0.655 / 0.726 / 0.738 from an unrelated measurement.
+  This is oracle-INDEPENDENT: the ordering follows from the wave structure. CT unaffected
+  (axial field at roundoff); 1 vs 4 ranks bitwise.
 - **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
   control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
   parameters).
@@ -106,7 +114,7 @@ Do not delete entries from that file; move them to its Resolved section with evi
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
-regression harness; LLF; `mhd/monitor_divb` is registered but not yet consumed;
+regression harness; `mhd/monitor_divb` is registered but not yet consumed;
 U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
@@ -188,9 +196,20 @@ only, so no test propagates a wave obliquely to the grid.
    `f.bulk.magnetic_field` must be added to `parthenon/output1/variables` explicitly or the
    one field the test exists for is skipped, and the checkpoint cadence must be
    `parthenon/output2/dn`, not `dt`.
-6. Remaining Stage 5: LLF, solver-failure/floor counters (C6), `mhd/monitor_divb` (C7),
-   MHD docs in `doc/sphinx`, the `tst/scripts/mhd/` harness, and the eight-suite regression
-   sweep LAST (C1).
+6. ~~**LLF**~~ — **DONE, PASS** (TEST_LEDGER G5.8). Re-run the three-solver comparison with:
+   ```
+   mkdir -p /tmp/llf && cd /tmp/llf
+   R=/Users/taitano/Documents/git/riot
+   for s in mhd_llf mhd_hlle mhd_hlld; do
+     $R/build/src/riot -i $R/inputs/mhd/brio_wu.rin \
+       parthenon/job/problem_id=bw_$s hydro/riemann=$s
+   done
+   . $R/riot_venv/bin/activate
+   python3 $R/claude_sessions/mhd_runs/analyze_brio_wu.py bw_mhd_llf bw_mhd_hlle bw_mhd_hlld
+   ```
+7. Remaining Stage 5: solver-failure/floor counters (C6), `mhd/monitor_divb` (C7), MHD docs
+   in `doc/sphinx`, the `tst/scripts/mhd/` harness, and the eight-suite regression sweep
+   LAST (C1).
 
 ## Do not repeat
 

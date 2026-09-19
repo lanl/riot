@@ -106,15 +106,17 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
 
   // Choose Riemann Solver
   // TODO(JMM): Move Carbuncle correction into HLLC solver
-  std::string solver =
-      pin->GetOrAddString("hydro", "riemann", "hllc",
-                          std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc",
-                                                   "hll", "mhd_hlle", "mhd_hlld"},
-                          "Riemann solver to use");
+  std::string solver = pin->GetOrAddString(
+      "hydro", "riemann", "hllc",
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "mhd_hlle",
+                               "mhd_hlld", "mhd_llf"},
+      "Riemann solver to use");
   if (solver == "mhd_hlle") {
     params.Add("riemann_solver", RiemannSolver::mhd_hlle);
   } else if (solver == "mhd_hlld") {
     params.Add("riemann_solver", RiemannSolver::mhd_hlld);
+  } else if (solver == "mhd_llf") {
+    params.Add("riemann_solver", RiemannSolver::mhd_llf);
   } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
@@ -144,10 +146,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // Both are rejected here. `physics/mhd` was already added by riot.cpp before this
   // package is registered, so this read is just a lookup.
   const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
-  const bool solver_is_mhd = (solver == "mhd_hlle" || solver == "mhd_hlld");
+  const bool solver_is_mhd =
+      (solver == "mhd_hlle" || solver == "mhd_hlld" || solver == "mhd_llf");
   PARTHENON_REQUIRE(do_mhd == solver_is_mhd,
                     do_mhd ? "MHD requires an MHD Riemann solver; set hydro/riemann to "
-                             "one of: mhd_hlle, mhd_hlld."
+                             "one of: mhd_hlle, mhd_hlld, mhd_llf."
                            : "hydro/riemann = " + solver +
                                  " is an MHD solver but <physics>/mhd is off.");
 

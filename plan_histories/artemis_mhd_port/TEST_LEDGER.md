@@ -1296,3 +1296,92 @@ generator, goes through the embedded-Python pgen route, and is multi-material-ca
 bitwise agreement there is independent corroboration that the Stage 1 `sparse_update` filter
 change did not drop a field — which is exactly the risk concern C1 exists to test. It does not
 replace C1's eight suites, but it is a second data point rather than a restatement of the first.
+
+---
+
+## G5.8 — LLF (Rusanov) MHD solver, 2026-09-18
+
+Third and last MHD solver. Ported from `artemis/src/utils/fluxes/riemann/llf.hpp`,
+transcribed in DONOR_KERNELS.md section 14. Selected with `hydro/riemann = mhd_llf`.
+
+`F = ½(F_L + F_R) − ½a(U_R − U_L)`, `a = max(|v_n| + c_f)` (Toro Eq. 10.43). **No degeneracy
+guards, because there are no intermediate states to degenerate**, and **no ideal-gas
+restriction**, because like HLLE it consumes only the bulk modulus. HLLD's
+`use_general_pte` requirement is deliberately *not* copied.
+
+### Why keep the least accurate solver
+
+It is the fallback with no failure mode. When a problem misbehaves under HLLD or HLLE,
+re-running it under LLF separates "the solver's intermediate states are breaking down" from
+"the reconstruction, CT, or initial condition is wrong" — because LLF has no intermediate
+states to break down. That diagnostic is why the donor ships all three, and it is the reason
+this is worth the code rather than being dropped as redundant.
+
+### Unit tests (6 new, `ctest` 41/41 → **47/47**)
+
+| Test | Criterion | Result |
+| --- | --- | --- |
+| Consistency: equal states give the exact MHD flux, 6 states × 3 directions | rel ≤ 1e-12 | **PASS** |
+| Normal induction flux | `== 0.0` exactly | **PASS** |
+| Equal-state signal speed equals \|v_n\| + c_f, and equals HLLE's | rel ≤ 1e-12 | **PASS** |
+| Finite on all 100 degenerate-state pairs × 3 directions | all finite, `pairs == 100` | **PASS** |
+| Genuinely different flux from both HLLE and HLLD | \|Δf_eng\| > 1e-6 | **PASS** |
+| Smears a stationary contact by exactly −½a·Δρ | rel ≤ 1e-12 | **PASS** |
+
+Two of these are worth their space:
+
+- **The signal-speed identity.** For equal states, Toro's `|v_n| + c_f` and HLLE's
+  `max(|s_l|, |s_r|)` are provably the same number. Pinning it catches the classic porting
+  error for this solver — using the acoustic speed where the fast speed belongs — which
+  would leave every consistency test passing while making the scheme unstable in any
+  field-dominated region.
+- **The contact-smearing test pins the dissipation COEFFICIENT, not just its sign.** Across
+  a stationary contact the exact mass flux is zero; LLF must produce exactly `−½a(ρ_R − ρ_L)`.
+  Asserting that against an independently computed `a` is much stronger than observing that
+  the answer is nonzero, and it is checked against HLLD being exactly zero on the same state.
+
+### Run-level verification: the diffusivity ordering
+
+Brio & Wu, 512 zones, normalized L1 against the Athena++ reference. **This is an
+oracle-independent check**: the ordering HLLD < HLLE < LLF is required by the wave structure
+(five waves, two waves, none), so it holds regardless of how good the reference is.
+
+| field | HLLD | HLLE | LLF | monotone? |
+| --- | --- | --- | --- | --- |
+| rho | 1.723601e-03 | 2.659044e-03 | 3.183125e-03 | yes |
+| press | 1.523292e-03 | 2.280626e-03 | 2.853562e-03 | yes |
+| vx | 4.633461e-03 | 5.799217e-03 | 6.636279e-03 | yes |
+| vy | 2.749096e-03 | 4.006543e-03 | 4.774920e-03 | yes |
+| By | 1.186258e-03 | 1.689883e-03 | 2.034144e-03 | yes |
+
+**Strictly monotone on all five fields with no exceptions** — ten independent inequalities,
+all in the required direction. HLLE/LLF ratios are 0.80–0.87 (cf. HLLD/HLLE 0.65–0.80).
+
+Structural invariants under LLF are all **exactly 0.0** (`max|Bx − 0.75|`, `max|Bz|`,
+`max|vz|`, `max|divB|`), with `min rho` 1.161995e-01 and `min P` 8.642078e-02 — positive with
+margin, so no floor fired.
+
+### Independent corroboration, and CT under LLF
+
+3D field loop (`inputs/mhd/field_loop_3d.rin`), which is a different problem and a different
+diagnostic:
+
+| solver | axial field | eta | E_mag retained | dE/E | dM/M |
+| --- | --- | --- | --- | --- | --- |
+| LLF | 1.470461e-15 | 4.070497e-15 | **0.6553** | 1.97e-16 | 0.0 |
+| HLLE | 1.441305e-15 | 4.055658e-15 | **0.7261** | 5.92e-16 | 3.33e-16 |
+| HLLD | 1.401965e-15 | 3.521546e-15 | **0.7381** | 7.89e-16 | 4.44e-16 |
+
+Retention reproduces the same ordering from an unrelated measurement, which is what makes the
+Brio-Wu table evidence about diffusivity rather than about the reference. Meanwhile constrained
+transport is unaffected by the solver swap: the axial field stays at roundoff and mass and
+energy are conserved to roundoff.
+
+**MPI**: 1 vs 4 ranks on the 3D field loop is **bitwise identical** in every field, so the new
+flux path introduces no rank dependence.
+
+### Not covered
+
+No absolute frozen threshold for LLF, for the same reason as concern C3: the donor's tolerance
+is calibrated against its own gold file. The ordering claim above is relative and therefore
+immune to that, but LLF's absolute accuracy is monitored rather than gated.

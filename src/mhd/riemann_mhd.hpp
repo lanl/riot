@@ -598,6 +598,137 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_hlld(
   return std::max(std::abs(sl), std::abs(sr));
 }
 
+//----------------------------------------------------------------------------------------
+//! \fn  Real MHD::lr_to_flux_mhd_llf
+//! \brief Ideal-MHD local Lax-Friedrichs (Rusanov) flux in direction DIR.
+//!
+//! Ported from artemis/src/utils/fluxes/riemann/llf.hpp, the `FLUID_TYPE != radiation`
+//! specialization, restricted to its `do_mhd` branch. Reference: Toro, "Riemann Solvers
+//! and Numerical Methods for Fluid Dynamics", 2nd ed., ch. 10 (Eq. 10.43 for the speed).
+//!
+//! The whole scheme is
+//!   F = 1/2 (F_L + F_R) - 1/2 a (U_R - U_L),   a = max(|v_n| + c_f)
+//! i.e. a centred flux plus the most diffusive stable amount of upwinding. There are no
+//! intermediate states, so -- unlike HLLD -- there is nothing to degenerate and no
+//! degeneracy guards exist. Like HLLE and unlike HLLD it needs only the bulk modulus, so
+//! it carries NO ideal-gas restriction.
+//!
+//! WHY KEEP IT, given it is strictly less accurate than both others: it is the fallback
+//! that has no failure mode. When a problem misbehaves under HLLD or HLLE, running it
+//! under LLF separates "the solver's intermediate states are breaking down" from "the
+//! reconstruction, CT, or initial condition is wrong", because LLF has no intermediate
+//! states to break down. That diagnostic is the reason the donor ships all three.
+//!
+//! The argument list is identical to `lr_to_flux_mhd_hlle` and `..._hlld`, so all three
+//! are interchangeable at the call site.
+//!
+//! \return  `a`, the single signal speed, for the CFL vote. LLF is symmetric
+//!          (effectively sl = -a, sr = +a), so this plays the same role as
+//!          max(|sl|, |sr|) does for the other two.
+template <int DIR>
+KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_llf(
+    Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
+    const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
+    const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
+    const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
+    const Real mu0, Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &f_b1,
+    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel) {
+
+  rhol = std::max(rhol, 1.e-100);
+  rhor = std::max(rhor, 1.e-100);
+
+  const Real vnl = (DIR == X1DIR) * v1l + (DIR == X2DIR) * v2l + (DIR == X3DIR) * v3l;
+  const Real vnr = (DIR == X1DIR) * v1r + (DIR == X2DIR) * v2r + (DIR == X3DIR) * v3r;
+
+  // Shared normal field substituted into the normal slot, exactly as in the HLLE. This
+  // is what makes the normal induction flux vanish IDENTICALLY below rather than
+  // approximately.
+  const Real b1lc = (DIR == X1DIR) ? bn : b1l;
+  const Real b2lc = (DIR == X2DIR) ? bn : b2l;
+  const Real b3lc = (DIR == X3DIR) ? bn : b3l;
+  const Real b1rc = (DIR == X1DIR) ? bn : b1r;
+  const Real b2rc = (DIR == X2DIR) ? bn : b2r;
+  const Real b3rc = (DIR == X3DIR) ? bn : b3r;
+
+  const Real bsql = SQR(b1lc) + SQR(b2lc) + SQR(b3lc);
+  const Real bsqr = SQR(b1rc) + SQR(b2rc) + SQR(b3rc);
+
+  const Real pbl = MagneticEnergyDensity(b1lc, b2lc, b3lc, mu0);
+  const Real pbr = MagneticEnergyDensity(b1rc, b2rc, b3rc, mu0);
+  const Real ptot_l = Pl + pbl;
+  const Real ptot_r = Pr + pbr;
+
+  // Conserved total energy, INCLUDING magnetic energy (ADR-002). The donor reaches the
+  // same value by forming the hydro energy first and adding pb later; the difference is
+  // presentation, and both the energy flux and the dissipation term below use the total.
+  const Real el = ul + 0.5 * rhol * (SQR(v1l) + SQR(v2l) + SQR(v3l)) + pbl;
+  const Real er = ur + 0.5 * rhor * (SQR(v1r) + SQR(v2r) + SQR(v3r)) + pbr;
+
+  const Real cfl = FastMagnetosonicSpeed(rhol * cl * cl, rhol, bsql, bn, mu0);
+  const Real cfr = FastMagnetosonicSpeed(rhor * cr * cr, rhor, bsqr, bn, mu0);
+
+  // Toro Eq. 10.43. Note |v_n| rather than the signed velocity, and the FAST speed
+  // rather than the acoustic one -- with c_s here the scheme would be unstable wherever
+  // the field dominates, which is the classic way this solver gets ported wrong.
+  const Real a = std::max(std::abs(vnl) + cfl, std::abs(vnr) + cfr);
+
+  const Real vdbl = v1l * b1lc + v2l * b2lc + v3l * b3lc;
+  const Real vdbr = v1r * b1rc + v2r * b2rc + v3r * b3rc;
+
+  // Sum of the two PHYSICAL fluxes. Momentum carries -b_n b_i/mu0; the isotropic total
+  // pressure is added to the normal component below, per RIOT's pressure-in-flux
+  // convention (the donor instead routes it to a separate face-pressure register).
+  const Real fsum_d = rhol * vnl + rhor * vnr;
+  const Real fsum_m1 = rhol * v1l * vnl + rhor * v1r * vnr - bn * (b1lc + b1rc) / mu0;
+  const Real fsum_m2 = rhol * v2l * vnl + rhor * v2r * vnr - bn * (b2lc + b2rc) / mu0;
+  const Real fsum_m3 = rhol * v3l * vnl + rhor * v3r * vnr - bn * (b3lc + b3rc) / mu0;
+  const Real fsum_e =
+      (el + ptot_l) * vnl + (er + ptot_r) * vnr - bn * (vdbl + vdbr) / mu0;
+  const Real fsum_b1 = (vnl * b1lc - v1l * bn) + (vnr * b1rc - v1r * bn);
+  const Real fsum_b2 = (vnl * b2lc - v2l * bn) + (vnr * b2rc - v2r * bn);
+  const Real fsum_b3 = (vnl * b3lc - v3l * bn) + (vnr * b3rc - v3r * bn);
+
+  // Dissipation: a * (U_R - U_L) on the CONSERVED variables. Pressure gets no such term
+  // because it is not a conserved variable -- it appears only in the physical flux, which
+  // is why the normal momentum flux below picks up a plain average of the total pressure.
+  const Real du_d = a * (rhor - rhol);
+  const Real du_m1 = a * (rhor * v1r - rhol * v1l);
+  const Real du_m2 = a * (rhor * v2r - rhol * v2l);
+  const Real du_m3 = a * (rhor * v3r - rhol * v3l);
+  const Real du_e = a * (er - el);
+  const Real du_b1 = a * (b1rc - b1lc);
+  const Real du_b2 = a * (b2rc - b2lc);
+  const Real du_b3 = a * (b3rc - b3lc);
+
+  const Real ptot_flux = 0.5 * (ptot_l + ptot_r);
+
+  const Real frho = 0.5 * (fsum_d - du_d);
+
+  f_v1 = 0.5 * (fsum_m1 - du_m1) + (DIR == X1DIR) * ptot_flux;
+  f_v2 = 0.5 * (fsum_m2 - du_m2) + (DIR == X2DIR) * ptot_flux;
+  f_v3 = 0.5 * (fsum_m3 - du_m3) + (DIR == X3DIR) * ptot_flux;
+  f_eng = 0.5 * (fsum_e - du_e);
+
+  // Both fsum and du vanish identically in the normal slot once bn has been substituted
+  // above, so this assignment is not a correction -- but it is written explicitly for the
+  // same reason as in the HLLE: anything nonzero here leaks into the EMF and destroys the
+  // divergence-free property that constrained transport exists to maintain.
+  f_b1 = (DIR == X1DIR) ? 0.0 : 0.5 * (fsum_b1 - du_b1);
+  f_b2 = (DIR == X2DIR) ? 0.0 : 0.5 * (fsum_b2 - du_b2);
+  f_b3 = (DIR == X3DIR) ? 0.0 : 0.5 * (fsum_b3 - du_b3);
+
+  // Upwind face state on the sign of the mass flux, identical to the other two solvers.
+  const Real l_flag = 1.0 * (frho >= 0.0);
+  const Real r_flag = 1.0 - l_flag;
+  riemann_vel = frho / (l_flag * rhol + r_flag * rhor);
+
+  v1face = (DIR == X1DIR) ? riemann_vel : (l_flag * v1l + r_flag * v1r);
+  v2face = (DIR == X2DIR) ? riemann_vel : (l_flag * v2l + r_flag * v2r);
+  v3face = (DIR == X3DIR) ? riemann_vel : (l_flag * v3l + r_flag * v3r);
+
+  return a;
+}
+
 } // namespace MHD
 
 #endif // MHD_RIEMANN_MHD_HPP_

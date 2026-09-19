@@ -855,6 +855,12 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
               sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
               store_vf);
           break;
+        case RiemannSolver::mhd_llf:
+          MHDFluxes<DIR, MHD::lr_to_flux_mhd_llf<dir>>(
+              v, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
+              store_vf);
+          break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG>(v, vstr, idx_range, halo_range, delta,
                                           set_bulk_minus, set_bulk_plus, sum_bulk_minus,

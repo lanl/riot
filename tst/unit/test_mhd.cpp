@@ -986,3 +986,158 @@ TEST_CASE("U02: HLLD and HLLE are genuinely different fluxes", "[mhd][riemann][h
   CHECK(AllFinite(d3));
   CHECK(std::abs(d3.f_eng - e3.f_eng) > 1.0e-6);
 }
+
+//========================================================================================
+// LLF
+//========================================================================================
+
+namespace {
+
+//! Same wrapper again, for the Lax-Friedrichs solver.
+template <int DIR>
+MHDFlux RunMHDLLF(const MHDState &l, const MHDState &r, const Real mu0) {
+  const Real bn = NormalB<DIR>(l);
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+    f.smax = MHD::lr_to_flux_mhd_llf<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+  });
+}
+
+} // namespace
+
+TEST_CASE("U02: MHD LLF is consistent -- equal states give the exact MHD flux",
+          "[mhd][riemann][llf]") {
+  // The same workhorse invariant used for HLLE and HLLD. It is a particularly sharp test
+  // for LLF: with l == r the entire dissipation term a*(U_R - U_L) vanishes identically,
+  // so what remains is the plain physical flux and any error in the Maxwell stress, the
+  // total-pressure term or the Poynting flux shows up undamped.
+  const Real mu0 = 1.0;
+  for (const auto &s : kStates) {
+    {
+      const auto want = ExactMHDFlux<X1DIR>(s, mu0);
+      CheckMHDConsistent(RunMHDLLF<X1DIR>(s, s, mu0), want, FluxScale(want));
+    }
+    {
+      const auto want = ExactMHDFlux<X2DIR>(s, mu0);
+      CheckMHDConsistent(RunMHDLLF<X2DIR>(s, s, mu0), want, FluxScale(want));
+    }
+    {
+      const auto want = ExactMHDFlux<X3DIR>(s, mu0);
+      CheckMHDConsistent(RunMHDLLF<X3DIR>(s, s, mu0), want, FluxScale(want));
+    }
+  }
+}
+
+TEST_CASE("U02: LLF normal induction flux is identically zero", "[mhd][riemann][llf]") {
+  // Exact zero, not small: a nonzero normal induction flux feeds the EMF assembly and
+  // destroys the divergence-free property. For LLF this holds structurally once the
+  // shared bn has been substituted into both states -- both the centred flux and the
+  // dissipation term cancel term by term -- so `== 0.0` is the right assertion.
+  const Real mu0 = 1.0;
+  MHDState l{1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.75, 1.0, -0.4};
+  MHDState r{0.6, -0.1, 0.4, -0.3, 0.9, 0.5, 1.0, 0.75, -0.5, 0.8};
+  CHECK(RunMHDLLF<X1DIR>(l, r, mu0).f_b1 == 0.0);
+  CHECK(RunMHDLLF<X2DIR>(l, r, mu0).f_b2 == 0.0);
+  CHECK(RunMHDLLF<X3DIR>(l, r, mu0).f_b3 == 0.0);
+}
+
+TEST_CASE("U02: LLF equal-state signal speed is exactly |v_n| + c_f",
+          "[mhd][riemann][llf]") {
+  // Toro Eq. 10.43 reduces to |v_n| + c_f for identical states, and HLLE's
+  // max(|s_l|, |s_r|) reduces to the same thing (s_l = v_n - c_f, s_r = v_n + c_f). So
+  // the two must agree here, and that identity is worth pinning: if LLF were accidentally
+  // using the acoustic speed instead of the fast speed -- the classic porting error for
+  // this solver -- the two would diverge for every magnetized state while all the
+  // consistency checks above still passed.
+  const Real mu0 = 1.0;
+  for (const auto &s : kStates) {
+    const Real bsq = SQR(s.b1) + SQR(s.b2) + SQR(s.b3);
+    const Real cf = MHD::FastMagnetosonicSpeed(s.rho * s.c * s.c, s.rho, bsq, s.b1, mu0);
+    const Real want = std::abs(s.v1) + cf;
+    const Real got = RunMHDLLF<X1DIR>(s, s, mu0).smax;
+    CHECK(std::abs(got - want) <= 1.0e-12 * std::max(want, 1.0));
+    // And the same number HLLE reports, for identical states.
+    CHECK(std::abs(got - RunMHDHLLE<X1DIR>(s, s, mu0).smax) <=
+          1.0e-12 * std::max(want, 1.0));
+  }
+}
+
+TEST_CASE("U02: LLF stays finite on every degenerate state", "[mhd][riemann][llf]") {
+  // LLF has no intermediate states and therefore no degeneracy guards, so this is not
+  // testing guards -- it is testing that the states which BREAK the five-wave solver are
+  // harmless here. That is precisely the property that makes LLF useful as a diagnostic
+  // fallback, so it is worth asserting rather than assuming.
+  const Real mu0 = 1.0;
+  int pairs = 0;
+  for (const auto &l : kDegenerateStates) {
+    for (const auto &r : kDegenerateStates) {
+      CHECK(AllFinite(RunMHDLLF<X1DIR>(l, r, mu0)));
+      CHECK(AllFinite(RunMHDLLF<X2DIR>(l, r, mu0)));
+      CHECK(AllFinite(RunMHDLLF<X3DIR>(l, r, mu0)));
+      ++pairs;
+    }
+  }
+  // Guards against a vacuous pass if the state list is ever emptied or the loop bounds
+  // are broken: the count is asserted, not just the contents.
+  CHECK(pairs == 100);
+}
+
+TEST_CASE("U02: LLF is a genuinely different flux from HLLE and HLLD",
+          "[mhd][riemann][llf]") {
+  // Without this, an LLF that had been mis-wired to dispatch to HLLE would pass every
+  // test above, because all of them are satisfied by any consistent solver.
+  //
+  // The jump has a real velocity difference. A stationary contact would NOT work here:
+  // the three solvers agree there for structural reasons, so choosing that state would
+  // make this test assert the opposite of what it intends.
+  const Real mu0 = 1.0;
+  MHDState l{1.0, 0.5, 0.2, -0.1, 1.5, 1.0, 1.2, 0.75, 1.0, -0.4};
+  MHDState r{0.3, -0.6, -0.3, 0.2, 0.4, 0.2, 1.0, 0.75, -0.8, 0.5};
+
+  const auto f = RunMHDLLF<X1DIR>(l, r, mu0);
+  const auto e = RunMHDHLLE<X1DIR>(l, r, mu0);
+  const auto d = RunMHDHLLD<X1DIR>(l, r, mu0);
+  CHECK(AllFinite(f));
+  CHECK(std::abs(f.f_eng - e.f_eng) > 1.0e-6);
+  CHECK(std::abs(f.f_eng - d.f_eng) > 1.0e-6);
+}
+
+TEST_CASE("U02: LLF smears the stationary contact that HLLD transports exactly",
+          "[mhd][riemann][llf]") {
+  // The diffusivity ordering, stated where it is exact rather than as a vague claim about
+  // being "more dissipative".
+  //
+  // Across a stationary contact -- only density jumps, with velocity, pressure and field
+  // continuous -- the exact mass flux is zero. HLLD carries a contact wave and gets it
+  // right. LLF has no wave structure at all: its dissipation term is a*(rho_R - rho_L) on
+  // the raw density difference, so it MUST produce a spurious mass flux of exactly
+  // -a*(rho_R - rho_L)/2. That is asserted here against the independently computed value,
+  // which pins the dissipation coefficient itself rather than merely observing that the
+  // answer is nonzero.
+  const Real mu0 = 1.0;
+  MHDState l{1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.75, 0.6, -0.2};
+  MHDState r = l;
+  r.rho = 0.2;
+  r.c = l.c * std::sqrt(l.rho / r.rho); // same bulk modulus, so P and bmod are continuous
+
+  const auto f = RunMHDLLF<X1DIR>(l, r, mu0);
+  const auto d = RunMHDHLLD<X1DIR>(l, r, mu0);
+  CHECK(AllFinite(f));
+
+  // HLLD is exact here; this is the baseline the LLF number is judged against.
+  CHECK(std::abs(d.riemann_vel) < 1.0e-12);
+
+  const Real bsq = SQR(l.b1) + SQR(l.b2) + SQR(l.b3);
+  const Real cfl = MHD::FastMagnetosonicSpeed(l.rho * l.c * l.c, l.rho, bsq, l.b1, mu0);
+  const Real cfr = MHD::FastMagnetosonicSpeed(r.rho * r.c * r.c, r.rho, bsq, r.b1, mu0);
+  const Real a = std::max(cfl, cfr); // v = 0 on both sides
+  const Real frho_want = -0.5 * a * (r.rho - l.rho);
+
+  // riemann_vel = frho / rho_upwind, and frho > 0 here (rho_R < rho_L), so the upwind
+  // density is the left one.
+  const Real frho_got = f.riemann_vel * l.rho;
+  CHECK(std::abs(frho_got - frho_want) <= 1.0e-12 * std::abs(frho_want));
+  CHECK(std::abs(frho_want) > 1.0e-3); // the smearing is substantial, not marginal
+}
