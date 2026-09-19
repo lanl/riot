@@ -17,7 +17,15 @@ Last updated: 2026-09-19, after **C14 was found AND fixed**. It was found by the
 `tst/scripts/mhd/field_loop` test on its first run and root-caused to `physics/sparse_physics`
 deactivating blocks that constrained transport still needs updated — the clearest possible
 argument for building the harness rather than trusting the ad-hoc runs that had already
-"validated" CT. **No HIGH-severity entry remains open except C1** (the eight unrun suites).
+"validated" CT.
+
+**As of 2026-09-19 no HIGH-severity entry remains open at all.** C1 — the last one — was closed
+by running all eight suites: 12 of 13 pass, and the single failure
+(`radiation_transport.marshak`, self-similarity spread 3.504e-02 against its own 3.5e-2
+threshold) was shown to be **pre-existing upstream behavior, not a regression**, by an A/B
+against the pre-port binary that reproduced the same metric and gave **bitwise-identical**
+`c.c.bulk.temperature` and `c.c.rad.moments` across all nine output dumps. That failure is
+real, but it is `main`'s, not this port's, and the threshold must not be relaxed here.
 
 Earlier: after G5.9 (counters + div B monitor). **C2, C5, C6 and C7 are resolved.**
 Between them they found six real defects and forced one correction to an earlier recorded claim
@@ -108,7 +116,12 @@ Reproducer: `claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/r
 
 ---
 
-## C1 — Eight regression suites not yet run [HIGH severity, but SCHEDULED — do this LAST]
+## C1 — Eight regression suites not yet run → **RESOLVED 2026-09-19.** 12 of 13 pass; the one
+## failure (`radiation_transport.marshak`) is proven pre-existing by a bitwise A/B against
+## `193b3fa`. Details in TEST_LEDGER "C1 — the eight never-run regression suites". Original
+## entry kept below for the record.
+
+## C1 (original entry) — Eight regression suites not yet run [was HIGH severity, SCHEDULED last]
 
 `tst/scripts/` contains `advection`, `hydro`, `ionization`, `levelsets`, `mix`,
 `radiation_diffusion`, `radiation_transport`, `strength`, `tn`. **Only `hydro` has ever been

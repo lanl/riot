@@ -1,6 +1,6 @@
 # Checkpoint
 
-Updated UTC: 2026-09-19 (D01 fixed)
+Updated UTC: 2026-09-19 (D01 fixed; C1 eight-suite sweep run — all planned verification done)
 Riot original base SHA: `193b3fa2a61557cb4fc761bb87de6687ca781edf`
 Donor head / comparison base: `3e5aeb5` / `e8a4e0f5ad965a8ddb0171f6dad81d6a653870ee`
 Branch: `taitano/mhd-porting`
@@ -275,11 +275,17 @@ only, so no test propagates a wave obliquely to the grid.
    at `scripts/utils/mhd_analysis.py`, NOT in `scripts/mhd/` — `run_tests.py` collects every
    module in a suite directory as a test and would call `run()`/`analyze()` on a helper.
 10. ~~**Fix D01**~~ — **DONE**, root cause `physics/sparse_physics`; see the D01 section above.
-11. The eight-suite regression sweep LAST (C1). Hours of runtime but nearly free in context, so
-    it is the one item worth backgrounding. D01 is now fixed, so this is the next action and it
-    will validate the final state.
+11. ~~**The eight-suite regression sweep (C1)**~~ — **DONE 2026-09-19 at `a95f001`: 12 of 13
+    pass.** The single failure, `radiation_transport.marshak`, was NOT one of the two benign
+    modes below, so it was escalated per the rule rather than judged by inspection — and the
+    pre-port `193b3fa` binary reproduces it with **bitwise-identical** output across all nine
+    dumps. Pre-existing upstream behavior, not a regression. Numbers, method and two harness
+    traps in TEST_LEDGER "C1 — the eight never-run regression suites".
 
-## C1 sweep runbook — the last remaining task
+**All planned verification is now complete.** What remains are the low-severity concerns in
+OPEN_CONCERNS (C3, C4, C8–C13) and the final report, none of which is a gate.
+
+## C1 sweep runbook — kept for re-running the sweep
 
 Eight suites have never been run in this port: `advection`, `ionization`, `levelsets`, `mix`,
 `radiation_diffusion`, `radiation_transport`, `strength`, `tn`. They matter because Stage 1
@@ -401,6 +407,13 @@ needs care, not throughput.
   `--reuse_build` reconfigures from scratch with default compilers, which on macOS is
   AppleClang and fails. Configure `tst/build` by hand (see `build_macos_gcc` memory), then
   always `--reuse_build --save_build`.
+- **When running the harness in the `193b3fa` worktree, `tst/build` must be a real directory,
+  never a symlink to a build elsewhere.** The runner invokes `./riot -i ../../../inputs/...`
+  from `tst/build/src`, and the shell resolves that relative path through the symlink's
+  *physical* target, so the deck lookup escapes the worktree and aborts in `IOWrapper::Open`.
+  `mv` the build into place. The worktree also has no generated `.rin`; copying them from the
+  main tree is valid whenever `inputs/` is unchanged between the two commits, which is cheaper
+  than regenerating and is one fewer variable in the A/B.
 - **The MD5s recorded in TEST_LEDGER for the hydro baseline are build-configuration
   specific.** Do not use them to judge "hydro unchanged" across sessions; run the A/B in
   TEST_LEDGER H01 (worktree at `193b3fa`, submodules symlinked, identical cmake args)

@@ -2006,3 +2006,85 @@ kernel that reads the data. Once that was done the diagnostic immediately printe
 `nblocks=3 NumBlocks=4` and the cause was obvious. The lesson is that a diagnostic comparing
 blocks needs its block identity verified before its conclusions are trusted -- an aliased
 identity produces confident, wrong "no mismatch" results.
+
+## C1 — the eight never-run regression suites, MHD off. **RUN 2026-09-19 at `a95f001`: 12 of 13 PASS**
+
+Suites: `advection`, `ionization`, `levelsets`, `mix`, `radiation_diffusion`,
+`radiation_transport`, `strength`, `tn`. They matter because Stage 1 changed *shared*
+machinery (`sparse_update::UpdateToNextStage` and the `DeepCopyIndependentData` filters) that
+every physics package uses, and `riot.cpp` now also forces sparse physics off when MHD is on.
+MHD is off in all eight, so nothing MHD-specific should execute.
+
+Command exactly as the CHECKPOINT runbook specifies (accumulators removed first, `PYTHONPATH`
+exported for the embedded interpreter, `--reuse_build --save_build`). Log `/tmp/c1.log`,
+stdout `/tmp/c1_stdout.log`.
+
+| Test | Result | Time |
+| --- | --- | --- |
+| `advection.advect` | PASS | 10.8 s |
+| `advection.advection_trivial` | PASS | 0.375 s |
+| `ionization.conduction_analytic` | PASS | 4.82 s |
+| `ionization.ei_relax` | PASS | 1.63 s |
+| `ionization.linwave_ionized` | PASS | 39.5 s |
+| `ionization.sod` | PASS | 0.636 s |
+| `levelsets.levelset_advection` | PASS | 8.49 s |
+| `mix.kh_mix` | PASS | 3.68 s |
+| `radiation_diffusion.marshak` | PASS | 53.9 s |
+| `radiation_transport.hohlraum` | PASS | 1.35 s |
+| `radiation_transport.marshak` | **FAIL** | 114 s |
+| `strength.be_shell` | PASS | 6.58 s |
+| `tn.tn_reaction` | PASS | 0.449 s |
+
+Neither of the two documented benign failure modes applied, so per the runbook's escalation
+rule the failure was **not** attributed by inspection.
+
+### The one failure is PRE-EXISTING, proven by a controlled A/B
+
+```
+marshak: profile not self-similar: max relative spread of T(x/sqrt(t)) = 3.504e-02 > 3.5e-02
+```
+
+That is 0.11 % over the test's own `collapse_tol = 3.5e-2`. Marginal, which is suggestive but
+proves nothing on its own — a roundoff-level perturbation could equally push a borderline
+metric across a threshold. Two facts were established before running anything:
+
+1. `tst/scripts/radiation_transport/marshak.py` and `inputs/radiation_transport/` are
+   **unchanged since `193b3fa`** (`git diff --stat 193b3fa..HEAD` over those paths returns only
+   the *added* `tst/scripts/utils/mhd_analysis.py`, which `marshak.py` does not import). So the
+   test, its threshold and its input deck are not variables — the binary is the only one.
+2. `collapse_tol = 3.5e-2` dates from RIOT's initial commit; this port never touched it.
+
+Then the A/B: the existing `193b3fa` worktree at `/tmp/riot_base` (submodules symlinked from
+the main tree, so dependency SHAs are provably identical) was configured with the *same* cmake
+arguments read out of `tst/build/CMakeCache.txt` — `RelWithDebInfo`, gcc-16/g++-16, MPI ON,
+HDF5 ON, OpenMP OFF, CUDA OFF, unit tests OFF — and the same suite was run.
+
+| Build | `max rel spread` | `hohlraum` | `marshak` |
+| --- | --- | --- | --- |
+| `a95f001` (ported) | 3.504e-02 | PASS | FAIL |
+| `193b3fa` (pre-port) | 3.504e-02 | PASS | FAIL |
+
+The printed metric agrees to all four printed digits, but the metric is a scalar reduction and
+could hide compensating differences, so the **fields themselves** were compared across all
+nine `marshak.out1.*.phdf` dumps:
+
+| Dataset | max abs diff, ported vs pre-port |
+| --- | --- |
+| `c.c.bulk.temperature` | **0.0 — bitwise identical** |
+| `c.c.rad.moments` | **0.0 — bitwise identical** |
+
+Bitwise-identical radiation-transport output across every dump is a stronger statement than
+agreement of the failing metric: the port has **no effect whatsoever** on this test. The
+failure is a pre-existing upstream condition on `main`, unrelated to MHD, and is **not** a
+regression from this work. It is not this port's to fix, and the threshold must not be
+loosened here to make the sweep look clean.
+
+Two harness details cost a cycle and are worth recording for anyone repeating this A/B:
+
+- The worktree has no generated `.rin`. The decks are produced from `inputs/*.py`; since
+  `inputs/radiation_transport/` is unchanged between the two commits, copying the already
+  generated `.rin` from the main tree is a valid and cheaper substitute for regenerating it.
+- `tst/build` **must be a real directory, not a symlink** to a build elsewhere. The runner
+  invokes `./riot -i ../../../inputs/...` from `tst/build/src`, and the shell resolves that
+  relative path through the symlink's *physical* target, so the deck lookup escapes the
+  worktree and aborts in `IOWrapper::Open`. `mv` the build into place instead of linking it.

@@ -9,8 +9,9 @@ Status vocabulary, applied strictly:
 Combinations are recorded, not just toggles: "AMR validated" and "2T validated"
 would not imply "2T + AMR validated."
 
-**Current overall status (2026-09-19): gates G0–G4 pass, Stage 5 is complete except for the
-eight-suite hydro-with-MHD-off sweep (C1), and the `tst/scripts/mhd/` harness passes 4 of 4.
+**Current overall status (2026-09-19): gates G0–G5 pass. The `tst/scripts/mhd/` harness passes
+4 of 4, and the eight-suite non-hydro sweep with MHD off (C1) is done — 12 of 13, with the one
+failure proven pre-existing rather than a regression.
 End-to-end MHD simulations have been run and compared against an independent (Athena++)
 reference and against analytic solutions.**
 
@@ -67,6 +68,7 @@ by `MHD::Initialize`.
 | Genuine face-centered field (no `CellMemAligned`) | **validated** | shared block faces single-valued; div B identical across block boundaries |
 | Edge (EMF) flux register via automatic Face→Edge promotion | **validated** | exercised by every CT run |
 | Hydro-only behavior preserved with MHD off | **validated** | G1.2, G5.4 (hydro suite 7/7), H01 re-run — bitwise vs pre-port `193b3fa` |
+| Other physics packages preserved with MHD off | **validated** | C1 sweep — advection, ionization, levelsets, mix, radiation_diffusion, radiation_transport, strength, tn: 12/13, sole failure bitwise-identical to pre-port. This is the test of the Stage 1 change to *shared* `sparse_update` filters |
 | `mhd` physics toggle, default off | **validated** | N01 positive control |
 | Startup rejection of unsupported combinations | **validated** | N01 — 23/23, found and fixed two dead guards |
 | Restart of nonzero face state | **validated** | G5.6 — bitwise for face B, conserved and magnetic derived state |
@@ -109,7 +111,7 @@ Both are stated in the docs.
 | Item | Status |
 | --- | --- |
 | `tst/scripts/mhd/` regression harness under `tst/run_tests.py` | **done** (G5.11) — 4 of 4 pass; it found D01 on its first run |
-| The eight non-hydro regression suites with MHD off (C1) | **NOT RUN** — advection, ionization, levelsets, mix, radiation_diffusion, radiation_transport, strength, tn |
+| The eight non-hydro regression suites with MHD off (C1) | **done** — 12 of 13 pass. The one failure, `radiation_transport.marshak`, is proven **pre-existing** (bitwise-identical output vs `193b3fa`), so it is not a regression from this port |
 | U05 as a *unit* test | not implemented (C11) — but its substance is now measured on a live mesh, see the stage-copy row above |
 | Absolute (as opposed to comparative) Brio–Wu threshold | not defined (C3) |
 | Oblique CPAW propagation | not covered (C9) |
