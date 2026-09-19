@@ -1,0 +1,596 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Visualization &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../_static/table-wrap.css?v=2d21aef6" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Developer’s guide" href="../programmer_guide.html" />
+    <link rel="prev" title="Diagnostics" href="diagnostics.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Visualization</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#concept">Concept</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#scheduling">Scheduling</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#cameras">Cameras</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#layers">Layers</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#fields-and-scaling">Fields and scaling</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#transfer-functions">Transfer functions</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#masks">Masks</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Visualization</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/visualization.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="visualization">
+<span id="chap-visualization"></span><h1>Visualization<a class="headerlink" href="#visualization" title="Link to this heading"></a></h1>
+<p>RIOT can render images directly during a run through its built-in <em>volume ray
+tracer</em>, <code class="docutils literal notranslate"><span class="pre">riot_viz</span></code>. Rather than writing full-mesh dumps for an external tool,
+<code class="docutils literal notranslate"><span class="pre">riot_viz</span></code> casts a ray through the domain for every pixel of one or more
+virtual <em>cameras</em>, integrates color and opacity along each ray on the device,
+and writes finished PNG images on a schedule. It is the in-situ visualization
+path: it only reads the evolved state, so it can be enabled or disabled without
+changing the simulation result. Volume renderings, slice planes, and iso-value
+contours are all produced by the same ray march and can be composited together
+in a single image.</p>
+<section id="concept">
+<h2>Concept<a class="headerlink" href="#concept" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">riot_viz</span></code> is registered as a diagnostic (Chapter <a class="reference internal" href="diagnostics.html#chap-diagnostics"><span class="std std-ref">Diagnostics</span></a>) and
+is enabled by adding it to the <code class="docutils literal notranslate"><span class="pre">packages</span></code> list of the <code class="docutils literal notranslate"><span class="pre">&lt;diagnostics&gt;</span></code> block:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"diagnostics"</span><span class="p">,</span> <span class="n">packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"riot_viz"</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>Configuration then lives in the <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz&gt;</span></code> block and its sub-blocks. A run
+defines one or more <em>cameras</em> in numbered blocks <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz/camera0&gt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&lt;riot_viz/camera1&gt;</span></code>, …; each camera produces one image (or image sequence).
+A camera references a list of <em>layers</em>, and each layer is its own input block
+that describes one thing to draw — a volume rendering, a slice, or a set of
+contours.</p>
+<p>At the scheduled times, RIOT seeds a ray-tracer particle for every pixel of
+every camera at the point where its ray enters the domain, marches those
+particles cell-by-cell accumulating color and opacity, reduces the finished
+pixels across MPI ranks, and writes each camera’s image as
+<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;NNNN.png</span></code>, where <code class="docutils literal notranslate"><span class="pre">NNNN</span></code> is a zero-padded, four-digit dump index.
+The ray march supports Cartesian, cylindrical, and spherical coordinates.</p>
+</section>
+<section id="scheduling">
+<h2>Scheduling<a class="headerlink" href="#scheduling" title="Link to this heading"></a></h2>
+<p>The render cadence is set in the <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz&gt;</span></code> block. Provide <strong>either</strong> a
+fixed interval <code class="docutils literal notranslate"><span class="pre">dt</span></code> <strong>or</strong> an explicit list of times <code class="docutils literal notranslate"><span class="pre">t</span></code> — setting both is
+an error, and setting neither is an error.</p>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">Parameters in the <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 22.0%" />
+<col style="width: 12.0%" />
+<col style="width: 16.0%" />
+<col style="width: 50.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>dt</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">-1</span></code></p></td>
+<td><p>Render every <code class="docutils literal notranslate"><span class="pre">dt</span></code> in simulation time. Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">t</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>t</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Explicit list of render times. Mutually exclusive with <code class="docutils literal notranslate"><span class="pre">dt</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>timebar</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Draw a progress bar and time stamp across the bottom of each image.</p></td>
+</tr>
+<tr class="row-odd"><td><p>timebar_rgb</p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1,1,1</span></code></p></td>
+<td><p>RGB color (each in <span class="math notranslate nohighlight">\([0,1]\)</span>) of the time bar.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="cameras">
+<h2>Cameras<a class="headerlink" href="#cameras" title="Link to this heading"></a></h2>
+<p>Each <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz/cameraN&gt;</span></code> block places a pinhole camera in the domain and
+lists the layers it draws. The camera looks from <code class="docutils literal notranslate"><span class="pre">location</span></code> toward <code class="docutils literal notranslate"><span class="pre">focus</span></code>;
+<code class="docutils literal notranslate"><span class="pre">up</span></code> fixes the roll, and <code class="docutils literal notranslate"><span class="pre">target_width</span></code> / <code class="docutils literal notranslate"><span class="pre">target_height</span></code> set the size of
+the focal-plane window (in simulation length units) that is sampled by
+<code class="docutils literal notranslate"><span class="pre">nwidth</span></code> × <code class="docutils literal notranslate"><span class="pre">nheight</span></code> pixels. A single point light is placed at
+<code class="docutils literal notranslate"><span class="pre">light_x,y,z</span></code> and shades slices and contours through the <code class="docutils literal notranslate"><span class="pre">light_ambient</span></code> and
+<code class="docutils literal notranslate"><span class="pre">light_diffuse</span></code> terms; volume layers are emissive and ignore the light.</p>
+<table class="wraptable docutils align-default" id="id2">
+<caption><span class="caption-text">Parameters in each <code class="docutils literal notranslate"><span class="pre">&lt;riot_viz/camera</span></code><span class="math notranslate nohighlight">\(N\)</span><code class="docutils literal notranslate"><span class="pre">&gt;</span></code> block.</span><a class="headerlink" href="#id2" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 24.0%" />
+<col style="width: 12.0%" />
+<col style="width: 14.0%" />
+<col style="width: 50.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>name</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Output filename stem; images are <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;NNNN.png</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>layers</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Names of the layer blocks to draw, composited in order.</p></td>
+</tr>
+<tr class="row-even"><td><p>location</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Camera position <code class="docutils literal notranslate"><span class="pre">x,y,z</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>focus</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Point the camera looks at.</p></td>
+</tr>
+<tr class="row-even"><td><p>up</p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0,0,1</span></code></p></td>
+<td><p>Up vector (fixes camera roll).</p></td>
+</tr>
+<tr class="row-odd"><td><p>target_width</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Width of the focal-plane window in length units.</p></td>
+</tr>
+<tr class="row-even"><td><p>target_height</p></td>
+<td><p>Real</p></td>
+<td><p>—</p></td>
+<td><p>Height of the focal-plane window in length units.</p></td>
+</tr>
+<tr class="row-odd"><td><p>nwidth</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Image width in pixels.</p></td>
+</tr>
+<tr class="row-even"><td><p>nheight</p></td>
+<td><p>int</p></td>
+<td><p>—</p></td>
+<td><p>Image height in pixels.</p></td>
+</tr>
+<tr class="row-odd"><td><p>opacity_threshold</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1e-2</span></code></p></td>
+<td><p>Remaining transparency at which a ray stops marching (early ray
+termination).</p></td>
+</tr>
+<tr class="row-even"><td><p>light_x, light_y, light_z</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Position of the point light used to shade slices and contours.</p></td>
+</tr>
+<tr class="row-odd"><td><p>light_ambient</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Ambient (unshaded) lighting term.</p></td>
+</tr>
+<tr class="row-even"><td><p>light_diffuse</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code></p></td>
+<td><p>Diffuse lighting coefficient (falls off as <span class="math notranslate nohighlight">\(1/r^2\)</span>).</p></td>
+</tr>
+<tr class="row-odd"><td><p>colorbar_thickness</p></td>
+<td><p>int</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10</span></code></p></td>
+<td><p>Height in pixels of each color bar appended below the image.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="layers">
+<h2>Layers<a class="headerlink" href="#layers" title="Link to this heading"></a></h2>
+<p>A layer block is named by the string that appears in a camera’s <code class="docutils literal notranslate"><span class="pre">layers</span></code>
+list; its <code class="docutils literal notranslate"><span class="pre">type</span></code> selects what is drawn:</p>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">volume</span></code></dt><dd><p>Emission/absorption volume rendering. Along each ray the field is sampled,
+mapped to color and opacity through the transfer functions, and composited.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">slice</span></code></dt><dd><p>A single planar cut. The plane is defined by <code class="docutils literal notranslate"><span class="pre">slice_location</span></code> and
+<code class="docutils literal notranslate"><span class="pre">slice_normal</span></code>; where the ray crosses the plane the field is colored and
+lit.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">contour</span></code></dt><dd><p>Iso-surfaces of the field. Each value in <code class="docutils literal notranslate"><span class="pre">contours</span></code> is drawn as a lit,
+colored surface with its own opacity.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">contour_slice</span></code></dt><dd><p>Like <code class="docutils literal notranslate"><span class="pre">contour</span></code>, but the surfaces are colored from the transfer function
+(the color-map) rather than from per-contour colors.</p>
+</dd>
+</dl>
+<section id="fields-and-scaling">
+<h3>Fields and scaling<a class="headerlink" href="#fields-and-scaling" title="Link to this heading"></a></h3>
+<p>The scalar drawn by a layer is named with <code class="docutils literal notranslate"><span class="pre">field</span></code>. A separate field may drive
+opacity through <code class="docutils literal notranslate"><span class="pre">field_alpha</span></code> (it defaults to <code class="docutils literal notranslate"><span class="pre">field</span></code>), which lets a volume
+be colored by one quantity and made transparent by another. Either field may be
+sampled as its value, its gradient magnitude, or the magnitude of the gradient
+of its logarithm, via <code class="docutils literal notranslate"><span class="pre">field_use_grad</span></code> / <code class="docutils literal notranslate"><span class="pre">field_alpha_use_grad</span></code>. The color
+axis may be linear or logarithmic through <code class="docutils literal notranslate"><span class="pre">field_scale</span></code>.</p>
+</section>
+<section id="transfer-functions">
+<h3>Transfer functions<a class="headerlink" href="#transfer-functions" title="Link to this heading"></a></h3>
+<p>Color and opacity are piecewise-linear transfer functions given as lists of
+control points that are spread evenly over the mapped data range. The <code class="docutils literal notranslate"><span class="pre">red</span></code>,
+<code class="docutils literal notranslate"><span class="pre">green</span></code>, <code class="docutils literal notranslate"><span class="pre">blue</span></code> lists (each value in <span class="math notranslate nohighlight">\([0,1]\)</span>) define the color map
+over <code class="docutils literal notranslate"><span class="pre">[min_value,</span> <span class="pre">max_value]</span></code>; the <code class="docutils literal notranslate"><span class="pre">alpha</span></code> list defines opacity over
+<code class="docutils literal notranslate"><span class="pre">[min_alpha_value,</span> <span class="pre">max_alpha_value]</span></code>. The three color lists need not have the
+same length as one another or as <code class="docutils literal notranslate"><span class="pre">alpha</span></code>.</p>
+<table class="wraptable docutils align-default" id="id3">
+<caption><span class="caption-text">Common layer parameters.</span><a class="headerlink" href="#id3" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 12.0%" />
+<col style="width: 16.0%" />
+<col style="width: 46.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>type</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">volume</span></code>, <code class="docutils literal notranslate"><span class="pre">slice</span></code>, <code class="docutils literal notranslate"><span class="pre">contour</span></code>, or <code class="docutils literal notranslate"><span class="pre">contour_slice</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>field</p></td>
+<td><p>string</p></td>
+<td><p>—</p></td>
+<td><p>Name of the field to draw (e.g. <code class="docutils literal notranslate"><span class="pre">c.c.bulk.rho</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>field_alpha</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">field</span></code></p></td>
+<td><p>Field that drives opacity in <code class="docutils literal notranslate"><span class="pre">volume</span></code> layers.  Also used to color contours in <code class="docutils literal notranslate"><span class="pre">contour_slice</span></code> layers.</p></td>
+</tr>
+<tr class="row-odd"><td><p>field_use_grad</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">none</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">magnitude</span></code> and <code class="docutils literal notranslate"><span class="pre">log_magnitude</span></code> apply a gradient operator to <code class="docutils literal notranslate"><span class="pre">field</span></code> and plot its magnitude.  <code class="docutils literal notranslate"><span class="pre">none</span></code> does nothing.</p></td>
+</tr>
+<tr class="row-even"><td><p>field_alpha_use_grad</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">none</span></code></p></td>
+<td><p>Same transform options, applied to <code class="docutils literal notranslate"><span class="pre">field_alpha</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>field_scale</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">linear</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">linear</span></code> or <code class="docutils literal notranslate"><span class="pre">log</span></code> scaling of the color axis.</p></td>
+</tr>
+<tr class="row-even"><td><p>label</p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">field</span></code></p></td>
+<td><p>Text label drawn on the layer’s color bar.</p></td>
+</tr>
+<tr class="row-odd"><td><p>colorbar</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Append a labeled color bar for this layer below the image.</p></td>
+</tr>
+<tr class="row-even"><td><p>red, green, blue</p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0,0</span></code></p></td>
+<td><p>Color-map control points in <span class="math notranslate nohighlight">\([0,1]\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>alpha</p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0,0</span></code></p></td>
+<td><p>Opacity control points.</p></td>
+</tr>
+<tr class="row-even"><td><p>min_value, max_value</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Data range mapped by the color map.</p></td>
+</tr>
+<tr class="row-odd"><td><p>min_alpha_value, max_alpha_value</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">min_value</span></code>, <code class="docutils literal notranslate"><span class="pre">max_value</span></code></p></td>
+<td><p>Data range mapped by the opacity map.</p></td>
+</tr>
+<tr class="row-even"><td><p>masks</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Region blocks that restrict where the layer is drawn (see below).</p></td>
+</tr>
+</tbody>
+</table>
+<table class="wraptable docutils align-default" id="id4">
+<caption><span class="caption-text">Slice and contour parameters.</span><a class="headerlink" href="#id4" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 12.0%" />
+<col style="width: 16.0%" />
+<col style="width: 46.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>slice_location</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>A point <code class="docutils literal notranslate"><span class="pre">x,y,z</span></code> on the slice plane (<code class="docutils literal notranslate"><span class="pre">slice</span></code> layers).</p></td>
+</tr>
+<tr class="row-odd"><td><p>slice_normal</p></td>
+<td><p>list</p></td>
+<td><p>—</p></td>
+<td><p>Normal <code class="docutils literal notranslate"><span class="pre">x,y,z</span></code> of the slice plane (<code class="docutils literal notranslate"><span class="pre">slice</span></code> layers).</p></td>
+</tr>
+<tr class="row-even"><td><p>slice_alpha</p></td>
+<td><p>Real</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">1</span></code></p></td>
+<td><p>Opacity of a <code class="docutils literal notranslate"><span class="pre">slice</span></code> layer, clamped to <span class="math notranslate nohighlight">\([0,1]\)</span>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>contours</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Iso-values to draw (<code class="docutils literal notranslate"><span class="pre">contour</span></code> / <code class="docutils literal notranslate"><span class="pre">contour_slice</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>contour_red, contour_green, contour_blue</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Per-contour colors; each must match the length of <code class="docutils literal notranslate"><span class="pre">contours</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>contour_alpha</p></td>
+<td><p>list</p></td>
+<td><p><em>empty</em></p></td>
+<td><p>Per-contour opacities in <span class="math notranslate nohighlight">\([0,1]\)</span>; must match <code class="docutils literal notranslate"><span class="pre">contours</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">contours</span></code> is non-empty, <code class="docutils literal notranslate"><span class="pre">contour_red</span></code>, <code class="docutils literal notranslate"><span class="pre">contour_green</span></code>,
+<code class="docutils literal notranslate"><span class="pre">contour_blue</span></code>, and <code class="docutils literal notranslate"><span class="pre">contour_alpha</span></code> must each have exactly the same
+number of entries as <code class="docutils literal notranslate"><span class="pre">contours</span></code>, or initialization fails.</p>
+</div>
+</section>
+<section id="masks">
+<h3>Masks<a class="headerlink" href="#masks" title="Link to this heading"></a></h3>
+<p>A layer may be restricted to part of the domain by listing one or more region
+blocks in its <code class="docutils literal notranslate"><span class="pre">masks</span></code> parameter. Each named block is a geometric region using
+the same <code class="docutils literal notranslate"><span class="pre">mask_type</span></code> shapes and parameters described in Chapter
+<a class="reference internal" href="regions.html#chap-regions"><span class="std std-ref">Regions</span></a> (spheres, shells, cylinders, boxes, and so on, each with an
+optional <code class="docutils literal notranslate"><span class="pre">invert</span></code>). The layer is drawn only where <strong>all</strong> listed masks are
+satisfied, which makes cutaways and half-domain views straightforward.</p>
+</section>
+</section>
+<section id="example">
+<h2>Example<a class="headerlink" href="#example" title="Link to this heading"></a></h2>
+<p>A single camera that composites a volume rendering of density (colored by
+density, made transparent by pressure) over a density slice through the
+mid-plane, each restricted to one half of the domain by a rectangular mask:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"diagnostics"</span><span class="p">,</span> <span class="n">packages</span><span class="o">=</span><span class="p">[</span><span class="s2">"riot_viz"</span><span class="p">])</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"riot_viz"</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mf">0.002</span><span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span>
+    <span class="s2">"riot_viz/camera0"</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"image"</span><span class="p">,</span>
+    <span class="n">location</span><span class="o">=</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+    <span class="n">focus</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+    <span class="n">up</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+    <span class="n">target_width</span><span class="o">=</span><span class="mf">2.1</span><span class="p">,</span>
+    <span class="n">target_height</span><span class="o">=</span><span class="mf">2.1</span><span class="p">,</span>
+    <span class="n">nwidth</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">nheight</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>
+    <span class="n">opacity_threshold</span><span class="o">=</span><span class="mf">1.e-2</span><span class="p">,</span>
+    <span class="n">layers</span><span class="o">=</span><span class="p">[</span><span class="s2">"rho_volume"</span><span class="p">,</span> <span class="s2">"rho_slice"</span><span class="p">],</span>
+    <span class="n">light_x</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">light_y</span><span class="o">=-</span><span class="mf">2.0</span><span class="p">,</span> <span class="n">light_z</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+    <span class="n">light_ambient</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">light_diffuse</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span>
+    <span class="s2">"rho_volume"</span><span class="p">,</span>
+    <span class="nb">type</span><span class="o">=</span><span class="s2">"volume"</span><span class="p">,</span>
+    <span class="n">field</span><span class="o">=</span><span class="s2">"c.c.bulk.rho"</span><span class="p">,</span>
+    <span class="n">field_alpha</span><span class="o">=</span><span class="s2">"c.c.bulk.pressure"</span><span class="p">,</span>
+    <span class="n">red</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+    <span class="n">green</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">blue</span><span class="o">=</span><span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">alpha</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">,</span> <span class="mf">6.0</span><span class="p">],</span>
+    <span class="n">min_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span>
+    <span class="n">min_alpha_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">max_alpha_value</span><span class="o">=</span><span class="mf">30.0</span><span class="p">,</span>
+    <span class="n">masks</span><span class="o">=</span><span class="s2">"right_half"</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span>
+    <span class="s2">"rho_slice"</span><span class="p">,</span>
+    <span class="nb">type</span><span class="o">=</span><span class="s2">"slice"</span><span class="p">,</span>
+    <span class="n">field</span><span class="o">=</span><span class="s2">"c.c.bulk.rho"</span><span class="p">,</span>
+    <span class="n">slice_location</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">slice_normal</span><span class="o">=</span><span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">red</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+    <span class="n">green</span><span class="o">=</span><span class="p">[</span><span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">blue</span><span class="o">=</span><span class="p">[</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">],</span>
+    <span class="n">min_value</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">max_value</span><span class="o">=</span><span class="mf">4.0</span><span class="p">,</span>
+    <span class="n">masks</span><span class="o">=</span><span class="s2">"left_half"</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"right_half"</span><span class="p">,</span> <span class="n">mask_type</span><span class="o">=</span><span class="s2">"inside_rectangle"</span><span class="p">,</span> <span class="n">y0</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+<span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span><span class="s2">"left_half"</span><span class="p">,</span>  <span class="n">mask_type</span><span class="o">=</span><span class="s2">"inside_rectangle"</span><span class="p">,</span> <span class="n">y1</span><span class="o">=</span><span class="mf">0.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>To draw iso-value contours instead, give a <code class="docutils literal notranslate"><span class="pre">contour</span></code> layer a list of
+<code class="docutils literal notranslate"><span class="pre">contours</span></code> with matching per-contour colors and opacities:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">riot</span><span class="o">.</span><span class="n">input</span><span class="p">(</span>
+    <span class="s2">"rho_contours"</span><span class="p">,</span>
+    <span class="nb">type</span><span class="o">=</span><span class="s2">"contour"</span><span class="p">,</span>
+    <span class="n">field</span><span class="o">=</span><span class="s2">"c.c.bulk.rho"</span><span class="p">,</span>
+    <span class="n">contours</span><span class="o">=</span><span class="p">[</span><span class="mf">0.75</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">],</span>
+    <span class="n">contour_red</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+    <span class="n">contour_green</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span>
+    <span class="n">contour_blue</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span>
+    <span class="n">contour_alpha</span><span class="o">=</span><span class="p">[</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">],</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="diagnostics.html" class="btn btn-neutral float-left" title="Diagnostics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="../programmer_guide.html" class="btn btn-neutral float-right" title="Developer’s guide" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: jdolence/volume_rendering
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="../../../../HEAD/index.html">HEAD</a></dd>
+      <dd><a href="visualization.html">jdolence/volume_rendering</a></dd>
+      <dd><a href="../../../../main/index.html">main</a></dd>
+      <dd><a href="../../../../pdmullen/curv-transport/index.html">pdmullen/curv-transport</a></dd>
+      <dd><a href="../../../../pdmullen/flux_corr_trt/index.html">pdmullen/flux_corr_trt</a></dd>
+      <dd><a href="../../../../pdmullen/per-group-residual/index.html">pdmullen/per-group-residual</a></dd>
+      <dd><a href="../../../../pdmullen/tabular-drive-bc/index.html">pdmullen/tabular-drive-bc</a></dd>
+      <dd><a href="../../../../pdmullen/trt-mix-frac/index.html">pdmullen/trt-mix-frac</a></dd>
+      <dd><a href="../../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
