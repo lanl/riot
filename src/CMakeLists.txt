@@ -23,6 +23,8 @@ set (SRC_LIST
   diagnostics/energies.cpp
   diagnostics/masses.cpp
   diagnostics/masses.hpp
+  diagnostics/riot_viz.cpp
+  diagnostics/riot_viz.hpp
 
   gravity/gravity.cpp
   gravity/gravity.hpp
@@ -131,6 +133,7 @@ set (SRC_LIST
   riot_limits.hpp.in
 
   riot_utils/sparse_update.hpp
+  riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp
   riot_utils/riot_utils.hpp
   riot_utils/riot_utils.cpp
@@ -208,6 +211,12 @@ target_include_directories(riotlib PUBLIC
   $<$<BOOL:${RIOT_BUILD_PYTHON}>:${Python_NumPy_INCLUDE_DIRS}>
   $<$<BOOL:${RIOT_BUILD_CAD}>:${OpenCASCADE_INCLUDE_DIR}>
 )
+
+target_include_directories(riotlib PUBLIC
+    ${PROJECT_SOURCE_DIR}/external/stb)
+
+target_include_directories(riotlib PUBLIC
+    ${PROJECT_SOURCE_DIR}/external/font8x8)
 
 target_compile_features(riotlib PUBLIC cxx_std_17)
 
