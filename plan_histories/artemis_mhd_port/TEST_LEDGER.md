@@ -335,3 +335,51 @@ of 0.871 rules out an EMF averaging error, which shows up as diffusive decay.
 - **Shocks with a strong field in more than 1D.** Orszag-Tang is not yet ported.
 - **Restart** of face state.
 - **N01**, the startup-rejection matrix, has still not been run.
+
+### H01 (re-run) — hydro bitwise unchanged: resolved by direct A/B, not by stored MD5
+
+A `hydro/linwave` run against the MD5s recorded for G0.2 initially appeared to differ:
+`linwave-errs.dat` `0ca31bde...` vs the recorded `803b9e8e...`, with `max abs diff = 1e-15`
+and 226/240 entries byte-identical. Two candidate explanations: my changes perturbed hydro
+at roundoff, or the stored baseline came from a differently configured build.
+
+Moving the MHD reconstruction scratch off the hydro path (commit `9ece176`) did **not**
+change the MD5, ruling out the scratch-footprint/chunking hypothesis.
+
+Settled by a controlled A/B with the build configuration held fixed: the pre-port commit
+`193b3fa` was checked out into a git worktree (submodules symlinked from the main tree, so
+the dependency SHAs are provably identical) and configured with the *same* cmake arguments
+as the current `tst/build`, then both binaries were run on the same input.
+
+```
+git worktree add /tmp/riot_base 193b3fa
+# symlink external/* from the main tree, then configure with identical args
+riot -i inputs/linear_modes/linear_modes.rin parthenon/time/nlim=1000 \
+     problem/amp=1.0e-6 problem/nperiod=1 problem/wave_flag=0 problem/vflow=0.0 \
+     parthenon/output1/dt=-1.0
+```
+
+| Comparison | Result |
+| --- | --- |
+| `linear_modes-errs.dat` | **byte-identical**, md5 `d4098ae81dfc5224a234489b4b93957d` both |
+| `c.c.bulk.rho` | **exact**, max abs diff 0 |
+| `c.c.bulk.momentum` | **exact**, max abs diff 0 |
+| `c.c.bulk.velocity` | **exact**, max abs diff 0 |
+| `c.c.bulk.pressure` | **exact**, max abs diff 0 |
+| `c.c.bulk.total_material_energy` | **exact**, max abs diff 0 |
+| `c.c.mat.rho_0` | **exact**, max abs diff 0 |
+
+**H01 verdict: PASS.** Every hydro field is bitwise identical to the pre-port commit. The
+`.phdf` file MD5s differ, but that is HDF5 container metadata (timestamps, version strings,
+the embedded input deck), not numerics — which is why the comparison is done on the array
+contents.
+
+**Operational correction, and the reason the earlier reading was misleading:** the MD5s
+recorded under G0.2 are **specific to the build configuration that produced them** and are
+not a valid cross-session invariant. `tst/build` had to be reconfigured by hand this session
+(`run_tests.py` deletes it without `--save_build`, and reconfigures with AppleClang without
+`--reuse_build`, which cannot compile RIOT), and a differently configured build changes the
+last digits of a quantity with ~10 orders of cancellation. **For "hydro unchanged", run the
+A/B above rather than comparing against a stored MD5.** A stored hash looks like the
+stronger check and is actually the weaker one, because it silently conflates a build
+difference with a code regression.

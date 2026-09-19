@@ -27,7 +27,10 @@ multi-block field loop holds div B at roundoff.
   the five task-graph edges in `riot_driver.cpp`.
 - **Two problem generators**: `mhd_shock_tube` (Brio-Wu), `mhd_field_loop`. Inputs in
   `inputs/mhd/`.
-- **Tests**: `ctest` **34/34**. Numeric results in `TEST_LEDGER.md`.
+- **Tests**: `ctest` **34/34**; hydro regression 7/7; hydro output **bitwise identical to
+  the pre-port commit**, established by a build-config-held-fixed A/B against `193b3fa`
+  rather than by a stored MD5 (see TEST_LEDGER H01 re-run for why the stored hash is not a
+  valid cross-session invariant). Numeric results in `TEST_LEDGER.md`.
 
 ## Not implemented
 
@@ -98,6 +101,15 @@ two-stage RK MHD run.
   `--reuse_build` reconfigures from scratch with default compilers, which on macOS is
   AppleClang and fails. Configure `tst/build` by hand (see `build_macos_gcc` memory), then
   always `--reuse_build --save_build`.
+- **The MD5s recorded in TEST_LEDGER for the hydro baseline are build-configuration
+  specific.** Do not use them to judge "hydro unchanged" across sessions; run the A/B in
+  TEST_LEDGER H01 (worktree at `193b3fa`, submodules symlinked, identical cmake args)
+  instead. A stored hash conflates a build difference with a code regression.
+- **`carbuncle` needs numpy visible to the EMBEDDED interpreter.** Its pgen is
+  `inputs/noh.py`. Run with
+  `PYTHONPATH=$(pwd)/riot_venv/lib/python3.12/site-packages`, or it aborts with
+  `loader.exec_module failed: No module named 'numpy'` (exit 134), which reads like a
+  physics crash and is not one.
 - `RIOT_BUILD_CATCH2=OFF` fails on this machine (no system Catch2); keep it `ON`.
 - `clang-format-20` lives in the venv:
   `. riot_venv/bin/activate && CFM=$(pwd)/riot_venv/bin/clang-format VERBOSE=1 ./script/format.sh`
