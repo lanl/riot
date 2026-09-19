@@ -49,9 +49,41 @@ two-stage RK MHD run. **Everything verified so far is single-rank.**
 1. **Orszag-Tang pgen** — the remaining G4 item, and the one that exercises shocks with a
    magnetic field. Checks: `max|divB| <= 1e-10`, mean rho to rtol 1e-12, mean E to 1e-8,
    and the decomposition residual `|E - u - KE - E_mag| <= 1e-10`.
-2. **MPI (P01)** — 2 and 4 ranks. Single-rank decomposition invariance in 3D is already
-   established and is bitwise (TEST_LEDGER G4.3/P01 partial), so what remains is genuinely
-   the communication path and the task-dependency graph, which serial ordering can mask.
+2. **MPI (P01)** — 2 and 4 ranks. This is the next thing to do and the largest untested
+   surface. Single-rank decomposition invariance in 3D is already established and is bitwise
+   (TEST_LEDGER G4.3 / P01 partial), so what remains is genuinely the communication path and
+   the task-dependency graph, which serial execution order can mask.
+
+   Ready to run — the inputs and the analysis already exist:
+   ```
+   cd /tmp/mhdrun   # or any scratch dir
+   R=/Users/taitano/Documents/git/riot
+   for N in 1 2 4 8; do
+     mpiexec -n $N $R/build/src/riot -i $R/inputs/mhd/field_loop_3d.rin \
+       parthenon/job/problem_id=fl3d_r$N
+   done
+   . $R/riot_venv/bin/activate
+   S=$R/claude_sessions/mhd_runs/analyze_field_loop.py
+   python3 $S stats fl3d_r4 --axis 3          # invariants must hold at every rank count
+   python3 $S compare fl3d_r1 fl3d_r4         # cross-rank comparison
+   ```
+   The 3D input is 8 mesh blocks, so 1/2/4/8 ranks all divide it evenly. Also worth a run
+   where blocks do NOT divide evenly across ranks (e.g. `-n 3`), since that exercises a
+   different ownership pattern.
+
+   **Predicted results, so a benign difference is not misread as a bug.** The invariants
+   (`axial`, `eta`) must hold at roundoff at every rank count — those are per-cell algebraic
+   identities and MPI cannot excuse a violation. Cross-rank *bitwise* identity is the
+   expectation but NOT guaranteed: the CFL timestep is a global reduction, so changing the
+   rank count changes its summation order and `dt` can differ in its last bits, after which
+   trajectories separate at roundoff. So: if `compare` reports a difference, first check
+   whether the cycle counts and `dt` histories match. A difference that is roundoff-level
+   AND accompanied by a differing dt history is benign; one that grows with time, or is
+   localized at block boundaries, or appears while dt histories agree exactly, is a real
+   bug — most likely a missing task-graph dependency or a face/edge exchange defect.
+
+   Note `mpiexec` is open-mpi from `/opt/homebrew/opt/open-mpi` (the build is configured
+   against it, not mpich).
 3. **3D circularly polarized Alfven wave**, for order-of-accuracy rather than for branch
    coverage. The 3D EMF branches are now exercised AND checked (G4.3), so this is no longer
    the coverage gap it was; it is now about convergence rate.
@@ -110,6 +142,13 @@ two-stage RK MHD run. **Everything verified so far is single-rank.**
   specific.** Do not use them to judge "hydro unchanged" across sessions; run the A/B in
   TEST_LEDGER H01 (worktree at `193b3fa`, submodules symlinked, identical cmake args)
   instead. A stored hash conflates a build difference with a code regression.
+- **Analysis helper**: `claude_sessions/mhd_runs/analyze_field_loop.py` computes the CT
+  invariants and does exact cross-run comparison, reassembling blocks onto the global grid
+  via `LogicalLocations`. Use it rather than rewriting the reassembly: two runs of the same
+  problem with different decompositions have different array shapes and block orderings, so
+  they can only be compared after that mapping, and comparing `.phdf` hashes is meaningless
+  (HDF5 containers carry timestamps and the embedded input deck). Verified against the
+  recorded G4.3 numbers.
 - **`carbuncle` needs numpy visible to the EMBEDDED interpreter.** Its pgen is
   `inputs/noh.py`. Run with
   `PYTHONPATH=$(pwd)/riot_venv/lib/python3.12/site-packages`, or it aborts with
