@@ -66,6 +66,20 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   them.** Quantified: 8x CFL cut gives 63x error reduction, and HLLD reproduces HLLE's numbers
   in every digit, so the floor is the integrator, not the solver or the reconstruction.
 
+## Open concerns — READ THIS BEFORE CLAIMING ANYTHING
+
+**[`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) is the register of doubts about work already done**, as
+opposed to the "Not implemented" list below, which is features not yet written. It records where
+a defect could currently be hiding behind a passing test. Two items there are HIGH and both
+undercut results recorded in this file if they turn out badly:
+
+- **C1**: eight of the nine `tst/scripts/` suites have never been run, despite Stage 1 changing
+  shared `sparse_update` machinery that every physics package uses.
+- **C2**: the startup rejections (N01) have never been executed, so every certified-matrix claim
+  rests on unsupported configurations being unreachable — which is untested.
+
+Do not delete entries from that file; move them to its Resolved section with evidence.
+
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
