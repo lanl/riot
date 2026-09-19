@@ -8,8 +8,9 @@ Commits: `725a19a` (Stages 0-2), `f0af069` (Stage 3 solver), `4d1a8e0` (checkpoi
 `1350c20` (face memory-layout fix), `dced139` (flux wiring + CT + pgens)
 
 Current stage: **Stage 4 substantially complete.** Gates passed: G0, G1, G2, G3, and G4 in
-part. **MHD now runs end to end**: Brio-Wu agrees with the Athena++ reference and the 2D
-multi-block field loop holds div B at roundoff.
+part (including MPI, P01). **MHD now runs end to end**: Brio-Wu agrees with the Athena++
+reference, the 2D and 3D field loops hold div B at roundoff, and results are bitwise
+independent of rank count. What remains in G4 is Orszag-Tang and the CPAW convergence rate.
 
 ## Implemented and verified
 
@@ -31,6 +32,11 @@ multi-block field loop holds div B at roundoff.
 - **3D CT verified** (TEST_LEDGER G4.3): the Gardiner-Stone axial-field test passes in all
   three permutations with the axial field at roundoff, and 1-block vs 8-block results are
   bitwise identical.
+- **MPI verified** (TEST_LEDGER P01, complete): results are **bitwise identical** to serial at
+  1/2/3/4/5/8 ranks, for all three loop axes, in 2D (collapsed EMF branch) and 3D (upwind
+  branch), and with shocks (Brio-Wu on 4 blocks at 4 ranks). `-n 3`/`-n 5` were included
+  deliberately so block ownership does not divide evenly. `dt` agreed to all printed digits at
+  every rank count, which is why bitwise agreement was attainable here.
 - **Tests**: `ctest` **34/34**; hydro regression 7/7; hydro output **bitwise identical to
   the pre-port commit**, established by a build-config-held-fixed A/B against `193b3fa`
   rather than by a stored MD5 (see TEST_LEDGER H01 re-run for why the stored hash is not a
@@ -42,48 +48,33 @@ multi-block field loop holds div B at roundoff.
 regression harness; HLLD and LLF; `mhd/monitor_divb` is registered but not yet consumed;
 restart of face state untested; test N01 (startup rejections) not run; U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
-two-stage RK MHD run. **Everything verified so far is single-rank.**
+two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
+uniform-grid, so no coarse/fine flux or EMF correction is exercised.
 
 ## Next actions
 
 1. **Orszag-Tang pgen** — the remaining G4 item, and the one that exercises shocks with a
    magnetic field. Checks: `max|divB| <= 1e-10`, mean rho to rtol 1e-12, mean E to 1e-8,
    and the decomposition residual `|E - u - KE - E_mag| <= 1e-10`.
-2. **MPI (P01)** — 2 and 4 ranks. This is the next thing to do and the largest untested
-   surface. Single-rank decomposition invariance in 3D is already established and is bitwise
-   (TEST_LEDGER G4.3 / P01 partial), so what remains is genuinely the communication path and
-   the task-dependency graph, which serial execution order can mask.
-
-   Ready to run — the inputs and the analysis already exist:
+2. ~~**MPI (P01)**~~ — **DONE, PASS** (TEST_LEDGER "P01 (complete)"). Bitwise identical to
+   serial at 1/2/3/4/5/8 ranks across all three loop axes, 2D and 3D, and with shocks. To
+   re-run it:
    ```
-   cd /tmp/mhdrun   # or any scratch dir
+   mkdir -p /tmp/mhdmpi && cd /tmp/mhdmpi
    R=/Users/taitano/Documents/git/riot
-   for N in 1 2 4 8; do
+   for N in 1 2 3 4 5 8; do
      mpiexec -n $N $R/build/src/riot -i $R/inputs/mhd/field_loop_3d.rin \
        parthenon/job/problem_id=fl3d_r$N
    done
    . $R/riot_venv/bin/activate
    S=$R/claude_sessions/mhd_runs/analyze_field_loop.py
-   python3 $S stats fl3d_r4 --axis 3          # invariants must hold at every rank count
-   python3 $S compare fl3d_r1 fl3d_r4         # cross-rank comparison
+   python3 $S stats fl3d_r4 --axis 3
+   python3 $S compare fl3d_r1 fl3d_r4
    ```
-   The 3D input is 8 mesh blocks, so 1/2/4/8 ranks all divide it evenly. Also worth a run
-   where blocks do NOT divide evenly across ranks (e.g. `-n 3`), since that exercises a
-   different ownership pattern.
-
-   **Predicted results, so a benign difference is not misread as a bug.** The invariants
-   (`axial`, `eta`) must hold at roundoff at every rank count — those are per-cell algebraic
-   identities and MPI cannot excuse a violation. Cross-rank *bitwise* identity is the
-   expectation but NOT guaranteed: the CFL timestep is a global reduction, so changing the
-   rank count changes its summation order and `dt` can differ in its last bits, after which
-   trajectories separate at roundoff. So: if `compare` reports a difference, first check
-   whether the cycle counts and `dt` histories match. A difference that is roundoff-level
-   AND accompanied by a differing dt history is benign; one that grows with time, or is
-   localized at block boundaries, or appears while dt histories agree exactly, is a real
-   bug — most likely a missing task-graph dependency or a face/edge exchange defect.
-
-   Note `mpiexec` is open-mpi from `/opt/homebrew/opt/open-mpi` (the build is configured
-   against it, not mpich).
+   `mpiexec` is open-mpi from `/opt/homebrew/opt/open-mpi` (the build is configured against
+   it, not mpich). Sweep `mhd_field_loop/loop_axis` — with `loop_axis=3` the F3 exchange
+   carries only zeros, so one axis alone does not test all three face directions. Include a
+   rank count that does not divide the 8 blocks evenly.
 3. **3D circularly polarized Alfven wave**, for order-of-accuracy rather than for branch
    coverage. The 3D EMF branches are now exercised AND checked (G4.3), so this is no longer
    the coverage gap it was; it is now about convergence rate.

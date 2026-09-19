@@ -246,7 +246,7 @@ called by anything.
 
 | Gate | Scope | Status |
 | --- | --- | --- |
-| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | NOT RUN |
+| G4 | Multi-D CT: div B at roundoff, field loop, Orszag–Tang, 3D Alfvén all permutations, MPI (P01) | PARTIAL — div B, 2D/3D field loop and MPI (P01) PASS; Orszag–Tang and the CPAW convergence rate NOT RUN |
 | G5 | HLLD/LLF coverage, degeneracies, reconstruction certification, restart (R01) | NOT RUN |
 
 ## Permanently out of scope for this port (ADR-004)
@@ -453,3 +453,101 @@ shared-face single-valuedness and edge-EMF agreement across block boundaries in 
 **Still not covered:** this is all single-rank. P01 proper needs 2 and 4 MPI ranks — with
 one rank, a missing task dependency can still be masked by serial execution order, and the
 communication path itself is only exercised for on-rank neighbours.
+
+## P01 (complete) — MPI rank invariance, 2026-09-18, commit `5e6c08b`
+
+Binary `build/src/riot` (Release, gcc-16, MPI on open-mpi 5.0.10), scratch dir `/tmp/mhdmpi`,
+analysis by `claude_sessions/mhd_runs/analyze_field_loop.py`. Thresholds were frozen in
+CHECKPOINT before the runs: the per-cell invariants must hold at roundoff at every rank
+count, and cross-rank agreement was *predicted* to be bitwise but not guaranteed.
+
+### P01.1 — 3D field loop (`inputs/mhd/field_loop_3d.rin`, 8 mesh blocks), rank sweep
+
+```
+for N in 1 2 3 4 5 8; do
+  mpiexec -n $N build/src/riot -i inputs/mhd/field_loop_3d.rin \
+    parthenon/job/problem_id=fl3d_r$N
+done
+```
+
+Every rank count reached `tlim=1.0` at **cycle=630** with `dt` agreeing to all printed
+digits, so the CFL global reduction did not reorder — which is why bitwise agreement was
+attainable here rather than merely hoped for.
+
+| ranks | axial | eta | emag_retained | dE/E | dM/M | vs 1 rank |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | — |
+| 2 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | **bitwise identical** |
+| 3 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | **bitwise identical** |
+| 4 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | **bitwise identical** |
+| 5 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | **bitwise identical** |
+| 8 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | 5.92e-16 | 3.33e-16 | **bitwise identical** |
+
+All 7 compared fields exact (max abs diff 0), `div_magnetic_field` included. The numbers also
+reproduce the single-rank G4.3 row exactly, so the analysis path is consistent between the
+two sessions.
+
+`-n 3` and `-n 5` matter independently of 2/4/8: 8 blocks over 3 or 5 ranks gives **uneven
+block ownership**, so the neighbour pattern is no longer the symmetric one that an even split
+produces, and a rank-boundary bug that happens to cancel in a symmetric decomposition cannot
+hide.
+
+### P01.2 — all three loop axes under MPI
+
+With `loop_axis=3` the field is `(B1, B2, 0)`, so the **F3 face exchange carries only zeros**
+and a defect in it would be invisible. Sweeping the axis puts nonzero data on each face
+direction in turn. 1 rank vs 8 ranks, same input, `mhd_field_loop/loop_axis` overridden:
+
+| loop_axis | axial | eta | emag_retained | 1 vs 8 ranks |
+| --- | --- | --- | --- | --- |
+| 1 | 5.800127e-15 | 5.020559e-15 | 0.7637599 | **bitwise identical** |
+| 2 | 1.394086e-15 | 3.919490e-15 | 0.7260742 | **bitwise identical** |
+| 3 | 1.441305e-15 | 4.055658e-15 | 0.7260742 | **bitwise identical** |
+
+Axial field at roundoff in every permutation confirms `MHD::UpwindEMF<X1DIR>` and `<X2DIR>`
+are correct *across rank boundaries*, not only within a rank.
+
+### P01.3 — 2D field loop (`inputs/mhd/field_loop.rin`), the collapsed-EMF branch
+
+2D is not a subset of 3D here: with x3 collapsed, `MHD::AssembleEdgeEMF` dispatches to
+`CollapsedEdgeEMF` rather than `UpwindEMF`, so this is a separate code path. 128x64 on 4
+blocks, 1 rank vs 4 ranks, cycle=894 both:
+
+```
+axial 0.000000e+00   eta 5.267631e-15   emag_retained 8.711372e-01
+dE/E 2.22e-16        dM/M 2.22e-16      ->  BITWISE IDENTICAL
+```
+
+`eta` and `emag_retained` match the serial G4.2 values (5.268e-15, 0.8711).
+
+### P01.4 — Brio & Wu under MPI, with shocks
+
+Smooth advection can miss a defect that only appears where a limiter activates at a rank
+boundary. 512 zones forced onto 4 mesh blocks (`parthenon/meshblock/nx1=128`), 1 vs 4 ranks,
+cycle=399 both. All 7 fields exact, and the 1D structural invariants hold **exactly**, not
+approximately:
+
+| quantity | 1 rank | 4 ranks |
+| --- | --- | --- |
+| `max abs(Bx - 0.75)` | 0.000e+00 | 0.000e+00 |
+| `max abs(Bz)` | 0.000e+00 | 0.000e+00 |
+| `max abs(vz)` | 0.000e+00 | 0.000e+00 |
+| `max abs(divB)` | 0.000e+00 | 0.000e+00 |
+| `min rho` | 0.116264 | 0.116264 |
+| `min P` | 0.086516 | 0.086516 |
+
+Positivity holds with no floor activation, and out-of-plane quantities stay identically zero.
+
+### Verdict
+
+**P01 PASS.** Result is independent of rank count (1/2/3/4/5/8), of whether blocks divide
+evenly across ranks, of loop axis, of dimensionality (2D collapsed branch and 3D upwind
+branch), and of whether the flow contains shocks — bitwise, in all cases. This exercises the
+face `FillGhost` exchange, edge-EMF agreement across rank boundaries, and the task-dependency
+graph under genuinely concurrent execution.
+
+**Limits of this result.** Uniform grid, no AMR (rejected in scope), so no flux/EMF
+correction at coarse/fine boundaries is tested. Single node, shared memory — no interconnect.
+And bitwise agreement here depended on `dt` being reduction-order-independent in these cases;
+a problem where the CFL reduction does reorder would legitimately differ at roundoff without
+being a bug.
