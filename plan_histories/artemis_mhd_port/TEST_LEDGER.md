@@ -1913,3 +1913,96 @@ no structural difference from a donor that is provably clean. The two candidates
    agreement rather than infer it from a diagnostic that was demonstrably flaky.
 
 Start with (2), because it is cheap and it decides whether (1) is the only survivor.
+
+---
+
+## D01 — **RESOLVED 2026-09-19.** Root cause: sparse physics deactivating blocks
+
+**Root cause: `physics/sparse_physics` (default TRUE) is incompatible with constrained
+transport.** Fixed by forcing it off when MHD is enabled, with a warning.
+
+### The mechanism
+
+`ccbulk::cell_delta` is a sparse field whose thresholds are set from `sparse_physics`
+(`riot.cpp:286-290`). With sparse physics on, Parthenon deallocates it on blocks where nothing
+is changing. `riot::GetPack` (`variables.hpp`, the `include_blocks` branch) then **drops those
+blocks from every pack built through it**:
+
+```cpp
+if (has_cell_active_field) {
+  auto include_blocks = data->AllocationStatus(block_active_flag);
+  return desc.GetPack(data, include_blocks);   // deactivated blocks are NOT in the pack
+}
+```
+
+`MHD::AssembleEdgeEMF` and `MHD::ApplyFaceUpdate` take their block loop bound from
+`pack.GetNBlocks()`, so a deactivated block is silently skipped. For cell-centered physics that
+is precisely the intended saving -- an unchanging block needs no update. **For CT it is fatal:**
+the skipped block's face field is frozen while its neighbours go on updating the faces they
+SHARE with it, so that block's discrete divergence budget stops balancing. And because CT
+preserves whatever divergence exists, the error is then frozen in for the rest of the run.
+
+Caught red-handed by a diagnostic printing both counts:
+
+```
+H 13 nblocks=3 NumBlocks=4      <-- MeshData has 4 blocks; the PACK has 3
+call 13 distinct (b,xmin) pairs: [(0,-0.5), (1,0.0), (2,0.5)]   <-- the block at -1.0 is gone
+```
+
+The missing block is the one at `xmin = -1.0`, which is exactly the block the divergence was
+localized to.
+
+### Why every symptom follows
+
+| Observation | Explanation |
+| --- | --- |
+| Needs >= 4 blocks along an axis | A block must lie ENTIRELY outside the field loop to stop changing and be deactivated. With 2 or 3 blocks of that size every block contains part of the loop. |
+| Only the field loop | It is the only MHD test with large regions where nothing changes. CPAW has a wave everywhere (`max\|divB\|` exactly 0.0 at 2/4/8 blocks) and Orszag-Tang has everything changing (identical at 2x2 and 4x4). |
+| Error proportional to field amplitude | It is the difference between a frozen face and its updated neighbour, which scales with the field. |
+| Appears suddenly at one cycle, then frozen to the last digit | The cycle the block is first deactivated; CT preserves the injected error thereafter. |
+| Periodic needed, outflow clean | Different activity pattern near the boundary, so the outflow case did not deactivate that block within the run. |
+| Independent of solver, reconstruction, nghost, rank count | None of them affects which blocks are active. |
+| **The donor is clean** | Artemis has no block-deactivation mechanism at all. This is precisely how the port introduced the defect: a CT scheme was moved into a code that skips blocks, and nothing in the donor could have warned about it. |
+
+### The fix, and why disable rather than reject
+
+`riot.cpp` now forces `sparse_physics = false` when `do_mhd`, with a `PARTHENON_WARN`. This
+follows the precedent immediately above it in the same function, which does the same for global
+solvers (`do_multigroup_diffusion || do_radiation_transport || do_ionization`). The result is
+correct physics and no existing MHD deck has to change.
+
+**Making only the MHD packs ignore the block-active filter would NOT have been sufficient.** The
+EMF is assembled from the hydro flux registers, and `Hydro::CalculateFluxes` packs through the
+same helper -- so on a deactivated block those fluxes are never computed either. The fix has to
+keep every block active, not just include them in the CT loops.
+
+### Verification
+
+| Check | Before | After |
+| --- | --- | --- |
+| Reproducer sweep, 48x48, blocks along x1 = 2 / 3 / 4 / 6 | 6.8e-17 / 6.5e-17 / **6.2e-08** / **6.4e-11** | 6.8e-17 / 6.5e-17 / **7.2e-17** / **6.4e-17** — all clean |
+| 2D field loop, 64x32, 4 blocks along x1 | 1.412e-09 | **1.300e-16**, i.e. identical to the 2-block value |
+| 3D field loop, 4 blocks along x1 | 2.879e-08 | **7.067e-17** |
+| `run_tests.py mhd` | 3 of 4 (`field_loop` FAILED) | **4 of 4 PASS** |
+| `ctest` | 49/49 | 49/49 |
+| Hydro suite, MHD off | 7/7 | 7/7 (the gate is `do_mhd && sparse_physics`, so hydro-only runs are untouched) |
+
+The regression test that found this now guards it: `tst/scripts/mhd/field_loop`'s planar case
+uses four blocks along x1, so a reintroduction fails the suite.
+
+### What this says about the earlier eliminations
+
+Every elimination in round 1 stands -- none of those mechanisms was the cause. But two of the
+round-1 conclusions were reported with more confidence than the measurement supported, because
+the cross-block bookkeeping was broken in two successive ways:
+
+1. `md->GetBlockData(b)` is **not** aligned with the pack's block index `b`. Two iterations
+   aliased onto one block, which is what made "only 3 distinct blocks" look like a partitioning
+   quirk rather than the actual finding.
+2. `pmb->coords.Xf<X1DIR>(is)` also collided across blocks.
+
+The identity has to come from the PACK: `pack.GetCoordinates(b)`, read on device inside the same
+kernel that reads the data. Once that was done the diagnostic immediately printed
+`nblocks=3 NumBlocks=4` and the cause was obvious. The lesson is that a diagnostic comparing
+blocks needs its block identity verified before its conclusions are trusted -- an aliased
+identity produces confident, wrong "no mismatch" results.

@@ -251,24 +251,27 @@ Expect :math:`\eta` at roundoff. A growing :math:`\eta` means a defect
 in the port, not a tolerance to be relaxed; the correct response is
 never to enable a divergence-cleaning step to conceal it.
 
-.. warning::
+.. note::
 
-   **Known defect.** With **four or more mesh blocks along a periodic
-   axis**, the divergence constraint is violated at roundoff level
-   :math:`\times 10^{8}`: :math:`\max|\nabla\!\cdot\!\vec{B}|` measures
-   :math:`6\times10^{-8}` where the same problem on two blocks per axis
-   gives :math:`7\times10^{-17}`. Adjacent blocks compute different
-   updates for the shared face between them, and the block whose value
-   is discarded no longer has a balanced divergence budget; constrained
-   transport then preserves that error for the rest of the run.
+   **Sparse physics is disabled automatically when MHD is enabled**, and
+   a warning is printed saying so. This is a correctness requirement,
+   not a tuning choice.
 
-   Until this is fixed, keep to **at most two mesh blocks along each
-   periodic axis** — increase the meshblock size rather than splitting
-   an axis further — and set ``mhd/monitor_divb`` to confirm
-   :math:`\eta` stays at roundoff for your decomposition. Non-periodic
-   axes are unaffected. The defect is independent of the
-   reconstruction, the Riemann solver, the ghost width, and the MPI
-   rank count.
+   Sparse physics (Chapter :ref:`chap:sparse-physics`) deallocates its
+   activity marker on mesh blocks where nothing is changing, and those
+   blocks are then skipped by the solvers. For cell-centered physics
+   that is exactly the intended saving. For constrained transport it is
+   fatal: a skipped block's face field stays frozen while its
+   neighbours keep updating the faces they *share* with it, so that
+   block's discrete divergence budget stops balancing — and because CT
+   preserves whatever divergence exists, the error is frozen in for the
+   rest of the run rather than decaying.
+
+   The symptom, if this were allowed, is a
+   :math:`\max|\nabla\!\cdot\!\vec{B}|` eight orders above roundoff
+   appearing suddenly at one block boundary and then never changing
+   again. It was found on a field loop with four blocks along one axis,
+   where the blocks outside the loop stop changing and are deactivated.
 
 Two solver-health counters are reported **unconditionally**, whenever
 they increase, as a cumulative count and as a per-cell-per-step rate:
@@ -347,6 +350,8 @@ that has not been audited against the magnetic terms.
      - Electron energy and entropy coupling to the magnetic terms needs separate validation.
    * - Mix, thermonuclear burn, level sets, multigroup diffusion, radiation transport, lasers, prescribed sources, gravity, passive scalars, tracer particles
      - Each needs its own energy, stress, or advection-consistency audit against the magnetic terms.
+   * - Sparse physics (``physics/sparse_physics``)
+     - Not rejected but **forced off**, with a warning. Constrained transport requires every block to be updated; skipping a deactivated block breaks the divergence constraint at its boundaries. See the note in Section :ref:`sec:mhd-diagnostics`.
    * - Hydro-only Riemann solvers
      - ``hll``/``hllc``/``hllcf``/``chllc``/``lhllc`` contain no magnetic terms.
 

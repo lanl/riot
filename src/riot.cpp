@@ -277,6 +277,36 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     sparse_physics = false;
     pin->SetBoolean("physics", "sparse_physics", sparse_physics);
   }
+  // Constrained transport cannot coexist with block deactivation, and this is a
+  // correctness requirement rather than a performance preference (defect D01).
+  //
+  // Sparse physics deallocates ccbulk::cell_delta on blocks where nothing is changing,
+  // and `riot::GetPack` then drops those blocks from EVERY pack built through it
+  // (variables.hpp, the `include_blocks` branch). For cell-centered physics that is
+  // exactly the intended saving: an unchanging block needs no update. For CT it is fatal.
+  // The skipped block's face field is frozen while its neighbours go on updating the
+  // faces they SHARE with it, so that block's discrete divergence budget stops balancing
+  // -- and because CT preserves whatever divergence exists, the error is then frozen in
+  // for the rest of the run rather than decaying.
+  //
+  // Measured on the 2D field loop with four blocks along x1, where the blocks outside the
+  // loop stop changing and are deactivated: max|div B| = 1.4e-09 with sparse physics on
+  // versus 1.3e-16 with it off. It needs four or more blocks along an axis simply because
+  // that is when a block can lie entirely outside the loop.
+  //
+  // Disabling rather than rejecting follows the global-solver precedent immediately
+  // above: the result is correct physics, and no existing MHD input deck has to change.
+  // Making the MHD packs alone ignore the block-active filter would NOT be sufficient --
+  // the EMF is assembled from the hydro flux registers, and `Hydro::CalculateFluxes`
+  // packs through the same helper, so on a deactivated block those fluxes are never
+  // computed either.
+  if (do_mhd && sparse_physics) {
+    PARTHENON_WARN("sparse_physics being disabled because MHD is enabled: constrained "
+                   "transport requires every block to be updated, or the divergence "
+                   "constraint is violated at deactivated block boundaries.");
+    sparse_physics = false;
+    pin->SetBoolean("physics", "sparse_physics", sparse_physics);
+  }
   riot->AddParam("sparse_physics", sparse_physics);
   const Real sparse_physics_threshold =
       pin->GetOrAddReal("physics", "sparse_physics_threshold", 1.e-12);

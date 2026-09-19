@@ -9,18 +9,16 @@ Status vocabulary, applied strictly:
 Combinations are recorded, not just toggles: "AMR validated" and "2T validated"
 would not imply "2T + AMR validated."
 
-> **RELEASE BLOCKER, 2026-09-19: see D01 / C14.** Constrained transport does not preserve
-> `div B` when a periodic axis is split into four or more mesh blocks — which is an ordinary
-> production decomposition and is the donor's own default. Gate G5 must NOT be declared until
-> this is fixed. The rows below are accurate for the layouts they were measured on; the general
-> claim that CT preserves the constraint is now known to be false outside at most two blocks
-> per axis.
+**Current overall status (2026-09-19): gates G0–G4 pass, Stage 5 is complete except for the
+eight-suite hydro-with-MHD-off sweep (C1), and the `tst/scripts/mhd/` harness passes 4 of 4.
+End-to-end MHD simulations have been run and compared against an independent (Athena++)
+reference and against analytic solutions.**
 
-**Current overall status (2026-09-19): gates G0–G4 pass *within the two-blocks-per-axis
-envelope*, Stage 5 is complete except for the eight-suite hydro-with-MHD-off sweep, and the
-`tst/scripts/mhd/` harness exists and immediately found D01. End-to-end MHD simulations have
-been run and compared against an independent (Athena++) reference and against analytic
-solutions.**
+> The former release blocker D01 / C14 — constrained transport losing `div B` with four or more
+> mesh blocks along a periodic axis — is **FIXED**. Root cause was `physics/sparse_physics`
+> deactivating blocks that CT still needs updated; it is now forced off when MHD is enabled.
+> Decomposition invariance is restored and is covered by the regression suite.
+
 Test IDs refer to [`TEST_LEDGER.md`](TEST_LEDGER.md); doubts about work already
 done are in [`OPEN_CONCERNS.md`](OPEN_CONCERNS.md), which must be read before
 any capability here is quoted elsewhere.
@@ -41,7 +39,7 @@ by `MHD::Initialize`.
 | Face-to-cell B conventions, incl. collapsed directions | **validated** | 3 tests |
 | Discrete curl of a vector potential is divergence free | **validated** | U04 (η ≤ 1e-13) |
 | Cell-centered B / magnetic energy / div B from face state | **validated** | G4.1–G4.4 (div B at roundoff on 4 problems) |
-| Face-aware stage register copy (`u1 ← u0`) | **implemented-unverified** | U05 not run; covered indirectly by every multi-stage run being correct (C11) |
+| Face-aware stage register copy (`u1 ← u0`) | **validated on a live mesh** | Instrumented during the D01 hunt: `u1 == u0` over `IndexDomain::entire` on all three face elements, zero mismatch across 70 cycles. This is U05's substance; the *unit test* still does not exist (C11) |
 
 ## Solvers
 
@@ -60,12 +58,12 @@ by `MHD::Initialize`.
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | Gardiner–Stone upwind EMF, 1D/2D/3D incl. collapsed dimensions | **validated** | G4.1–G4.5, P01.3 (collapsed-EMF branch) |
-| CT face update preserves div B — **at most 2 blocks per axis** | **validated in that envelope only** | `max\|divB\|` **exactly 0.0** (Brio–Wu), ≤ 3.3e-13 (Orszag–Tang), η ≤ 5.3e-15 (field loop) |
-| CT face update preserves div B — **4 or more blocks per periodic axis** | **BROKEN** | **D01 / C14** — `max\|divB\|` 6.2e-08 where 2 blocks gives 6.8e-17. Donor is clean in the identical layout, so this is the port's defect. A live bug, not a limitation. |
+| CT face update preserves div B, any block decomposition | **validated** | `max\|divB\|` **exactly 0.0** (Brio–Wu), ≤ 3.3e-13 (Orszag–Tang), η ≤ 5.3e-15 (field loop); and after the D01 fix the 48² sweep over 2/3/4/6 blocks per axis is uniformly at roundoff |
 | No spurious out-of-plane / axial field | **validated** | G4.2 (`max\|B3\|` exactly 0.0), G4.3 all three permutations |
 | Second-order accuracy on a smooth solution | **validated** | G4.5 CPAW, observed order 1.55 → 1.83 → 2 |
 | MPI rank invariance | **validated** | P01 — ranks 1/2/3/4/5/8, bitwise identical; incl. shocks (P01.4). Note this swept the RANK count over a FIXED 2×2×2 block layout; it says nothing about other layouts, which is how C14 slipped through |
-| Mesh decomposition invariance | **BROKEN beyond 2 blocks per periodic axis** | D01 / C14. 1 vs 8 blocks as 2×2×2 is bitwise (G4.3), but 4 blocks along one axis is not merely different — it violates the divergence constraint |
+| Mesh decomposition invariance | **validated** | 1 vs 8 blocks as 2×2×2 is bitwise (G4.3); 2/3/4/6 blocks along one axis all hold div B at roundoff after the D01 fix |
+| Sparse physics with MHD | **forced off, by design** | D01. CT requires every block to be updated; `physics/sparse_physics` deactivates unchanging blocks and they were silently skipped. Now disabled with a warning when MHD is on — a real loss of that optimization for MHD runs, documented in the MHD chapter |
 | Genuine face-centered field (no `CellMemAligned`) | **validated** | shared block faces single-valued; div B identical across block boundaries |
 | Edge (EMF) flux register via automatic Face→Edge promotion | **validated** | exercised by every CT run |
 | Hydro-only behavior preserved with MHD off | **validated** | G1.2, G5.4 (hydro suite 7/7), H01 re-run — bitwise vs pre-port `193b3fa` |
@@ -110,9 +108,9 @@ Both are stated in the docs.
 
 | Item | Status |
 | --- | --- |
-| `tst/scripts/mhd/` regression harness under `tst/run_tests.py` | not implemented — the tests exist as scripts in `claude_sessions/mhd_runs/`, not yet as suite members |
+| `tst/scripts/mhd/` regression harness under `tst/run_tests.py` | **done** (G5.11) — 4 of 4 pass; it found D01 on its first run |
 | The eight non-hydro regression suites with MHD off (C1) | **NOT RUN** — advection, ionization, levelsets, mix, radiation_diffusion, radiation_transport, strength, tn |
-| U05 as a live-mesh test | not implemented (C11) |
+| U05 as a *unit* test | not implemented (C11) — but its substance is now measured on a live mesh, see the stage-copy row above |
 | Absolute (as opposed to comparative) Brio–Wu threshold | not defined (C3) |
 | Oblique CPAW propagation | not covered (C9) |
 

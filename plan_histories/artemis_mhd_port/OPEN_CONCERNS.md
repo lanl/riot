@@ -13,11 +13,11 @@ Rules for this file:
 - Severity is about **what a defect here would cost**, not about how likely it is.
 - If a concern is a guess rather than a measurement, it says so.
 
-Last updated: 2026-09-19, after the MHD regression harness landed. **C14 is new and is the most
-serious entry in this file: constrained transport does not preserve div B when a periodic axis is
-split into four or more mesh blocks.** It was found by the new `tst/scripts/mhd/field_loop` test on
-its first run, which is the clearest possible argument for building the harness rather than relying
-on the ad-hoc runs that had already "validated" CT.
+Last updated: 2026-09-19, after **C14 was found AND fixed**. It was found by the new
+`tst/scripts/mhd/field_loop` test on its first run and root-caused to `physics/sparse_physics`
+deactivating blocks that constrained transport still needs updated — the clearest possible
+argument for building the harness rather than trusting the ad-hoc runs that had already
+"validated" CT. **No HIGH-severity entry remains open except C1** (the eight unrun suites).
 
 Earlier: after G5.9 (counters + div B monitor). **C2, C5, C6 and C7 are resolved.**
 Between them they found six real defects and forced one correction to an earlier recorded claim
@@ -28,7 +28,18 @@ than optimistic. C13 is new: RIOT restarts are not bitwise for derived primitive
 
 ---
 
-## C14 — CT loses div B with four or more blocks per periodic axis [HIGH — this is a live defect, not a doubt]
+## C14 — CT lost div B with four or more blocks per periodic axis → **RESOLVED 2026-09-19**, see Resolved section
+
+**Root cause: `physics/sparse_physics` (default true) deactivates blocks where nothing is
+changing, and deactivated blocks are dropped from every pack and so silently skipped by the CT
+update.** Fixed by forcing sparse physics off when MHD is enabled, following the existing
+global-solver precedent. Full write-up in TEST_LEDGER "D01 — RESOLVED". The original entry is
+kept below for the record, since its symptom description and reproducer are still the right
+starting point if anything like it recurs.
+
+---
+
+## C14 (original entry) — CT loses div B with four or more blocks per periodic axis [was HIGH]
 
 Unlike every other entry in this file, this is not a place where a defect *could* be hiding. It is
 a measured, reproducible defect with an attribution control already run.
@@ -416,3 +427,36 @@ not exist earlier; a comment at the original site records why it is not there.
 - The non-Cartesian case needs a purpose-built binary and so is **not** part of the routine
   sweep. It will silently drop out of any CI that does not build a curvilinear RIOT. If this
   test is promoted to `tst/scripts/mhd/`, decide there whether to skip it loudly or omit it.
+
+---
+
+### C14 — CT lost div B with 4+ blocks per periodic axis [was HIGH] — closed 2026-09-19
+
+**Cause:** `physics/sparse_physics` (default **true**) sets deallocation thresholds on
+`ccbulk::cell_delta`, Parthenon deallocates it on blocks where nothing is changing, and
+`riot::GetPack` then excludes those blocks from every pack built through it. `AssembleEdgeEMF` and
+`ApplyFaceUpdate` take their block loop bound from the pack, so a deactivated block was silently
+never updated — its face field froze while its neighbours kept updating the faces they shared with
+it, breaking that block's divergence budget permanently.
+
+**Fix:** force `sparse_physics = false` when MHD is on, with a warning, following the
+global-solver precedent in the same function. Patching only the MHD packs would not have worked:
+the EMF is built from hydro flux registers, and `Hydro::CalculateFluxes` packs through the same
+helper, so a deactivated block has no fluxes either.
+
+**Evidence:** the 48x48 sweep over 2/3/4/6 blocks is now uniformly at roundoff (was 6.2e-08 at 4
+blocks); the 2D 4-block field loop went 1.412e-09 → 1.300e-16, matching its 2-block value
+exactly; the 3D case 2.879e-08 → 7.067e-17; `run_tests.py mhd` 3/4 → **4/4**; `ctest` 49/49; hydro
+suite 7/7 unchanged.
+
+**Residual limitation, deliberately accepted:** MHD runs cannot use sparse physics, so they lose
+that performance optimization. That is a real cost and it is now documented in the MHD chapter
+rather than left as a surprise. Making CT compatible with block deactivation would require the
+flux and EMF machinery to treat a deactivated block as active whenever any neighbour is active,
+which is a larger change than this port should carry.
+
+**Why it took a while, worth remembering:** two successive block-identity bugs in my own
+diagnostics produced confident "no mismatch" results. `md->GetBlockData(b)` is not aligned with a
+pack's block index `b`, and `pmb->coords.Xf<X1DIR>(is)` also collided across blocks. Taking the
+identity from `pack.GetCoordinates(b)` on device, and printing `pack.GetNBlocks()` alongside
+`md->NumBlocks()`, exposed the cause in one run.

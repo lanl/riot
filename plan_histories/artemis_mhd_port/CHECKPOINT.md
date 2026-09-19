@@ -1,6 +1,6 @@
 # Checkpoint
 
-Updated UTC: 2026-09-19
+Updated UTC: 2026-09-19 (D01 fixed)
 Riot original base SHA: `193b3fa2a61557cb4fc761bb87de6687ca781edf`
 Donor head / comparison base: `3e5aeb5` / `e8a4e0f5ad965a8ddb0171f6dad81d6a653870ee`
 Branch: `taitano/mhd-porting`
@@ -110,27 +110,32 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   true at Stage 2 and badly wrong now — and it is the file everything else points at for what
   may be claimed.
 
-## STOP: one live defect blocks Gate G5
+## D01 — the multi-block div B defect, FOUND AND FIXED 2026-09-19
 
-**D01 / C14 — constrained transport does not preserve div B when a periodic axis is split into
-four or more mesh blocks.** At fixed 48x48 resolution, `max|divB|` is 6.8e-17 at two blocks along
-x1, 6.5e-17 at three, and **6.2e-08 at four**. Fails in x1 and x2, 2D and 3D, every reconstruction
-(including CONSTANT) and every solver, identically in serial and on 4 ranks, at nghost 2/3/4.
-Requires periodic boundaries; the same layout with `outflow` is clean. **The donor is clean in the
-identical layout — its own default field-loop deck is four blocks along x1 — so this is the port's
-defect, not inherited.**
+Found by the new `tst/scripts/mhd/field_loop` test on its first run; **root cause was
+`physics/sparse_physics`**, which defaults to true. It deallocates `ccbulk::cell_delta` on blocks
+where nothing is changing, and `riot::GetPack` then drops those blocks from EVERY pack built
+through it. `AssembleEdgeEMF` and `ApplyFaceUpdate` take their block loop bound from the pack, so a
+deactivated block was silently never updated: its face field froze while its neighbours kept
+updating the faces they SHARED with it, permanently breaking that block's divergence budget.
 
-Adjacent blocks compute different CT updates for their shared face; the face is single-valued
-afterwards, but the block whose value was discarded no longer has a balanced divergence budget, and
-CT then preserves that error unchanged for the rest of the run.
+Fixed in `riot.cpp` by forcing `sparse_physics = false` when MHD is on, with a warning, following
+the global-solver precedent in the same function. **Patching only the MHD packs would not have
+worked** — the EMF is assembled from hydro flux registers, and `Hydro::CalculateFluxes` packs
+through the same helper, so a deactivated block has no fluxes either.
 
-Every earlier CT test used at most two blocks per axis, because that is what the four MHD decks
-ship with. P01 swept the RANK count over a fixed 2x2x2 layout — and it is the layout, not the rank
-count, that matters here.
+Verified: the 48x48 sweep over 2/3/4/6 blocks per axis is uniformly at roundoff (was 6.2e-08 at
+4 blocks); 2D 4-block field loop 1.412e-09 -> 1.300e-16; 3D 2.879e-08 -> 7.067e-17;
+`run_tests.py mhd` **4 of 4**; `ctest` 49/49; hydro suite 7/7. The regression test that found it
+now guards it. Accepted cost: MHD runs lose the sparse-physics optimization, documented in the
+MHD chapter.
 
-Reproducer: `python claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot`.
-Full characterization: TEST_LEDGER D01. Next hypothesis to test: block-ownership / neighbour-set
-handling, since three blocks (where every block neighbours every other) is clean and four is not.
+**Two diagnostic traps cost most of the hunt time, worth not repeating:**
+`md->GetBlockData(b)` is NOT aligned with a pack's block index `b`, and
+`pmb->coords.Xf<X1DIR>(is)` also collides across blocks. Both produced confident, wrong
+"no mismatch" results. Take block identity from `pack.GetCoordinates(b)` inside the same device
+kernel that reads the data, and print `pack.GetNBlocks()` next to `md->NumBlocks()` — that one
+line exposed the cause immediately.
 
 ## Open concerns — READ THIS BEFORE CLAIMING ANYTHING
 
@@ -266,13 +271,13 @@ only, so no test propagates a wave obliquely to the grid.
    aborts with "No clang format found" if you pass the versioned name.
 9. ~~**`tst/scripts/mhd/` harness**~~ — **DONE** (TEST_LEDGER G5.11). `cd tst && python
    run_tests.py mhd --reuse_build --save_build`, under two minutes total. **3 of 4 pass;
-   `field_loop` fails on defect D01, which the harness found on its first run.** Helper module is
+   all 4 pass** (`field_loop` failed on first run and exposed defect D01, now fixed). Helper module is
    at `scripts/utils/mhd_analysis.py`, NOT in `scripts/mhd/` — `run_tests.py` collects every
    module in a suite directory as a test and would call `run()`/`analyze()` on a helper.
-10. **Fix D01** (see the STOP section above). This blocks Gate G5.
+10. ~~**Fix D01**~~ — **DONE**, root cause `physics/sparse_physics`; see the D01 section above.
 11. The eight-suite regression sweep LAST (C1). Hours of runtime but nearly free in context, so
-    it is the one item worth backgrounding. Do it after D01 is fixed, so it validates the fixed
-    state rather than needing a re-run.
+    it is the one item worth backgrounding. D01 is now fixed, so this is the next action and it
+    will validate the final state.
 
 ## Do not repeat
 
