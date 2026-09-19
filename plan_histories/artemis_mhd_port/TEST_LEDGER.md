@@ -1085,3 +1085,135 @@ RIOT **does** compile against a curvilinear Parthenon (the build succeeded with 
 changes), and the MHD coordinate rejection fires before Parthenon objects to the Brio–Wu
 deck's negative radial range — so it is genuinely the first thing to stop the run, not a
 lucky ordering.
+
+---
+
+## G5.6 — Restart equivalence for face-centered state, 2026-09-18
+
+Closes concern C5. Harness: `claude_sessions/mhd_runs/analyze_restart.py`, which compares two
+snapshots by explicit PATH and **aborts if their `Time`/`NCycle` differ** — a restart
+comparison whose two sides are at different cycles measures the solution advancing, not
+restart fidelity, and it fails in the direction of looking like a solver bug.
+
+### Result summary
+
+| # | Test | Criterion | Result |
+| --- | --- | --- | --- |
+| 1 | Zero-step reload, MHD: restart at cycle 20, integrate nothing, compare to the uninterrupted run's cycle-20 snapshot | bitwise | **PASS for face B, conserved and all magnetic derived fields.** `velocity`/`pressure` differ at 1–2 ulp — see below |
+| 2 | Same, hydro-only control (`inputs/noh.rin`, MHD never enabled) | — | Identical signature: conserved bitwise, `velocity` 2.2e-16, `pressure` 3.6e-17 |
+| 3 | Reproducibility control: the same run twice, no restart | bitwise | **PASS — bitwise identical** |
+| 4 | Evolved, same rank count: restart at cycle 20, integrate to cycle 40 | rel ≤ 1e-14 | **PASS** — worst 5.55e-15 |
+| 5 | Evolved, changed rank count: 1-rank checkpoint restarted on **4 ranks** to cycle 40 | rel ≤ 1e-14 | **PASS** — worst 5.55e-15, *bit-for-bit the same differences as #4* |
+| 6 | Hydro checkpoint loaded into an MHD run | must be refused | **PASS after fix** (was: ran silently) |
+| 7 | MHD checkpoint loaded into a hydro run | must be refused | **PASS after fix** (was: ran silently, 80% pressure error) |
+
+Test #3 is what makes the rest interpretable. Without it, the roundoff-level differences in
+#4/#5 could be the code being non-deterministic rather than the restart introducing anything,
+and the two have completely different implications.
+
+Test #5 is stronger than it looks: the differences are *identical* to the same-rank case, so
+changing the rank count across a restart contributes nothing at all. That is consistent with
+P01's bitwise MPI invariance.
+
+### Defect 1 — derived magnetic state was never rebuilt on restart
+
+`MHD::PostInitialization` is installed as `PostInitializationMesh`, and Parthenon calls
+`Mesh::Initialize(!is_restart, ...)`. **Everything** inside that function's `if (init_problem)`
+block — the problem generator, every PostInitialization hook, and the
+PreCommFillDerived/communicate/FillDerived cycle that follows them (`mesh.cpp:872-953`) — is
+skipped on a restart. So the three derived magnetic fields stayed at zero.
+
+This was not merely a cosmetic first-output problem. `ccbulk::magnetic_field` is reconstructed
+to supply the **transverse** field in the Riemann solve, and the per-stage `MHD::SetDerived`
+task runs *after* the update, not before the fluxes. The first post-restart stage therefore
+computed its fluxes from a zero transverse field. The run continued, stayed divergence-free,
+and was permanently wrong: **3.7e-06** deviation from the uninterrupted trajectory at cycle 40
+— roughly nine orders of magnitude above roundoff, and invisible to every existing test.
+
+Fixed with `MHD::RestoreDerivedOnRestart`, installed as `UserWorkBeforeLoopMesh` (one of the
+few hooks that runs regardless of restart, and before both the first output and the first
+step). Restart-only, so the verified fresh-start path is untouched.
+
+**`entire` vs `interior` was measured, not assumed.** Nothing communicates the cell-centered
+ghosts between that hook and the first stage's reconstruction, so they must be derived
+locally. With `interior` the restarted trajectory diverges from the uninterrupted one by
+1.4e-10 *in time* by cycle 40; with `entire` the time stays bitwise. One argument, four orders
+of magnitude.
+
+### Defect 2 — restarting across an MHD/hydro change ran silently, in both directions
+
+Neither direction was refused. The second is the dangerous one:
+
+- **hydro checkpoint → MHD run.** No face field in the file, so it is zero-filled and the run
+  proceeds as MHD with B = 0. Self-consistent, but the user asked to continue one calculation
+  and silently got a different one.
+- **MHD checkpoint → hydro run.** `ccbulk::total_material_energy` includes B²/(2μ₀) by the
+  ADR-002 contract, and with MHD off nothing subtracts it, so the entire magnetic energy is
+  reinterpreted as heat. Measured on Brio & Wu at cycle 20: max pressure **1.781574** instead
+  of **1.000185**. The error is **7.991440e-01**, which equals `max(B²/2μ₀)` to every printed
+  digit — i.e. exactly (γ−1)·E_mag at γ = 2. An **80% pressure error, silent, exit code 0.**
+
+Two complementary checks now reject both, and the pair is deliberate because either alone has
+a hole:
+
+1. **Deck-based** (`riot.cpp`): `mhd/mu0` is present in the input deck Parthenon embeds in
+   every checkpoint an MHD run writes, and absent otherwise. On restart that deck is reloaded
+   into `pin` before command-line overrides, so it reports the *checkpoint's* answer. Must be
+   tested before `MHD::Initialize`, which would otherwise create the parameter and make the
+   test vacuous. **Hole:** a user who passes `mhd/mu0=...` on the command line creates the
+   parameter themselves and masks it — and passing mu0 is the natural thing to do when
+   enabling MHD. Verified: the check fires without the override and is defeated by it.
+2. **Data-based** (`MHD::RestoreDerivedOnRestart`): a global max-reduction over
+   `ccbulk::magnetic_energy`. Zero everywhere is the signature of a zero-filled face field.
+   Cannot be masked by any input override. The reduction **must** be global — a localized
+   field such as the field loop leaves whole ranks with zero magnetic energy, so a rank-local
+   test would abort a good restart. Verified against a 4-rank restart of the field loop: no
+   false positive.
+
+`mhd/allow_zero_field_restart` is the opt-in for a genuinely unmagnetized MHD restart, which
+is how the MHD-reduces-to-hydro check (H02) is posed. Registered in `MHD::Initialize` rather
+than on the restart path so it appears in the parameter table of every MHD run — otherwise a
+user hitting the rejection could not discover the escape hatch its message names.
+
+### The residual: RIOT restarts are not bitwise for derived primitives, and that is pre-existing
+
+Even the zero-step reload leaves `velocity` at 2.2e-16 and `pressure` at 1.1e-15. Those are
+derived from the checkpointed conserved state by a different arithmetic path than the one that
+produced them before the dump. **The hydro-only control (test #2) shows the identical
+signature with MHD never enabled**, so this is a property of RIOT's restart that MHD inherits,
+not something this port introduced. It is why tests #4/#5 are stated at rel ≤ 1e-14 instead of
+bitwise: the threshold is derived from the measured 1.1e-15 seed plus modest amplification
+over 20 steps, and it still sits eleven orders of magnitude below the 3.7e-06 defect that
+motivated the work. Recorded as an open concern rather than absorbed silently into a
+tolerance.
+
+### Reproducing
+
+```
+mkdir -p /tmp/mhdrst && cd /tmp/mhdrst
+R=/Users/taitano/Documents/git/riot
+V=c.c.bulk.rho,c.c.bulk.pressure,c.c.bulk.velocity,c.c.bulk.magnetic_field,c.c.bulk.div_magnetic_field,c.c.bulk.magnetic_energy,c.c.bulk.total_material_energy,f.bulk.magnetic_field
+# uninterrupted, with a checkpoint at cycle 20 and per-cycle snapshots
+$R/build/src/riot -i $R/inputs/mhd/field_loop_3d.rin parthenon/job/problem_id=a \
+  parthenon/time/nlim=40 parthenon/output1/dn=1 parthenon/output1/dt=-1 \
+  parthenon/output1/variables=$V parthenon/output2/file_type=rst parthenon/output2/dn=20
+# zero-step reload, and the evolved restart
+$R/build/src/riot -r a.out2.00001.rhdf parthenon/job/problem_id=b0 parthenon/time/nlim=20 \
+  parthenon/output1/variables=$V
+$R/build/src/riot -r a.out2.00001.rhdf parthenon/job/problem_id=b1 parthenon/time/nlim=40 \
+  parthenon/output1/variables=$V
+. $R/riot_venv/bin/activate
+python3 $R/claude_sessions/mhd_runs/analyze_restart.py a.out1.00020.phdf b0.out1.final.phdf
+python3 $R/claude_sessions/mhd_runs/analyze_restart.py --rtol 1e-14 a.out1.final.phdf b1.out1.final.phdf
+```
+
+`f.bulk.magnetic_field` must be added to `parthenon/output1/variables` explicitly — the
+tracked decks do not output it, and without it the one field this test exists for is silently
+skipped (the harness says `ABSENT` rather than passing quietly). The restart cadence must be
+`parthenon/output2/dn`, not `dt`: with `dt` the checkpoint lands at a wall-clock-independent
+but time-based cadence that a short `nlim` run may never reach, which is how an earlier
+attempt ended up with no cycle-20 checkpoint at all.
+
+Regression evidence for both fixes: `ctest` **41/41**; N01 **23/23**; a fresh
+`field_loop_3d` run is **bitwise identical** to one from before the change; Brio & Wu
+reproduces its G5.5 PLM row to every printed digit. Both fixes are inert on a fresh start.

@@ -13,8 +13,9 @@ Rules for this file:
 - Severity is about **what a defect here would cost**, not about how likely it is.
 - If a concern is a guess rather than a measurement, it says so.
 
-Last updated: 2026-09-18, after N01 (startup rejections). **C2 is resolved** — and it found two
-real defects, which is the argument for keeping this file honest rather than optimistic.
+Last updated: 2026-09-18, after G5.6 (restart equivalence). **C2 and C5 are both resolved** — and
+between them they found four real defects, which is the argument for keeping this file honest
+rather than optimistic. C13 is new, and is pre-existing RIOT behaviour rather than the port's.
 
 ---
 
@@ -86,16 +87,34 @@ accept and precisely for that reason worth confirming.
 reconstruction would separate CT from reconstruction — if hydro also caps at 4, CT is
 exonerated), or accept order 4 as the scheme's property with evidence rather than assertion.
 
-## C5 — Restart of face-centered state is untested [MEDIUM]
+## C5 — Restart of face-centered state is untested → **RESOLVED**, see Resolved section
 
-`fbulk::magnetic_field` is `Independent`, so it should be written to and read from a checkpoint
-by the normal machinery, but this has never been exercised. A restart that silently loses or
-mis-shapes face B would produce a run that continues plausibly and diverges from the
-uninterrupted trajectory.
+## C13 — RIOT restarts are not bitwise for derived primitives [LOW, and PRE-EXISTING]
 
-Two sub-cases, neither tested: restart at the same rank count (should be bitwise), and restart
-at a *different* rank count. Also untested: loading a hydro-only checkpoint into an MHD run,
-which should be refused rather than silently zero-filling the field.
+Found while closing C5. Even a zero-step reload — restart, integrate nothing, dump — leaves
+`c.c.bulk.velocity` differing by 2.2e-16 and `c.c.bulk.pressure` by 1.1e-15 from the
+uninterrupted run's snapshot at the same cycle. The conserved fields and the face field are
+bitwise; only the derived primitives differ, because they are recomputed from the checkpointed
+conserved state by a different arithmetic path than the one that produced them before the dump.
+
+**This is not MHD's doing.** The same test on a hydro-only run (`inputs/noh.rin`, MHD never
+enabled) shows the identical signature. It is recorded here anyway for two reasons:
+
+1. It means **no RIOT restart can be claimed bitwise**, so any future test that asserts
+   bitwise restart equivalence — for any physics package, not just MHD — will fail, and the
+   cause will not be in the code under test. Someone will otherwise spend a day on it.
+2. It sets the floor for what a restart test can assert. G5.6's evolved comparisons use
+   rel ≤ 1e-14 for exactly this reason, and that threshold is derived from the measured seed
+   rather than from what happened to pass.
+
+MHD's `pressure` residual (1.1e-15) is about an order of magnitude above hydro's (3.6e-17),
+which is consistent with the extra magnetic-energy subtraction in the recovery path adding a
+rounding step. That is an explanation, not a measurement — **it has not been confirmed.**
+
+**To close:** either identify the specific operation whose ordering differs and make the
+recovery path reproducible, or state in the docs that RIOT restarts are equivalent to roundoff
+rather than bitwise. Worth raising with the RIOT team, since it is theirs rather than the
+port's.
 
 ## C6 — No solver-failure, floor, or invalid-state counters [MEDIUM]
 
@@ -176,6 +195,43 @@ is enabled, and it will not be obvious then that this was never checked.
 ## Resolved
 
 Items move here with the evidence that closed them, and are not deleted.
+
+### C5 — Restart of face-centered state was untested [was MEDIUM] — closed 2026-09-18
+
+**The original concern.** `fbulk::magnetic_field` is `Independent`, so it should be written to
+and read from a checkpoint by the normal machinery, but this had never been exercised. Three
+sub-cases were listed as untested: same-rank restart, changed-rank restart, and loading a
+hydro-only checkpoint into an MHD run.
+
+**Evidence that closed it.** TEST_LEDGER G5.6, seven tests including a reproducibility control
+(the same run twice, bitwise) and a hydro-only control. Face B restarts **bitwise**; the
+evolved restart agrees to rel ≤ 1e-14 at both the same and a changed rank count, with the
+4-rank differences bit-for-bit identical to the 1-rank ones.
+
+**The concern was justified: it found two real defects.**
+
+1. **Derived magnetic state was never rebuilt on restart.** `PostInitializationMesh` — hence
+   `MHD::SetDerivedMagneticFields` — is inside Parthenon's `if (init_problem)` block, which is
+   skipped entirely on a restart. Because `ccbulk::magnetic_field` supplies the *transverse*
+   field to the Riemann solve, and the per-stage `SetDerived` task runs *after* the update, the
+   first post-restart stage computed fluxes from a zero transverse field. The run continued,
+   stayed divergence-free, and was permanently wrong by 3.7e-06 — nine orders above roundoff
+   and invisible to every existing test. Fixed via `UserWorkBeforeLoopMesh`.
+2. **Restarting across an MHD/hydro change ran silently in both directions.** MHD checkpoint
+   into a hydro run reinterprets B²/(2μ₀) as heat: measured **80% pressure error on Brio & Wu,
+   exit code 0**. Both directions are now rejected by a deck-based check plus a data-based
+   global reduction, because each alone has a hole (see G5.6).
+
+**Residual limitations, stated rather than glossed:**
+
+- Derived primitives are not bitwise across a restart, and that is pre-existing RIOT behaviour
+  — split out as its own entry, **C13**.
+- The zero-field escape hatch `mhd/allow_zero_field_restart` disables the data-based half of
+  the checkpoint-mismatch check. A user who sets it *and* passes an `mhd/*` override on the
+  command line has defeated both halves. Judged acceptable — it takes two deliberate opt-outs
+  — but it is a hole, not an absence of one.
+- All of this is uniform-grid. Restart with refinement is untested and AMR is rejected anyway
+  (C9).
 
 ### C2 — Startup rejections (N01) had never been executed [was HIGH] — closed 2026-09-18
 

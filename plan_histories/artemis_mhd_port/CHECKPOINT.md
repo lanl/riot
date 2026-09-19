@@ -67,6 +67,19 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   them.** Quantified: 8x CFL cut gives 63x error reduction, and HLLD reproduces HLLE's numbers
   in every digit, so the floor is the integrator, not the solver or the reconstruction.
 
+- **Restart verified** (TEST_LEDGER G5.6): face B restarts **bitwise**; the evolved restart
+  agrees to rel <= 1e-14 at both the same and a changed rank count, with the 4-rank differences
+  bit-for-bit identical to the 1-rank ones. Backed by a reproducibility control (same run twice
+  = bitwise) and a hydro-only control. Found and fixed two real defects: derived magnetic state
+  was never rebuilt on restart (3.7e-06 permanent trajectory error, because the transverse field
+  fed to the first stage's Riemann solve was zero), and restarting across an MHD/hydro change ran
+  silently in both directions (MHD checkpoint into a hydro run reinterprets B^2/2mu0 as heat: an
+  80% pressure error on Brio-Wu at exit code 0). Both directions are now rejected.
+  **Not** bitwise for `velocity`/`pressure` — that is pre-existing RIOT behaviour, concern C13.
+- **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
+  control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
+  parameters).
+
 ## Open concerns — READ THIS BEFORE CLAIMING ANYTHING
 
 **[`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) is the register of doubts about work already done**, as
@@ -90,7 +103,7 @@ Do not delete entries from that file; move them to its Resolved section with evi
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
 regression harness; LLF; `mhd/monitor_divb` is registered but not yet consumed;
-restart of face state untested; U05 (face stage copy
+U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
 uniform-grid, so no coarse/fine flux or EMF correction is exercised. The CPAW is axis-aligned
@@ -164,9 +177,16 @@ only, so no test propagates a wave obliquely to the grid.
    the `cyl_control` negative control are load-bearing, not decoration — without them the
    sweep can pass vacuously. Requires `inputs/mhd/brio_wu.rin` and, for the curvilinear case,
    `inputs/sedov_rz.rin`; both are generated from their `.py` sources.
-5. Remaining Stage 5: LLF, solver-failure/floor counters (C6), `mhd/monitor_divb` (C7),
-   restart equivalence (C5), MHD docs in `doc/sphinx`, the `tst/scripts/mhd/` harness, and
-   the eight-suite regression sweep LAST (C1).
+5. ~~**Restart equivalence (C5)**~~ — **DONE, PASS** (TEST_LEDGER G5.6). Found two real
+   defects: derived magnetic state was never rebuilt on restart (3.7e-06 permanent error),
+   and restarting across an MHD/hydro change ran silently in both directions (80% pressure
+   error one way). Re-run instructions are in the G5.6 entry. Note that
+   `f.bulk.magnetic_field` must be added to `parthenon/output1/variables` explicitly or the
+   one field the test exists for is skipped, and the checkpoint cadence must be
+   `parthenon/output2/dn`, not `dt`.
+6. Remaining Stage 5: LLF, solver-failure/floor counters (C6), `mhd/monitor_divb` (C7),
+   MHD docs in `doc/sphinx`, the `tst/scripts/mhd/` harness, and the eight-suite regression
+   sweep LAST (C1).
 
 ## Do not repeat
 
@@ -187,6 +207,20 @@ only, so no test propagates a wave obliquely to the grid.
   positive; where it is clipped the information is gone. Observed as Brio-Wu's right state
   at P = 0.78125 (exactly `B^2/2`) instead of 0.1, **while the left state came out exactly
   right** — a bug that only corrupts states where a floor triggers.
+- **Do not assume any initialization hook runs on a restart.** Parthenon calls
+  `Mesh::Initialize(!is_restart, ...)`, and the ENTIRE `if (init_problem)` block
+  (`mesh.cpp:872-953`) is skipped when resuming — the problem generator, every
+  `PostInitialization`/`PostInitializationMesh` hook, AND the
+  PreCommFillDerived/communicate/FillDerived cycle that follows them. Anything a package sets up
+  in those hooks is simply absent after a restart. `UserWorkBeforeLoopMesh` is the hook that
+  does run either way. This cost a 3.7e-06 permanently wrong restarted trajectory that stayed
+  divergence-free and passed every other test (G5.6). Note `levelsets.cpp:97` uses
+  `Globals::is_restart` to *skip* its hook on restart — the same flag, the opposite need, so
+  seeing that pattern is not evidence that restart is handled.
+- **Do not derive a FillGhost field's ghosts as an afterthought on restart.** Nothing
+  communicates between `UserWorkBeforeLoopMesh` and the first stage's reconstruction, so
+  `IndexDomain::interior` is not enough there even though it is correct inside the step loop.
+  Measured: `interior` costs 1.4e-10 in time by cycle 40 where `entire` is bitwise.
 - **Do not validate a configuration by reading the input file when a package has already
   resolved it.** `pin->GetOrAddBoolean(...)` returns what the user typed, or a default —
   which is *not* the value the code will use if a package derives it. Concretely,

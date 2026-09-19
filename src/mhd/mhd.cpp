@@ -60,6 +60,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Report max |div B| before and after each step (diagnostic; costs a reduction)");
   params.Add("monitor_divb", monitor_divb);
 
+  // Escape hatch for MHD::RestoreDerivedOnRestart's zero-field check. Registered here
+  // rather than on the restart path so it appears in the parameter table of every MHD
+  // run.
+  params.Add("allow_zero_field_restart",
+             pin->GetOrAddBoolean(
+                 "mhd", "allow_zero_field_restart", false,
+                 "Permit restarting an MHD run from a checkpoint whose magnetic field is "
+                 "identically zero everywhere. Off by default, because that is exactly "
+                 "what restarting from a HYDRO checkpoint by mistake looks like."));
+
   // ---------------------------------------------------------------------------------
   // The evolved magnetic field: the component normal to each face.
   //
@@ -121,6 +131,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // A problem generator supplies face B only; derive the rest before the first
   // total-energy assembly.
   mhd->PostInitializationMesh = PostInitialization;
+
+  // PostInitializationMesh does not run on a restart (see RestoreDerivedOnRestart), so
+  // the same derived state has to be rebuilt from the checkpointed face field here.
+  mhd->UserWorkBeforeLoopMesh = RestoreDerivedOnRestart;
 
   return mhd;
 }
@@ -227,6 +241,103 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
   // Derived state is needed on `entire` because the first total-energy assembly and the
   // first reconstruction both read ghost zones.
   SetDerivedMagneticFields(md, IndexDomain::entire);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void MHD::RestoreDerivedOnRestart
+//! \brief Rebuilds the derived magnetic fields when a run resumes from a checkpoint.
+//!
+//! WHY THIS IS NEEDED, since it looks redundant next to PostInitialization. Parthenon
+//! calls `Mesh::Initialize(!is_restart, ...)`, and EVERYTHING in the `if (init_problem)`
+//! block -- the problem generator, every PostInitialization hook, and the
+//! PreCommFillDerived/communicate/FillDerived cycle that follows them
+//! (`mesh.cpp:872-953`) -- is skipped on a restart. So `MHD::PostInitialization` never
+//! runs, and the three derived magnetic fields stay at their default zero.
+//!
+//! That is not merely a cosmetic problem for the first output. `ccbulk::magnetic_field`
+//! is reconstructed to get the TRANSVERSE field in the Riemann solve, and the per-stage
+//! `MHD::SetDerived` task runs AFTER the update, not before the fluxes. So without this
+//! the first post-restart stage computes its fluxes from a zero transverse field: the run
+//! continues, stays divergence-free, and is permanently wrong. Measured as a 3.7e-06
+//! deviation from the uninterrupted trajectory (TEST_LEDGER G5.6).
+//!
+//! `UserWorkBeforeLoopMesh` is the right hook because it is one of the few that runs
+//! regardless of restart, and it runs before the first output and the first step.
+//!
+//! Restart-only on purpose. On a fresh start, PostInitialization has already derived this
+//! state and `Mesh::Initialize` has since communicated boundaries, so the cell-centered
+//! ghosts hold values received from neighbouring interiors. Recomputing them here from
+//! face ghosts could only replace communicated values with locally derived ones and would
+//! risk perturbing the verified G2-G5 results for no benefit.
+//!
+//! `entire`, not `interior`, and that is measured rather than cautious. Nothing
+//! communicates the cell-centered ghosts between here and the first stage's
+//! reconstruction, so they have to be derived locally. Swapping this one argument to
+//! `interior` makes the restarted trajectory diverge from the uninterrupted one
+//! by 1.4e-10 in time by cycle 40, where `entire` keeps it bitwise (TEST_LEDGER G5.6).
+void RestoreDerivedOnRestart(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  if (!parthenon::Globals::is_restart) return;
+  auto &base = pm->mesh_data.Add("base", pm->GetBasePartition());
+  SetDerivedMagneticFields(base.get(), IndexDomain::entire);
+
+  // ------------------------------------------------------------------------------------
+  // Second half of the "did this checkpoint actually come from an MHD run" test, and the
+  // half that cannot be defeated by a command-line override.
+  //
+  // riot.cpp rejects an MHD/hydro checkpoint mismatch by looking for `mhd/mu0` in the
+  // input deck that Parthenon embeds in every checkpoint. That works, but a user who
+  // passes `mhd/mu0=...` on the command line creates the parameter themselves and masks
+  // it -- and passing mu0 is a natural thing to do when turning MHD on. So the deck test
+  // alone leaves a hole exactly where a user is most likely to be experimenting.
+  //
+  // This closes it from the DATA instead: a checkpoint written without MHD has no face
+  // field, so the read zero-fills it and the magnetic energy is identically zero on every
+  // block. Reducing over `ccbulk::magnetic_energy` rather than the face field is
+  // deliberate -- it was just computed above, it is a sum of squares (so it vanishes if
+  // and only if every face component does), and it lives in the cell-shaped pack, which
+  // keeps this away from the face-addressing hazard documented on MHD::FaceB.
+  //
+  // The reduction must be GLOBAL. A localized field such as the field-loop test leaves
+  // whole blocks -- hence whole ranks -- with zero magnetic energy, so a rank-local test
+  // would abort a perfectly good restart.
+  //
+  // An escape hatch exists because a genuinely unmagnetized MHD run is legitimate: it is
+  // how the MHD-reduces-to-hydro check (H02) is posed. That case is rare enough to be
+  // worth an explicit opt-in and common enough as a MISTAKE to be worth stopping.
+  // Read from the package, not from `pin`. GetOrAdd is still legal after FinalizeParsing,
+  // but a parameter added only on the restart path would be missing from the table that
+  // `parthenon/job/output_params_and_exit` prints for a fresh run -- so a user hitting
+  // the rejection below could not discover the escape hatch that the message names.
+  if (pm->packages.Get("mhd")->template Param<bool>("allow_zero_field_restart")) return;
+
+  auto v = riot::MakePack<ccbulk::magnetic_energy>(base.get());
+  Real emag_max = 0.0;
+  if (v.GetNBlocks() > 0) {
+    using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+    auto idx_space = rt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(),
+                                       base.get(), parthenon::TopologicalElement::CC);
+    emag_max = RiotLoop::outer_reduce(
+        idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
+          auto pv = RiotLoop::make_pack_view(idx_range, v);
+          RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &m) {
+            m = std::max(m, std::abs(pv(ccbulk::magnetic_energy(), idx)));
+          });
+        });
+  }
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(MPI_Allreduce(MPI_IN_PLACE, &emag_max, 1, MPI_PARTHENON_REAL,
+                                    MPI_MAX, MPI_COMM_WORLD));
+#endif
+  PARTHENON_REQUIRE(
+      emag_max > 0.0,
+      "Restarted an MHD run from a checkpoint whose magnetic field is identically zero "
+      "everywhere. This is what restarting from a HYDRO checkpoint looks like: the face "
+      "field is absent from the file and is silently zero-filled, so the run would "
+      "continue as unmagnetized hydrodynamics without saying so. Restart from an MHD "
+      "checkpoint, or set <mhd>/allow_zero_field_restart = true if a zero field really "
+      "is "
+      "intended.");
 }
 
 //----------------------------------------------------------------------------------------

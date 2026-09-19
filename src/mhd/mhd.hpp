@@ -57,6 +57,12 @@ void AddMagneticEnergyToTotal(MeshBlock *pmb);
 //! everything else before the first total-energy assembly.
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
 
+//! Installed as StateDescriptor::UserWorkBeforeLoopMesh, which -- unlike
+//! PostInitializationMesh -- also runs on a restart. Rebuilds the derived magnetic fields
+//! from the checkpointed face state, which is otherwise left at zero through the first
+//! post-restart stage's reconstruction. No-op on a fresh start.
+void RestoreDerivedOnRestart(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+
 //! Assembles the Gardiner-Stone upwind EMF on every edge of the interior into the edge
 //! flux register of the face magnetic field. Depends on the hydro flux task, which
 //! writes both the transverse induction fluxes and the material mass fluxes it reads.

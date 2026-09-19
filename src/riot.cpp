@@ -197,6 +197,50 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     PARTHENON_REQUIRE(!do_tracers, "MHD with tracer particles is not yet supported.")
   }
 
+  // -------------------------------------------------------------------------------------
+  // Restarting must not change whether the run is MHD, in EITHER direction. This is
+  // outside the `if (do_mhd)` block above precisely because one of the two failures
+  // happens when MHD is OFF.
+  //
+  // The two directions are not equally obvious, and the second is the dangerous one:
+  //
+  //   hydro checkpoint -> MHD run. The checkpoint has no face field, so it is
+  //   zero-filled.
+  //     The run proceeds as MHD with B = 0. Self-consistent, but the user asked to
+  //     continue a calculation and silently got a different one.
+  //
+  //   MHD checkpoint -> hydro run. ccbulk::total_material_energy in the checkpoint
+  //   INCLUDES
+  //     B^2/(2 mu0) by the ADR-002 contract, and with MHD off nothing ever subtracts it,
+  //     so the entire magnetic energy is reinterpreted as heat. Measured on Brio & Wu at
+  //     cycle 20: max pressure 1.781574 instead of 1.000185, an error of 7.991440e-01
+  //     that is EXACTLY (gamma-1) * max(B^2/2mu0) -- an 80% error, silent, exit code 0
+  //     (TEST_LEDGER G5.6).
+  //
+  // The discriminator is `mhd/mu0`. MHD::Initialize adds it with GetOrAddReal, so it is
+  // present in the input deck that Parthenon embeds in every checkpoint an MHD run
+  // writes, and absent from one written by a hydro run. On restart that embedded deck is
+  // reloaded into `pin` before command-line overrides, so this reads the CHECKPOINT's
+  // answer. It has to be tested before MHD::Initialize runs, or that call would create
+  // the parameter and the test would always pass.
+  //
+  // Guarded on is_restart because on a fresh start an <mhd> block may legitimately sit in
+  // an input file with physics/mhd = false, and rejecting that would be wrong.
+  if (parthenon::Globals::is_restart) {
+    const bool checkpoint_was_mhd = pin->DoesParameterExist("mhd", "mu0");
+    PARTHENON_REQUIRE(
+        do_mhd == checkpoint_was_mhd,
+        do_mhd
+            ? "This is an MHD run restarting from a checkpoint written WITHOUT MHD. "
+              "There is no magnetic field to continue from, so the field would be "
+              "silently zero-filled. Restart from an MHD checkpoint, or set "
+              "<physics>/mhd = false."
+            : "This is a hydro run restarting from a checkpoint written WITH MHD. The "
+              "checkpointed total energy includes B^2/(2*mu0), and with MHD off nothing "
+              "subtracts it, so the magnetic energy would be silently reinterpreted as "
+              "heat. Set <physics>/mhd = true, or restart from a hydro checkpoint.");
+  }
+
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
   riot->AddParam("do_strength", do_strength);
