@@ -1838,3 +1838,78 @@ ratio.
   heating is meaningful at t=0 and is a STRONGER statement there, because the analytic box means
   are exact for the discrete initial state — so that snapshot validates the problem generator
   rather than only the time integration.
+
+---
+
+## D01 root-cause hunt, round 1 — what has been ELIMINATED, 2026-09-19
+
+Root cause **still open**. This section exists so the next pass does not repeat any of it. All
+of these were run against the reproducer (48x48 square periodic box, meshblock varied at fixed
+resolution) unless noted.
+
+### Ruled out
+
+| Hypothesis | How it was ruled out |
+| --- | --- |
+| Reconstruction stencil width | Fails with **CONSTANT** reconstruction, which has no stencil at all. Also fails with PLM and PPM4. |
+| Ghost budget | `nghost` 2, 3 and 4 all fail, and *slightly worse* with more ghosts. |
+| Riemann solver | Fails identically with `mhd_hlle`, `mhd_hlld`, `mhd_llf`. |
+| MPI / communication order | Serial and 4 ranks give the **same value to every digit** (1.412e-09). |
+| Flux corrections clobbering the edge register | Skipping `SetFluxCorrections` entirely (env-var patch, safe with `refinement=none`) gives **the identical 1.412e-09**. This was a genuine suspicion: flux correction touches the edge EMF register and runs AFTER the EMF assembly but BEFORE the face update, so an EMF-agreement check taken at assembly time cannot see it. It is not the cause. |
+| **The face stage register copy** (`sparse_update::DeepCopyFaceData`) | Instrumented the copy to verify `u1 == u0` over `IndexDomain::entire` on all three face elements after every copy: **zero mismatch across 70 cycles**. This is the check U05 was supposed to be and never was (concern C11) — so U05's substance now has a positive result, on a live mesh, even though the unit test still does not exist. The copy is complete and is NOT the defect. |
+| Shared **edge EMF** disagreement between adjacent blocks | Instrumented `AssembleEdgeEMF` to compare block b's E3 at its high-i boundary against block b+1's at its low-i boundary: **exactly 0.0 at every call through cycle 70**, including the cycles where div B jumps. Caveat: this diagnostic's cross-block bookkeeping was unreliable (see below), so it deserves one clean re-run before being treated as final. |
+| A structural difference from the donor | Line-by-line comparison found **no difference** in: face-field metadata (identical flag set), EMF assembly loop bounds, `ApplyFaceUpdate` loop bounds and RK combination, the Cartesian curl expressions term by term, or the task graph (EMF after the flux task, flux-correction send depending on the EMF, face update depending on `emf | set_flx`). RIOT's `divB` diagnostic is also formula-identical to the donor's. |
+
+### Positively established
+
+- The dumped face field is **genuinely divergent**: recomputing `div B` by hand from the dumped
+  face values reproduces the code's own diagnostic **exactly (difference 0.0)**, so this is not
+  a diagnostic artifact.
+- The divergence is confined to **one block** (the one at `lx1 = 0`, which owns the periodic
+  wrap boundary): 1.412e-09 there versus 7e-17, 7e-17 and 3e-17 in the other three.
+- The error is **proportional to the field amplitude** — `max|divB| / max|B|` is flat at
+  1.4e-06 to 3.0e-06 across `amp` = 1e-3, 1e-2, 1e-1, 1.0. So it is a relative inconsistency,
+  which rules out uninitialized memory or data imported from an unrelated location.
+- It is **specific to the field loop among the MHD tests**: CPAW gives `max|divB|` **exactly
+  0.0** at 2, 4 and 8 blocks, and Orszag-Tang is **identical** (1.990e-13) at 2x2 and 4x4. The
+  field loop is the only one of the three with a large region where B is exactly zero, and the
+  only one whose fluid state is trivial (uniform rho, P, v for all time).
+- It needs **periodic** boundaries on the split axis: 4 blocks with `outflow` is clean.
+
+### A methodological trap worth recording
+
+Two conclusions in this hunt were nearly wrong because of uncontrolled variables:
+
+1. **"It only fails in x1, not x2."** False. That came from a run where the box was 2:1 and the
+   resolution anisotropic, so splitting x1 and splitting x2 were not comparable. On a square box
+   at equal resolution both directions fail (1.412e-09 and 1.228e-10).
+2. **"3 blocks is fine, 4 is broken."** True, but the first version of the sweep varied `nx1`
+   together with the meshblock size, so part of the effect was resolution. Only the fixed-`nx1`
+   sweep establishes it.
+
+Both are the same mistake as the C13 attribution error: a comparison with more than one thing
+moving. The reproducer script now holds the resolution fixed for exactly this reason.
+
+Also: the in-code cross-block diagnostics were unreliable because RIOT splits the mesh into
+several `MeshData` partitions per stage, so a single task invocation does not see every block,
+and accumulating across invocations gave irregular results (19 reports for 140 invocations).
+Anything comparing blocks must either dump to a file and post-process, or be written to tolerate
+partial block sets. The `u1 == u0` check above avoided the problem entirely by being block-local,
+which is why it is the most trustworthy measurement in this section.
+
+### Narrowed search space for the next pass
+
+What remains, given the eliminations: the defect produces a face field that is genuinely
+divergent in the block owning the periodic wrap, with correct EMFs, a correct stage register, and
+no structural difference from a donor that is provably clean. The two candidates that survive:
+
+1. **The shared-face/ghost exchange for a `Face` + `FillGhost` field at a periodic boundary when
+   the wrap partner is not also the interior neighbour.** Consistent with: needs periodicity,
+   needs >= 4 blocks (with 2 or 3 blocks on a periodic axis every block neighbours every other),
+   and localizes to the block at `lx1 = 0`. The EMF measurement above says the inputs agree, so
+   an exchange that overwrites a correctly-computed face with a differently-computed one is the
+   remaining way to get a divergent field.
+2. A re-run of the shared-edge EMF check with reliable (file-dump) bookkeeping, to confirm
+   agreement rather than infer it from a diagnostic that was demonstrably flaky.
+
+Start with (2), because it is cheap and it decides whether (1) is the only survivor.

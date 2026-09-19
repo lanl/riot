@@ -72,12 +72,26 @@ blocks along an axis is an ordinary production decomposition — it is the donor
 this is fixed, any claim that RIOT's constrained transport preserves the constraint must be
 qualified to at most two blocks per axis, which is how `CAPABILITY_MATRIX.md` now reads.
 
-**Hypothesis to test first** (a guess, flagged as such): block-ownership or neighbour-set handling
-for shared faces and edges. Three blocks is clean and four is not, and the structural difference is
-that with three blocks on a periodic axis every block is a neighbour of every other, so the
-neighbour set is degenerate. All the *arithmetic* inputs to a boundary-edge EMF appear by
-inspection to be available and to be bitwise copies of the neighbour's interior data in every
-layout, and the upwind selector cannot be flipping because the mass flux is uniform at ~2.0.
+**Round 1 of the root-cause hunt is done and the cause is still open.** The full elimination
+table is in TEST_LEDGER under "D01 root-cause hunt, round 1". Ruled out: reconstruction stencil
+(CONSTANT fails too), ghost budget (2/3/4 all fail), Riemann solver, MPI, flux corrections
+clobbering the edge register (skipping `SetFluxCorrections` changes nothing), **the face stage
+register copy** (instrumented: `u1 == u0` over `entire` with zero mismatch across 70 cycles —
+which is the substance of U05, finally measured), and any structural difference from the donor
+(metadata, loop bounds, curl terms, task graph all match).
+
+Positively established: the dumped face field is genuinely divergent (hand-recomputed `div B`
+matches the code exactly), the divergence is confined to the single block owning the periodic wrap,
+the error is proportional to the field amplitude, and among the MHD tests only the field loop shows
+it — CPAW is exactly 0.0 at 2/4/8 blocks and Orszag-Tang is identical at 2x2 and 4x4.
+
+**Surviving hypothesis:** the shared-face/ghost exchange for a `Face` + `FillGhost` field at a
+periodic boundary when the wrap partner is not also the interior neighbour. That fits needing
+periodicity, needing >= 4 blocks (with 2 or 3 blocks every block neighbours every other), and
+localizing to the block at `lx1 = 0`. Before pursuing it, re-run the shared-edge EMF agreement
+check with file-dump bookkeeping: the in-code version reported agreement but was demonstrably
+flaky, because RIOT splits the mesh into several `MeshData` partitions per stage and a single task
+invocation does not see every block.
 
 Reproducer: `claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot`.
 
