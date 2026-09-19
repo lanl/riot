@@ -9,10 +9,18 @@ Status vocabulary, applied strictly:
 Combinations are recorded, not just toggles: "AMR validated" and "2T validated"
 would not imply "2T + AMR validated."
 
-**Current overall status (2026-09-19, head `62903d9`): gates G0–G4 pass, Stage 5
-is complete except for the `tst/scripts/mhd/` harness and the eight-suite
-hydro-with-MHD-off sweep. End-to-end MHD simulations have been run and compared
-against an independent (Athena++) reference and against analytic solutions.**
+> **RELEASE BLOCKER, 2026-09-19: see D01 / C14.** Constrained transport does not preserve
+> `div B` when a periodic axis is split into four or more mesh blocks — which is an ordinary
+> production decomposition and is the donor's own default. Gate G5 must NOT be declared until
+> this is fixed. The rows below are accurate for the layouts they were measured on; the general
+> claim that CT preserves the constraint is now known to be false outside at most two blocks
+> per axis.
+
+**Current overall status (2026-09-19): gates G0–G4 pass *within the two-blocks-per-axis
+envelope*, Stage 5 is complete except for the eight-suite hydro-with-MHD-off sweep, and the
+`tst/scripts/mhd/` harness exists and immediately found D01. End-to-end MHD simulations have
+been run and compared against an independent (Athena++) reference and against analytic
+solutions.**
 Test IDs refer to [`TEST_LEDGER.md`](TEST_LEDGER.md); doubts about work already
 done are in [`OPEN_CONCERNS.md`](OPEN_CONCERNS.md), which must be read before
 any capability here is quoted elsewhere.
@@ -52,10 +60,12 @@ by `MHD::Initialize`.
 | Capability | Status | Evidence |
 | --- | --- | --- |
 | Gardiner–Stone upwind EMF, 1D/2D/3D incl. collapsed dimensions | **validated** | G4.1–G4.5, P01.3 (collapsed-EMF branch) |
-| CT face update preserves div B | **validated** | `max\|divB\|` **exactly 0.0** (Brio–Wu), ≤ 3.3e-13 (Orszag–Tang), η ≤ 5.3e-15 (field loop) |
+| CT face update preserves div B — **at most 2 blocks per axis** | **validated in that envelope only** | `max\|divB\|` **exactly 0.0** (Brio–Wu), ≤ 3.3e-13 (Orszag–Tang), η ≤ 5.3e-15 (field loop) |
+| CT face update preserves div B — **4 or more blocks per periodic axis** | **BROKEN** | **D01 / C14** — `max\|divB\|` 6.2e-08 where 2 blocks gives 6.8e-17. Donor is clean in the identical layout, so this is the port's defect. A live bug, not a limitation. |
 | No spurious out-of-plane / axial field | **validated** | G4.2 (`max\|B3\|` exactly 0.0), G4.3 all three permutations |
 | Second-order accuracy on a smooth solution | **validated** | G4.5 CPAW, observed order 1.55 → 1.83 → 2 |
-| MPI rank invariance | **validated** | P01 — ranks 1/2/3/4/5/8, bitwise identical; incl. shocks (P01.4) |
+| MPI rank invariance | **validated** | P01 — ranks 1/2/3/4/5/8, bitwise identical; incl. shocks (P01.4). Note this swept the RANK count over a FIXED 2×2×2 block layout; it says nothing about other layouts, which is how C14 slipped through |
+| Mesh decomposition invariance | **BROKEN beyond 2 blocks per periodic axis** | D01 / C14. 1 vs 8 blocks as 2×2×2 is bitwise (G4.3), but 4 blocks along one axis is not merely different — it violates the divergence constraint |
 | Genuine face-centered field (no `CellMemAligned`) | **validated** | shared block faces single-valued; div B identical across block boundaries |
 | Edge (EMF) flux register via automatic Face→Edge promotion | **validated** | exercised by every CT run |
 | Hydro-only behavior preserved with MHD off | **validated** | G1.2, G5.4 (hydro suite 7/7), H01 re-run — bitwise vs pre-port `193b3fa` |

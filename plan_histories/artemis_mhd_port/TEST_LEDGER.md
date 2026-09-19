@@ -1585,3 +1585,226 @@ MHD: not run on GPU. total_material_energy INCLUDES B^2/(2*mu0).
 No performance numbers, no statement about GPU behaviour beyond "not run", no absolute
 accuracy claim for Brio & Wu (there is no absolute threshold -- concern C3), and no mention of
 AMR working. The reconstruction order table gives *measured* orders, not formal ones.
+
+---
+
+## D01 — DEFECT: constrained transport loses div B with four or more blocks per periodic axis
+
+**Found 2026-09-19 by the new `tst/scripts/mhd/field_loop` regression test, on its first run.**
+This is the defect the regression harness was built to catch, and it invalidates part of what
+was recorded above; read this section before quoting any earlier CT or MPI result.
+
+| Field | Value |
+| --- | --- |
+| Revision | `3eaae22` (present since the CT implementation, `dced139`) |
+| Reproducer | `claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot` |
+| Status | **OPEN** — characterized and attributed, root cause not yet found. Concern C14. |
+
+### The measurement
+
+Mesh resolution held FIXED at 48 x 48 on a square periodic box; only the meshblock size
+varies, so the block count along x1 is the only thing that moves:
+
+| blocks along x1 | `max abs(divB)` | verdict |
+| --- | --- | --- |
+| 2 | 6.796e-17 | ok |
+| 3 | 6.510e-17 | ok |
+| **4** | **6.160e-08** | **BROKEN** |
+| **6** | **6.386e-11** | **BROKEN** |
+
+The control matters and was nearly botched. A first pass swept `nx1` and the block size
+together and concluded "4 blocks in x1 breaks, 4 blocks in x2 does not" -- both halves were
+partly resolution artifacts, and the x1/x2 asymmetry disappeared entirely once the box and
+resolution were made square. Nothing below rests on a column where more than one thing moved.
+
+### Scope, established by controlled variation
+
+| Axis varied | Result |
+| --- | --- |
+| Direction | Fails in x1 AND x2 (square box, 64 x 64: 1.412e-09 and 1.228e-10) |
+| Dimensionality | Fails in 2D and in 3D (3D field loop, 4 blocks along x1: `eta` 1.8e-06 vs 1.7e-15 at 2 blocks) |
+| Reconstruction | Fails with CONSTANT, PLM and PPM4 -- so it is NOT a reconstruction stencil or ghost-width problem |
+| `nghost` | 2, 3, 4 all fail, slightly WORSE with more ghosts -- rules out the ghost budget |
+| Riemann solver | Fails with `mhd_hlle`, `mhd_hlld`, `mhd_llf` |
+| Rank count | Serial and 4 ranks give the SAME value (1.412e-09) -- not a communication-order or MPI bug |
+| Boundary condition | 4 blocks with `outflow` on that axis is CLEAN (9.267e-17). **Periodicity is required.** |
+
+### Mechanism, as far as it is pinned down
+
+Dumping `f.bulk.magnetic_field` and comparing a 4-block run against a 1-block run of the same
+problem:
+
+- The shared faces **are** single-valued: block b's face at its high edge equals block b+1's
+  face at its low edge, `max abs(diff) = 0.0` exactly, at every block boundary. So the ghost
+  exchange is not leaving two different values behind.
+- But the shared face between blocks 0 and 1 differs from the single-block solution by
+  **4.123e-11**, while other shared faces differ by only ~5e-14.
+- `4.123e-11 / dx = 1.32e-09`, which is the observed `max abs(divB)` to three digits.
+
+So the two adjacent blocks compute DIFFERENT constrained-transport updates for the same
+shared face; single-valuing then keeps one of the two, and the block whose value was discarded
+no longer has a balanced divergence budget. That is exactly the failure mode CT cannot
+recover from: the constraint is preserved algebraically thereafter, so the error is frozen in
+for the rest of the run rather than decaying.
+
+Confirmed frozen: with the `mhd/monitor_divb` output, `max abs(divB)` is at roundoff through
+cycle 66, jumps to 7.043e-10 at cycle 67 and 1.411662e-09 at cycle 68, and then holds
+1.411662e-09 unchanged to the end of the run. A single injection event, faithfully preserved.
+
+What is NOT yet explained: why four blocks along an axis differs from three. All the inputs to
+the boundary edge EMF (the extended transverse flux layer, the ghost cell-centered field and
+velocity, the mass flux used by the upwind selector) are, by inspection, available and are
+bitwise copies of the neighbour's interior data in every layout. The mass flux is ~2.0 and
+uniform, so the `UpwindEMFGradient` branch cannot be flipping. Three blocks and four blocks
+differ in that with three every block is a neighbour of every other, which points at
+neighbour-set or block-ownership handling rather than at the EMF arithmetic -- but that is a
+hypothesis, not a finding.
+
+### Attribution: this is the port's defect, NOT inherited from the donor
+
+Required control, run rather than assumed (see the "do not repeat" entry on attribution):
+
+```
+mkdir -p /tmp/art_fl && cd /tmp/art_fl
+/Users/taitano/Documents/git/artemis/build/src/artemis \
+  -i /Users/taitano/Documents/git/artemis/inputs/field_loop/field_loop.in \
+  parthenon/job/problem_id=art_4blk parthenon/time/nlim=200
+```
+
+The donor's own DEFAULT field-loop deck is `nx1 = 64, nx2 = 32` on `16 x 16` meshblocks --
+that is **four blocks along x1**, precisely the failing layout. It gives relative div B of
+**3.244e-15** and its regression test passes at a 1e-10 threshold. RIOT in the same layout
+gives 4.4e-08. Same Parthenon pin, same `nghost = 2`.
+
+### Why every earlier test missed it
+
+Every CT test recorded above used at most TWO blocks along any axis:
+
+- G4.2 2D field loop: 4 blocks as 2 x 2.
+- G4.3 3D axial-field test: 8 blocks as 2 x 2 x 2.
+- P01 MPI rank invariance: ranks 1/2/3/4/5/8 -- but always over that same 2 x 2 x 2 layout.
+  Sweeping the RANK count over a fixed block layout does not vary the block layout, and it is
+  the layout that matters here. P01's conclusion (results are rank-invariant) is still true and
+  still passes; it simply never covered this.
+- G4.4 Orszag-Tang: 4 blocks as 2 x 2.
+- G5.5 reconstruction certification, G5.6 restart, G5.8 LLF, G5.9 instrumentation: all reused
+  those decks.
+- Brio-Wu is 1D, where `divB = d_1 B1` with B1 uniform, so it is identically zero whatever the
+  decomposition and cannot detect this.
+
+The gap was systematic, not accidental: the two-block layout is what the four MHD input decks
+ship with, and every test inherited it.
+
+### Consequence for claims already made
+
+`CAPABILITY_MATRIX.md` has been corrected: "CT face update preserves div B" and the MPI row
+are now qualified as validated only for at most two blocks per axis. No result recorded above
+is retracted -- each was measured on the layout it states -- but the general claim that
+constrained transport preserves the constraint is now known to be false outside that envelope.
+
+---
+
+## G5.11 — `tst/scripts/mhd/` regression harness, 2026-09-19
+
+The MHD tests are now suite members driven by `tst/run_tests.py mhd`, not ad-hoc scripts.
+
+| Field | Value |
+| --- | --- |
+| Command | `cd tst && python run_tests.py mhd --reuse_build --save_build` |
+| Artifacts | `tst/scripts/mhd/{__init__,brio_wu,field_loop,orszag_tang,cpaw}.py`, `tst/scripts/utils/mhd_analysis.py` |
+| Result | **3 of 4 pass. `field_loop` FAILS, and the failure is real — see D01.** |
+
+| Test | Time | Result |
+| --- | --- | --- |
+| `mhd/brio_wu` | 4.2 s | **PASS** |
+| `mhd/cpaw` | 11.3 s | **PASS** |
+| `mhd/orszag_tang` | 2.7 s | **PASS** |
+| `mhd/field_loop` | 97.5 s | **FAIL — defect D01, not a threshold problem** |
+
+Total under two minutes, which matters: a suite slower than the hydro suite (carbuncle alone is
+159 s) would get skipped.
+
+### Where the helper module lives, and why
+
+`scripts/utils/mhd_analysis.py`, NOT `scripts/mhd/`. `run_tests.py` treats every module it finds
+in a suite directory as a test and calls `run()`/`analyze()` on it, so a helper placed next to the
+tests is collected and fails. `scripts/utils` is excluded from collection.
+
+### Design decision: no vendored reference data (concern C8)
+
+`brio_wu` asserts no absolute L1 against the Athena++ reference. That reference lives outside this
+repository, and vendoring it into `tst/scripts/gold/files` would change the gold release assets,
+which is a user decision. Instead the test asserts only oracle-independent criteria, which are the
+stronger evidence anyway:
+
+- Structural invariants that are EXACT statements rather than tolerances — `Bx` stays 0.75 (the
+  field is uniform along x, so `div B = d_1 B1 = 0` identically), and `vz`/`Bz` stay identically
+  zero because the problem is coplanar and nothing can generate them. All measured at exactly 0.0.
+- **The solver diffusivity ordering HLLD < HLLE < LLF**, which follows from wave structure (five
+  resolved waves vs two vs none) and needs no reference solution. This is the criterion that
+  catches a silently degraded solver — an HLLD whose guards fire everywhere would leave every
+  other check in the file passing.
+
+#### How the ordering is measured without a reference, and without stacking the deck
+
+Each solver's L1 is taken against a 4x-resolution run RESTRICTED onto the coarse grid by exact
+volume averaging (`restrict1d` — on a uniform mesh the cell average over a group of fine cells IS
+the coarse cell average, so this adds no error of its own; interpolating instead would add an
+O(dx^2) term of unknown sign to every comparison).
+
+Measuring against a fine run of solver X flatters X, because X's truncation error is self-similar
+across resolutions and partly cancels. So each inequality is asserted against the reference that
+biases AGAINST it:
+
+| Inequality | Reference used | Which solver that favours |
+| --- | --- | --- |
+| HLLD < HLLE | fine HLLE | HLLE — i.e. against the claim |
+| HLLE < LLF | fine LLF | LLF — i.e. against the claim |
+
+Neither inequality is ever evaluated against a reference built with its own winner. Measured
+ratios, all five fields, both comparisons:
+
+| field | HLLD/HLLE (ref: fine HLLE) | HLLE/LLF (ref: fine LLF) |
+| --- | --- | --- |
+| rho | 0.659 | 0.829 |
+| press | 0.708 | 0.798 |
+| vx | 0.821 | 0.872 |
+| vy | 0.723 | 0.843 |
+| By | 0.731 | 0.832 |
+
+Strictly monotone everywhere with 13-34% margin, and the HLLD/HLLE column reproduces the 0.65-0.80
+range measured against the genuinely independent Athena++ reference in G5.2 — which is worth more
+than either number alone, since the two use different oracles and agree.
+
+### Thresholds
+
+`field_loop` and `orszag_tang` take the DONOR's thresholds verbatim from
+`artemis/tst/scripts/mhd/{field_loop,orszag_tang}.py`, together with its metric DEFINITIONS — a
+threshold is meaningless without the normalization it was calibrated against. `cpaw` uses the
+donor's linwave convergence criterion (ratio <= 0.35).
+
+**One threshold is tight and is recorded as such rather than quietly adjusted:** cpaw's N=32/16
+ratio is 0.3406 against the 0.35 bound, a 2.7% margin. That is the donor's frozen number and the
+measured value, so it stays; but it means this criterion will flag on a small regression, and the
+first response should be to read the observed-order column (1.554 there, rising to 1.735 at
+N=64/32) rather than to loosen the bound. The N=16 point is simply too coarse for an asymptotic
+ratio.
+
+### Coverage differences from the donor, stated rather than glossed
+
+- The donor's second field-loop case is a loop tilted onto a box DIAGONAL. RIOT's generator offers
+  `loop_axis` (1/2/3), which rotates the loop onto each axis, so the 3D case sweeps all three axes
+  — covering every pair of EMF components — but nothing here propagates a loop obliquely to the
+  grid (concern C9).
+- The 2D field-loop case runs with `v3 = 1.0`, overriding the deck's 0.0. With `v3 = 0` the
+  axial-field criterion is VACUOUS: the check is that `d_t B3 = v3 (d_1 B1 + d_2 B2) = v3 div B`
+  cancels between `E1 = -v3 B2` and `E2 = +v3 B1`, and with `v3 = 0` there is nothing to cancel.
+  Turning it on is what made the suite non-trivial — though the failure it exposed (D01) turned out
+  to be independent of `v3`.
+- `cpaw` pins `plm` rather than sweeping reconstruction. With `rk2` at fixed CFL, `weno5`/`mp5`
+  would fail a 0.35 ratio while being far MORE accurate, because the O(dt^2) term floors them
+  (G5.5). Reconstruction coverage is G5.5's job, not this test's.
+- `orszag_tang` checks the t=0 snapshot as well as the final one. Every criterion except shock
+  heating is meaningful at t=0 and is a STRONGER statement there, because the analytic box means
+  are exact for the discrete initial state — so that snapshot validates the problem generator
+  rather than only the time integration.

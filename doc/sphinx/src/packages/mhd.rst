@@ -251,6 +251,25 @@ Expect :math:`\eta` at roundoff. A growing :math:`\eta` means a defect
 in the port, not a tolerance to be relaxed; the correct response is
 never to enable a divergence-cleaning step to conceal it.
 
+.. warning::
+
+   **Known defect.** With **four or more mesh blocks along a periodic
+   axis**, the divergence constraint is violated at roundoff level
+   :math:`\times 10^{8}`: :math:`\max|\nabla\!\cdot\!\vec{B}|` measures
+   :math:`6\times10^{-8}` where the same problem on two blocks per axis
+   gives :math:`7\times10^{-17}`. Adjacent blocks compute different
+   updates for the shared face between them, and the block whose value
+   is discarded no longer has a balanced divergence budget; constrained
+   transport then preserves that error for the rest of the run.
+
+   Until this is fixed, keep to **at most two mesh blocks along each
+   periodic axis** — increase the meshblock size rather than splitting
+   an axis further — and set ``mhd/monitor_divb`` to confirm
+   :math:`\eta` stays at roundoff for your decomposition. Non-periodic
+   axes are unaffected. The defect is independent of the
+   reconstruction, the Riemann solver, the ghost width, and the MPI
+   rank count.
+
 Two solver-health counters are reported **unconditionally**, whenever
 they increase, as a cumulative count and as a per-cell-per-step rate:
 

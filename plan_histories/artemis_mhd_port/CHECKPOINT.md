@@ -110,6 +110,28 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   true at Stage 2 and badly wrong now — and it is the file everything else points at for what
   may be claimed.
 
+## STOP: one live defect blocks Gate G5
+
+**D01 / C14 — constrained transport does not preserve div B when a periodic axis is split into
+four or more mesh blocks.** At fixed 48x48 resolution, `max|divB|` is 6.8e-17 at two blocks along
+x1, 6.5e-17 at three, and **6.2e-08 at four**. Fails in x1 and x2, 2D and 3D, every reconstruction
+(including CONSTANT) and every solver, identically in serial and on 4 ranks, at nghost 2/3/4.
+Requires periodic boundaries; the same layout with `outflow` is clean. **The donor is clean in the
+identical layout — its own default field-loop deck is four blocks along x1 — so this is the port's
+defect, not inherited.**
+
+Adjacent blocks compute different CT updates for their shared face; the face is single-valued
+afterwards, but the block whose value was discarded no longer has a balanced divergence budget, and
+CT then preserves that error unchanged for the rest of the run.
+
+Every earlier CT test used at most two blocks per axis, because that is what the four MHD decks
+ship with. P01 swept the RANK count over a fixed 2x2x2 layout — and it is the layout, not the rank
+count, that matters here.
+
+Reproducer: `python claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot`.
+Full characterization: TEST_LEDGER D01. Next hypothesis to test: block-ownership / neighbour-set
+handling, since three blocks (where every block neighbours every other) is clean and four is not.
+
 ## Open concerns — READ THIS BEFORE CLAIMING ANYTHING
 
 **[`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) is the register of doubts about work already done**, as
@@ -242,9 +264,15 @@ only, so no test propagates a wave obliquely to the grid.
    mistyped `:ref:` renders as literal text rather than erroring by default. Note the venv
    binary is named `clang-format`, not `clang-format-20`, despite being 20.1.8 — `format.sh`
    aborts with "No clang format found" if you pass the versioned name.
-9. Remaining Stage 5: the `tst/scripts/mhd/` harness, and the eight-suite regression sweep
-   LAST (C1). The sweep is hours of runtime but nearly free in context, so it is the one item
-   worth backgrounding.
+9. ~~**`tst/scripts/mhd/` harness**~~ — **DONE** (TEST_LEDGER G5.11). `cd tst && python
+   run_tests.py mhd --reuse_build --save_build`, under two minutes total. **3 of 4 pass;
+   `field_loop` fails on defect D01, which the harness found on its first run.** Helper module is
+   at `scripts/utils/mhd_analysis.py`, NOT in `scripts/mhd/` — `run_tests.py` collects every
+   module in a suite directory as a test and would call `run()`/`analyze()` on a helper.
+10. **Fix D01** (see the STOP section above). This blocks Gate G5.
+11. The eight-suite regression sweep LAST (C1). Hours of runtime but nearly free in context, so
+    it is the one item worth backgrounding. Do it after D01 is fixed, so it validates the fixed
+    state rather than needing a re-run.
 
 ## Do not repeat
 

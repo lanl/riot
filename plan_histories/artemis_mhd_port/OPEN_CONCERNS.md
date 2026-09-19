@@ -13,12 +13,62 @@ Rules for this file:
 - Severity is about **what a defect here would cost**, not about how likely it is.
 - If a concern is a guess rather than a measurement, it says so.
 
-Last updated: 2026-09-19, after G5.9 (counters + div B monitor). **C2, C5, C6 and C7 are resolved.**
+Last updated: 2026-09-19, after the MHD regression harness landed. **C14 is new and is the most
+serious entry in this file: constrained transport does not preserve div B when a periodic axis is
+split into four or more mesh blocks.** It was found by the new `tst/scripts/mhd/field_loop` test on
+its first run, which is the clearest possible argument for building the harness rather than relying
+on the ad-hoc runs that had already "validated" CT.
+
+Earlier: after G5.9 (counters + div B monitor). **C2, C5, C6 and C7 are resolved.**
 Between them they found six real defects and forced one correction to an earlier recorded claim
 (G5.8's field-loop corroboration), which is the argument for keeping this file honest rather
 than optimistic. C13 is new: RIOT restarts are not bitwise for derived primitives. An initial claim that this was
 "pre-existing" rested on a control that did not use the pre-port binary; the proper A/B against
 `193b3fa` has since been run and confirms it, with identical numbers.
+
+---
+
+## C14 — CT loses div B with four or more blocks per periodic axis [HIGH — this is a live defect, not a doubt]
+
+Unlike every other entry in this file, this is not a place where a defect *could* be hiding. It is
+a measured, reproducible defect with an attribution control already run.
+
+**Symptom.** With the mesh resolution held fixed and only the meshblock size varied, `max|div B|`
+on the 2D field loop is 6.8e-17 at two blocks along x1, 6.5e-17 at three, and **6.2e-08 at four**,
+6.4e-11 at six. Fails in x1 and x2, in 2D and 3D, with every reconstruction (including CONSTANT)
+and every solver, identically in serial and on 4 ranks, and at nghost 2, 3 and 4. Requires
+periodic boundaries on that axis: the same layout with `outflow` is clean at 9.3e-17.
+
+**Mechanism, pinned down but not explained.** The shared faces are single-valued (adjacent blocks
+agree exactly), but the shared face value differs from a single-block run of the same problem by
+4.1e-11, and 4.1e-11/dx reproduces the observed `max|div B|` to three digits. So adjacent blocks
+compute different CT updates for the same shared face; single-valuing discards one, and that
+block's divergence budget no longer balances. The `mhd/monitor_divb` trace shows a single injection
+event at cycle 67-68 and then a value frozen to the last digit for the rest of the run — CT
+faithfully preserving an error it cannot undo.
+
+**Attribution: the port's, not the donor's.** The donor's own default field-loop deck is four
+blocks along x1 and it reports relative div B of 3.2e-15 with the same Parthenon pin and the same
+`nghost = 2`. Control command in TEST_LEDGER D01.
+
+**Why it survived everything.** Every CT test in the ledger used at most two blocks per axis,
+because that is what the four MHD decks ship with. P01 swept the RANK count (1/2/3/4/5/8) but
+always over a fixed 2x2x2 block layout — and it is the layout, not the rank count, that matters
+here. Brio-Wu cannot detect it at all: in 1D `div B = d_1 B1` with B1 uniform.
+
+**Severity.** A divergence-constraint violation is not a tolerance to be relaxed, and four or more
+blocks along an axis is an ordinary production decomposition — it is the donor's own default. Until
+this is fixed, any claim that RIOT's constrained transport preserves the constraint must be
+qualified to at most two blocks per axis, which is how `CAPABILITY_MATRIX.md` now reads.
+
+**Hypothesis to test first** (a guess, flagged as such): block-ownership or neighbour-set handling
+for shared faces and edges. Three blocks is clean and four is not, and the structural difference is
+that with three blocks on a periodic axis every block is a neighbour of every other, so the
+neighbour set is degenerate. All the *arithmetic* inputs to a boundary-edge EMF appear by
+inspection to be available and to be bitwise copies of the neighbour's interior data in every
+layout, and the upwind selector cannot be flipping because the mass flux is uniform at ~2.0.
+
+Reproducer: `claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot`.
 
 ---
 
