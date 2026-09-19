@@ -76,6 +76,39 @@ void RequireMHD(MeshBlock *pmb, const char *problem) {
                     std::string(problem) + " requires MHD; set <physics>/mhd = true.");
 }
 
+//----------------------------------------------------------------------------------------
+//! \brief The field-loop vector potential, evaluated at a NODE, for a loop whose axis is
+//!        along `axis`. Only the component along the axis is nonzero, and it is a
+//!        function of the two perpendicular node coordinates only.
+//!
+//! A plain functor with a KOKKOS_INLINE_FUNCTION call operator rather than a lambda,
+//! because it is invoked from inside a KOKKOS_LAMBDA and nesting an extended device
+//! lambda inside another is not portable.
+struct LoopPotential {
+  parthenon::Coordinates_t coords;
+  Real amp, rloop, c_a, c_b;
+  int axis;
+
+  //! Perpendicular node coordinates for each axis, taken in cyclic order so the sign
+  //! conventions of the curl below stay right-handed: axis 1 -> (x2, x3),
+  //! axis 2 -> (x3, x1), axis 3 -> (x1, x2).
+  KOKKOS_INLINE_FUNCTION Real operator()(const int k, const int j, const int i) const {
+    Real pa, pb;
+    if (axis == 1) {
+      pa = coords.Xf<parthenon::X2DIR>(j);
+      pb = coords.Xf<parthenon::X3DIR>(k);
+    } else if (axis == 2) {
+      pa = coords.Xf<parthenon::X3DIR>(k);
+      pb = coords.Xf<parthenon::X1DIR>(i);
+    } else {
+      pa = coords.Xf<parthenon::X1DIR>(i);
+      pb = coords.Xf<parthenon::X2DIR>(j);
+    }
+    const Real r = std::sqrt(SQR(pa - c_a) + SQR(pb - c_b));
+    return (r < rloop) ? amp * (rloop - r) : 0.0;
+  }
+};
+
 } // namespace
 
 //========================================================================================
@@ -195,18 +228,36 @@ namespace mhd_field_loop {
 
 //----------------------------------------------------------------------------------------
 //! \fn  void mhd_field_loop::ProblemGenerator
-//! \brief A weak magnetic field loop advected diagonally across a periodic box.
+//! \brief A weak magnetic field loop advected across a periodic box.
 //!
-//! A3 = a0 * max(0, r_loop - r) with r measured from the loop center, so
-//! B = curl A is a purely in-plane loop of field confined to r < r_loop, embedded in a
-//! uniform, uniformly moving gas. The field is dynamically negligible (beta ~ 1e6), so
-//! the exact solution is pure advection: after one crossing time the loop must return to
-//! its initial position with its shape and magnetic energy intact.
+//! The vector potential has a single nonzero component along the loop axis,
+//! A_axis = a0 * max(0, r_loop - r) with r measured from the axis, so B = curl A is a
+//! loop of field in the plane perpendicular to the axis, confined to r < r_loop and
+//! embedded in a uniform, uniformly moving gas. The field is dynamically negligible (beta
+//! ~ 1e6), so the exact solution is pure advection: after one crossing time the loop must
+//! return to its initial position with its shape and magnetic energy intact.
 //!
-//! This is the sharpest available test of the CT implementation, because the two failure
-//! modes it exposes are ones no 1D test can see: an EMF averaging error diffuses the loop
-//! (energy decays) and an orientation or upwinding error distorts it anisotropically even
-//! though the advection velocity is uniform.
+//! In 2D this is the sharpest available test of the CT implementation, because the two
+//! failure modes it exposes are ones no 1D test can see: an EMF averaging error diffuses
+//! the loop (energy decays) and an orientation or upwinding error distorts it
+//! anisotropically even though the advection velocity is uniform.
+//!
+//! ** In 3D WITH A VELOCITY COMPONENT ALONG THE LOOP AXIS it becomes something stronger.
+//! ** This is Gardiner & Stone (2005) section 5.4. Take the axis to be x3, so B = (B1,
+//! B2, 0) and v = (v1, v2, v3) with v3 != 0. Then
+//!
+//!   E1 = v3 B2,   E2 = -v3 B1,   E3 = v2 B1 - v1 B2
+//!
+//! are all nonzero, and the axial field evolves as
+//!
+//!   d_t B3 = -(d_1 E2 - d_2 E1) = v3 (d_1 B1 + d_2 B2) = v3 * div B = 0.
+//!
+//! So B3 must remain EXACTLY zero -- but only because the two transverse EMFs cancel
+//! against each other. Any inconsistency between how E1 and E2 are assembled shows up
+//! immediately as a spurious axial field, with nothing to hide behind. That makes
+//! `max abs(B3)` a direct, quantitative check on `MHD::UpwindEMF<X1DIR>` and `<X2DIR>`,
+//! which are unreachable in 2D (there the collapsed branch is used instead). `loop_axis`
+//! rotates the whole setup so each of the three edge directions can be checked in turn.
 void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -231,8 +282,16 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real v3 = pin->GetOrAddReal("mhd_field_loop", "v3", 0.0);
   const Real a0 = pin->GetOrAddReal("mhd_field_loop", "amp", 1.0e-3);
   const Real rloop = pin->GetOrAddReal("mhd_field_loop", "r_loop", 0.3);
-  const Real x1c0 = pin->GetOrAddReal("mhd_field_loop", "x1_center", 0.0);
-  const Real x2c0 = pin->GetOrAddReal("mhd_field_loop", "x2_center", 0.0);
+  // Loop axis. The vector potential and the two nonzero face components rotate with it,
+  // so axis = 1/2/3 puts the same physical setup on a different pair of edge directions.
+  // Used to check all three permutations of the EMF kernel; see the note above on why the
+  // 3D case with a velocity along the axis is the load-bearing test.
+  const int axis = pin->GetOrAddInteger("mhd_field_loop", "loop_axis", 3);
+  PARTHENON_REQUIRE(axis >= 1 && axis <= 3,
+                    "mhd_field_loop/loop_axis must be 1, 2, or 3");
+  // Loop center, in the two coordinates perpendicular to the axis, cyclic order.
+  const Real ax1c = pin->GetOrAddReal("mhd_field_loop", "center_a", 0.0);
+  const Real ax2c = pin->GetOrAddReal("mhd_field_loop", "center_b", 0.0);
 
   const int nummat =
       v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
@@ -261,39 +320,56 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
             uu + 0.5 * rho0 * (SQR(v1) + SQR(v2) + SQR(v3));
       });
 
-  // A3 on the E3 edge at (x1f(i), x2f(j)); zero outside the loop. A1 = A2 = 0, so
-  // B1 = dA3/dx2, B2 = -dA3/dx1, B3 = 0.
-  auto a3 = KOKKOS_LAMBDA(const int i, const int j) {
-    const Real dx = coords.Xf<parthenon::X1DIR>(i) - x1c0;
-    const Real dy = coords.Xf<parthenon::X2DIR>(j) - x2c0;
-    const Real r = std::sqrt(SQR(dx) + SQR(dy));
-    return (r < rloop) ? a0 * (rloop - r) : 0.0;
-  };
+  // The vector potential, evaluated at the node (x1f(i), x2f(j), x3f(k)). Only the
+  // component along `axis` is nonzero, and it depends only on the two coordinates
+  // perpendicular to the axis -- so evaluating it at the node and then differencing it
+  // along one perpendicular direction gives exactly the value it would have on the edge
+  // along `axis`. That is what makes the two face components below a discrete curl of a
+  // single-valued potential, and hence div B = 0 as an algebraic identity.
+  //
+  // A POD functor rather than a captured lambda: a KOKKOS_LAMBDA defined inside another
+  // KOKKOS_LAMBDA is not portable (nvcc rejects a nested extended device lambda), and
+  // this is called from inside the par_for bodies below.
+  LoopPotential apot{coords, a0, rloop, ax1c, ax2c, axis};
 
   const Real dx1 = coords.Dx<parthenon::X1DIR>();
   const Real dx2 = coords.Dx<parthenon::X2DIR>();
+  const Real dx3 = coords.Dx<parthenon::X3DIR>();
 
-  // The x1 faces run to ib.e + 1; the extra plane is why each element gets its own
-  // bounds.
+  // B = curl A with only A_axis nonzero, cyclically:
+  //   axis 3:  B1 = +dA3/dx2,  B2 = -dA3/dx1,  B3 = 0
+  //   axis 1:  B2 = +dA1/dx3,  B3 = -dA1/dx2,  B1 = 0
+  //   axis 2:  B3 = +dA2/dx1,  B1 = -dA2/dx3,  B2 = 0
+  // Each face element gets its own bounds because the face normal direction carries one
+  // extra plane.
   auto f1 = pmb->cellbounds.GetBoundsI(IndexDomain::entire, TE::F1);
   pmb->par_for(
       "ProblemGenerator::mhd_field_loop_b1", kb.s, kb.e, jb.s, jb.e, f1.s, f1.e,
       KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        v(0, TE::F1, fbulk::magnetic_field(), k, j, i) = (a3(i, j + 1) - a3(i, j)) / dx2;
+        Real b1 = 0.0;
+        if (axis == 3) b1 = (apot(k, j + 1, i) - apot(k, j, i)) / dx2;
+        if (axis == 2) b1 = -(apot(k + 1, j, i) - apot(k, j, i)) / dx3;
+        v(0, TE::F1, fbulk::magnetic_field(), k, j, i) = b1;
       });
 
   auto j2 = pmb->cellbounds.GetBoundsJ(IndexDomain::entire, TE::F2);
   pmb->par_for(
       "ProblemGenerator::mhd_field_loop_b2", kb.s, kb.e, j2.s, j2.e, ib.s, ib.e,
       KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        v(0, TE::F2, fbulk::magnetic_field(), k, j, i) = -(a3(i + 1, j) - a3(i, j)) / dx1;
+        Real b2 = 0.0;
+        if (axis == 3) b2 = -(apot(k, j, i + 1) - apot(k, j, i)) / dx1;
+        if (axis == 1) b2 = (apot(k + 1, j, i) - apot(k, j, i)) / dx3;
+        v(0, TE::F2, fbulk::magnetic_field(), k, j, i) = b2;
       });
 
   auto k3 = pmb->cellbounds.GetBoundsK(IndexDomain::entire, TE::F3);
   pmb->par_for(
       "ProblemGenerator::mhd_field_loop_b3", k3.s, k3.e, jb.s, jb.e, ib.s, ib.e,
       KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        v(0, TE::F3, fbulk::magnetic_field(), k, j, i) = 0.0;
+        Real b3 = 0.0;
+        if (axis == 1) b3 = -(apot(k, j + 1, i) - apot(k, j, i)) / dx2;
+        if (axis == 2) b3 = (apot(k, j, i + 1) - apot(k, j, i)) / dx1;
+        v(0, TE::F3, fbulk::magnetic_field(), k, j, i) = b3;
       });
 
   MHD::AddMagneticEnergyToTotal(pmb);

@@ -383,3 +383,73 @@ last digits of a quantity with ~10 orders of cancellation. **For "hydro unchange
 A/B above rather than comparing against a stored MD5.** A stored hash looks like the
 stronger check and is actually the weaker one, because it silently conflates a build
 difference with a code regression.
+
+---
+
+## G4.3 — 3D constrained transport: the axial-field test
+
+This closes the coverage gap flagged after G4.2. In 2D, `MHD::UpwindEMF<X1DIR>` and
+`<X2DIR>` are never reached — `AssembleEdgeEMF` takes the collapsed branch for any edge
+whose basis has a collapsed E3 direction — so the full upwind reconstruction had only ever
+run for the `X3DIR` edge. A 3D run reaches all three.
+
+**Why this particular test rather than a generic 3D run.** Gardiner & Stone (2005) section
+5.4: advect a 2D field loop in 3D with a velocity component *along* the loop axis. With the
+axis on x3, B = (B1, B2, 0) and v = (v1, v2, v3), so
+
+```
+E1 = v3 B2      E2 = -v3 B1      E3 = v2 B1 - v1 B2
+d_t B3 = -(d_1 E2 - d_2 E1) = v3 (d_1 B1 + d_2 B2) = v3 * div B = 0
+```
+
+All three EMFs are nonzero, and the axial component must stay exactly zero — but only
+because E1 and E2 cancel against each other. Any inconsistency between how the two are
+assembled appears immediately as a spurious axial field, with no other term to absorb it.
+So `max abs(B_axial)` is a direct, quantitative probe of exactly the code paths 2D could not
+reach. A generic 3D run would exercise the branches without testing them against anything.
+
+`mhd_field_loop/loop_axis` rotates the vector potential and the two nonzero face components
+cyclically, so each pair of edge directions is checked in turn.
+
+64 x 32 x 32 on a 2 x 1 x 1 periodic box in **8 mesh blocks**, v = (2, 1, 1), one full
+crossing in every direction (tlim = 1), `amp = 1e-3`, `r_loop = 0.3`, gamma = 5/3.
+
+```
+build/src/riot -i inputs/mhd/field_loop_3d.rin mhd_field_loop/loop_axis={1,2,3}
+```
+
+| Run | `max abs(B_axial)/max abs(B)` | `eta` | Emag retained | `dE/E` |
+| --- | --- | --- | --- | --- |
+| 8 blocks, axis = 1 | 5.80e-15 | 5.02e-15 | 0.7638 | 2.0e-16 |
+| 8 blocks, axis = 2 | 1.39e-15 | 3.92e-15 | 0.7261 | 7.9e-16 |
+| 8 blocks, axis = 3 | 1.44e-15 | 4.06e-15 | 0.7261 | 5.9e-16 |
+| 1 block,  axis = 3 | 1.44e-15 | 4.06e-15 | 0.7261 | — |
+
+Frozen thresholds: axial field <= 1e-10 normalized, `eta` <= 1e-10, Emag retained >= 0.5.
+**All three permutations PASS**, with the axial field at roundoff rather than merely small.
+
+Axis 2 and 3 give identical energy retention while axis 1 retains more. That is expected,
+not an anomaly: the in-plane advection speeds are {1,2} for axes 2 and 3 but {1,1} for axis
+1, so axis 1 sees less numerical diffusion. All three perpendicular planes have the same
+grid spacing (1/32), which is why axes 2 and 3 agree exactly.
+
+### P01 (partial) — decomposition invariance in 3D
+
+The same case at 1 block versus 8 blocks, compared after reassembling the 8 blocks onto the
+global grid via `LogicalLocations`:
+
+| Field | Result |
+| --- | --- |
+| `c.c.bulk.magnetic_field` | **exact**, max abs diff 0 |
+| `c.c.bulk.rho` | **exact** |
+| `c.c.bulk.velocity` | **exact** |
+| `c.c.bulk.total_material_energy` | **exact** |
+| `c.c.bulk.magnetic_energy` | **exact** |
+| `c.c.bulk.div_magnetic_field` | **exact** |
+
+**Bitwise identical.** Block decomposition does not affect the result at all, which covers
+shared-face single-valuedness and edge-EMF agreement across block boundaries in 3D.
+
+**Still not covered:** this is all single-rank. P01 proper needs 2 and 4 MPI ranks — with
+one rank, a missing task dependency can still be masked by serial execution order, and the
+communication path itself is only exercised for on-rank neighbours.

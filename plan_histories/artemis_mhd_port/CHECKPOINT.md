@@ -25,8 +25,12 @@ multi-block field loop holds div B at roundoff.
   `MHDFluxes<DIR, FLUX_FN>` and `MHDFluxIndexSpace` (transverse-only bound extension).
 - **Upwind CT** (`src/mhd/emf.hpp`, `MHD::AssembleEdgeEMF`, `MHD::ApplyFaceUpdate`) with
   the five task-graph edges in `riot_driver.cpp`.
-- **Two problem generators**: `mhd_shock_tube` (Brio-Wu), `mhd_field_loop`. Inputs in
+- **Two problem generators**: `mhd_shock_tube` (Brio-Wu), `mhd_field_loop` (2D and 3D, with
+  a `loop_axis` option that rotates the setup onto each pair of edge directions). Inputs in
   `inputs/mhd/`.
+- **3D CT verified** (TEST_LEDGER G4.3): the Gardiner-Stone axial-field test passes in all
+  three permutations with the axial field at roundoff, and 1-block vs 8-block results are
+  bitwise identical.
 - **Tests**: `ctest` **34/34**; hydro regression 7/7; hydro output **bitwise identical to
   the pre-port commit**, established by a build-config-held-fixed A/B against `193b3fa`
   rather than by a stored MD5 (see TEST_LEDGER H01 re-run for why the stored hash is not a
@@ -38,18 +42,19 @@ multi-block field loop holds div B at roundoff.
 regression harness; HLLD and LLF; `mhd/monitor_divb` is registered but not yet consumed;
 restart of face state untested; test N01 (startup rejections) not run; U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
-two-stage RK MHD run.
+two-stage RK MHD run. **Everything verified so far is single-rank.**
 
 ## Next actions
 
 1. **Orszag-Tang pgen** — the remaining G4 item, and the one that exercises shocks with a
    magnetic field. Checks: `max|divB| <= 1e-10`, mean rho to rtol 1e-12, mean E to 1e-8,
    and the decomposition residual `|E - u - KE - E_mag| <= 1e-10`.
-2. **3D circularly polarized Alfven wave** in all direction permutations. 2D does not
-   certify 3D: the E1 edge EMF only takes its full upwind form when `three_d`, so the 3D
-   branch of `AssembleEdgeEMF` is currently unexercised.
-3. **MPI / decomposition invariance (P01)** — 1, 2, 4 ranks with varied block and pack
-   decompositions must agree. A single-rank run cannot expose a missing dependency.
+2. **MPI (P01)** — 2 and 4 ranks. Single-rank decomposition invariance in 3D is already
+   established and is bitwise (TEST_LEDGER G4.3/P01 partial), so what remains is genuinely
+   the communication path and the task-dependency graph, which serial ordering can mask.
+3. **3D circularly polarized Alfven wave**, for order-of-accuracy rather than for branch
+   coverage. The 3D EMF branches are now exercised AND checked (G4.3), so this is no longer
+   the coverage gap it was; it is now about convergence rate.
 4. **`tst/scripts/mhd/`** harness, adopting the donor's own thresholds.
 5. Stage 5: HLLD (keep its degeneracy guards verbatim, DONOR_KERNELS.md section 13), LLF,
    reconstruction certification, restart equivalence.
