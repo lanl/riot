@@ -44,10 +44,33 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
 //! divergence-free field and so would be useless as a diagnostic.
 void SetDerivedMagneticFields(MeshData<Real> *md, IndexDomain domain);
 
+//! Task-shaped wrapper for SetDerivedMagneticFields.
+TaskStatus SetDerived(MeshData<Real> *md, IndexDomain domain);
+
+//! Converts ccbulk::total_material_energy from the hydro convention to the MHD convention
+//! by adding B^2/(2 mu0). MUST be called at the end of every MHD problem generator; see
+//! the definition for why this cannot live in PostInitialization.
+void AddMagneticEnergyToTotal(MeshBlock *pmb);
+
 //! Post-problem-generator hook, installed as StateDescriptor::PostInitializationMesh.
 //! A problem generator writes only face B (plus the usual gas state); this derives
 //! everything else before the first total-energy assembly.
 void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
+
+//! Assembles the Gardiner-Stone upwind EMF on every edge of the interior into the edge
+//! flux register of the face magnetic field. Depends on the hydro flux task, which
+//! writes both the transverse induction fluxes and the material mass fluxes it reads.
+TaskStatus AssembleEdgeEMF(MeshData<Real> *md);
+
+//! Constrained-transport update of the face magnetic field: the Stokes curl of the edge
+//! EMFs, with the integrator's own low-storage RK coefficients applied exactly as
+//! sparse_update::UpdateToNextStage applies them to cell-centered state.
+//!
+//! `u0md` holds the state being advanced and the edge EMF register; `u1md` is the stage
+//! register. Face-centered independent state is deliberately excluded from
+//! UpdateToNextStage (which is a cell-centered flux divergence) and updated here instead.
+TaskStatus ApplyFaceUpdate(MeshData<Real> *u0md, MeshData<Real> *u1md, Real gam0,
+                           Real gam1, Real beta_dt);
 
 } // namespace MHD
 

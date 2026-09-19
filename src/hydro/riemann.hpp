@@ -22,7 +22,12 @@
 
 namespace Hydro {
 
-enum RiemannSolver { hllc, hllcf, chllc, lhllc, hll, strong };
+// mhd_hlle is the ideal-MHD solver (src/mhd/riemann_mhd.hpp). It is kept in this enum
+// rather than a separate one so the single hoisted `switch (rsolver_tag)` in
+// CalculateFluxesImpl continues to select every solver -- an MHD-specific dispatch would
+// either duplicate that switch or push a branch into an inner loop. `strong` is likewise
+// not an input option: it is substituted at runtime when material strength is on.
+enum RiemannSolver { hllc, hllcf, chllc, lhllc, hll, strong, mhd_hlle };
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::lr_to_flux_fleischmann

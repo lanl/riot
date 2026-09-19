@@ -108,9 +108,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // TODO(JMM): Move Carbuncle correction into HLLC solver
   std::string solver = pin->GetOrAddString(
       "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll"},
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "mhd_hlle"},
       "Riemann solver to use");
-  if (solver == "hllc") {
+  if (solver == "mhd_hlle") {
+    params.Add("riemann_solver", RiemannSolver::mhd_hlle);
+  } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
     if (parthenon::Globals::my_rank == 0) {
@@ -131,6 +133,20 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   } else {
     PARTHENON_THROW("Invalid Riemann solver option");
   }
+
+  // The MHD and hydro solvers are not interchangeable, and picking the wrong one is
+  // silent rather than fatal: a hydro solver run with MHD on would evolve the gas with no
+  // Lorentz force and leave the induction fluxes unwritten (so the field would simply
+  // stop evolving), while an MHD solver with MHD off would read an unallocated field.
+  // Both are rejected here. `physics/mhd` was already added by riot.cpp before this
+  // package is registered, so this read is just a lookup.
+  const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
+  const bool solver_is_mhd = (solver == "mhd_hlle");
+  PARTHENON_REQUIRE(do_mhd == solver_is_mhd,
+                    do_mhd ? "MHD requires an MHD Riemann solver; set hydro/riemann to "
+                             "one of: mhd_hlle."
+                           : "hydro/riemann = " + solver +
+                                 " is an MHD solver but <physics>/mhd is off.");
 
   // Thornber's low-Mach correction
   bool lm_correction =

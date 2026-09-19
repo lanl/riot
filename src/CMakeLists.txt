@@ -107,6 +107,7 @@ set (SRC_LIST
   riot_pgen/ionized_shocktube_analytic.cpp
   riot_pgen/linear_modes.hpp
   riot_pgen/linear_modes.cpp
+    riot_pgen/mhd_problems.cpp
   riot_pgen/pgen.hpp
   riot_pgen/pgen.cpp
   riot_pgen/pipe.cpp

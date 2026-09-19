@@ -26,6 +26,8 @@
 
 #include "hydro.hpp"
 #include "materials/materials.hpp"
+#include "mhd/mhd_helpers.hpp"
+#include "mhd/riemann_mhd.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "microphysics/pte_closure.hpp"
 #include "microphysics/strength_models.hpp"
@@ -206,6 +208,91 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
+    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
+    pv(te, ccbulk::face_signal(), kji) = signal_speed;
+    StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
+  });
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void Hydro::MHDFluxes
+//! \brief Bulk Riemann flux loop for the ideal-MHD solvers. The MHD analog of
+//!        BulkRiemannFluxes: same bulk momentum/energy fluxes and same face_vel /
+//!        riemann_vel scratch for the (solver-independent) material-density loop, plus
+//!        the transverse induction fluxes, which are written into the flux register of
+//!        ccbulk::magnetic_field. Those are what the constrained-transport EMF assembly
+//!        consumes, which is why that Derived field carries Metadata::WithFluxes.
+//!
+//!        Assumes the caller has already reconstructed ccbulk::magnetic_field into
+//!        mhd_minus/mhd_plus. The field component NORMAL to the interface is NOT taken
+//!        from that reconstruction: `bn` is the single face-centered value, shared by
+//!        both states, and the solver substitutes it over the normal slot of both
+//!        reconstructed triples internally (see lr_to_flux_mhd_hlle). Reconstructing all
+//!        three components and letting the solver discard the normal one is numerically
+//!        identical to the donor's skip-then-overwrite (DONOR_KERNELS.md section 11) and
+//!        keeps the substitution in one place instead of at every call site.
+template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
+          typename IdxRange, typename Delta, typename SetBulk, typename SumBulk,
+          typename MhdBulk, typename Scratch>
+KOKKOS_INLINE_FUNCTION void
+MHDFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
+          const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
+          const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
+          const MhdBulk &mhd_minus, const MhdBulk &mhd_plus, Scratch &face_vel,
+          Scratch &riemann_vel, const int b, const Real mu0, const bool store_vf) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  using TE = parthenon::TopologicalElement;
+  constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
+  auto fv = RiotLoop::make_flux_pack_view(idx_range, v, DIR);
+  auto pv = RiotLoop::make_pack_view(idx_range, v);
+  RiotLoop::inner(idx_range, [&](const auto kji) {
+    const auto kji_L = kji - delta;
+    const auto kji_R = kji;
+
+    // The face-centered normal field is read straight off the pack with logical
+    // coordinates. It must NOT go through `pv`: face storage is node-shaped, so the flat
+    // view's cell-shaped memory indexer would silently address the wrong element (see
+    // MHD::FaceB). Everything else in this kernel is cell-centered, so the loop keeps
+    // the fast flat inner contract.
+    const auto [k, j, i] = idx_range.GetKJI(kji);
+    const Real bn = MHD::FaceB(v, b, te, k, j, i);
+
+    const Real cs_L = BulkSoundSpeed(set_bulk_plus(ccbulk::bulk_modulus(), kji_L),
+                                     sum_bulk_plus(ccbulk::rho(), kji_L));
+    const Real cs_R = BulkSoundSpeed(set_bulk_minus(ccbulk::bulk_modulus(), kji_R),
+                                     sum_bulk_minus(ccbulk::rho(), kji_R));
+
+    Real f_v1, f_v2, f_v3, f_eng, f_b1, f_b2, f_b3, v1face, v2face, v3face;
+    const Real signal_speed =
+        FLUX_FN(sum_bulk_plus(ccbulk::rho(), kji_L), sum_bulk_minus(ccbulk::rho(), kji_R),
+                set_bulk_plus(ccbulk::velocity(0), kji_L),
+                set_bulk_minus(ccbulk::velocity(0), kji_R),
+                set_bulk_plus(ccbulk::velocity(1), kji_L),
+                set_bulk_minus(ccbulk::velocity(1), kji_R),
+                set_bulk_plus(ccbulk::velocity(2), kji_L),
+                set_bulk_minus(ccbulk::velocity(2), kji_R),
+                sum_bulk_plus(ccbulk::internal_energy(), kji_L),
+                sum_bulk_minus(ccbulk::internal_energy(), kji_R),
+                set_bulk_plus(ccbulk::pressure(), kji_L),
+                set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R, bn,
+                mhd_plus(ccbulk::magnetic_field(0), kji_L),
+                mhd_minus(ccbulk::magnetic_field(0), kji_R),
+                mhd_plus(ccbulk::magnetic_field(1), kji_L),
+                mhd_minus(ccbulk::magnetic_field(1), kji_R),
+                mhd_plus(ccbulk::magnetic_field(2), kji_L),
+                mhd_minus(ccbulk::magnetic_field(2), kji_R), mu0, f_v1, f_v2, f_v3, f_eng,
+                f_b1, f_b2, f_b3, v1face, v2face, v3face, riemann_vel(kji));
+
+    fv(ccbulk::momentum(0), kji) = f_v1;
+    fv(ccbulk::momentum(1), kji) = f_v2;
+    fv(ccbulk::momentum(2), kji) = f_v3;
+    fv(ccbulk::total_material_energy(), kji) = f_eng;
+    // Induction fluxes. The normal component is written too (the solver sets it to
+    // exactly 0.0) rather than skipped, so the register is never left holding a stale
+    // value from a previous stage that EMF assembly could pick up.
+    fv(ccbulk::magnetic_field(0), kji) = f_b1;
+    fv(ccbulk::magnetic_field(1), kji) = f_b2;
+    fv(ccbulk::magnetic_field(2), kji) = f_b3;
     face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
@@ -467,6 +554,51 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  auto Hydro::MHDFluxIndexSpace
+//! \brief Face-flux iteration space widened by one layer in the two directions
+//!        TRANSVERSE to the sweep, which is what the Gardiner-Stone EMF stencil needs:
+//!        assembling the EMF on an edge of the interior reads face fluxes one cell back
+//!        in both transverse directions (DONOR_KERNELS.md section 4a, the pm/qm/mm
+//!        offsets).
+//!
+//!        The extension is deliberately DIRECTIONAL, matching the donor's
+//!        ExtendMHDFluxBounds (section 12). Widening the sweep direction as well -- which
+//!        is all the (domain, isotropic halo) index-space overload can express -- would
+//!        push the reconstruction stencil one cell deeper into the ghost zones and so
+//!        raise the ghost-cell requirement from nghost > stencil_width to
+//!        nghost > stencil_width + 1. Keeping it transverse-only means nghost = 2 stays
+//!        viable with PLM, as in pure hydro.
+//!
+//!        A collapsed direction is never widened: `active` is taken from ndim, so in 2D
+//!        no k layer is added and in 1D no j layer either.
+template <parthenon::CoordinateDirection DIR, typename LoopType_t>
+auto MHDFluxIndexSpace(MeshData<Real> *md, const int nblocks, const int nhalo,
+                       const parthenon::TopologicalElement face) {
+  const int ndim = md->GetMeshPointer()->ndim;
+  const int active_i = (ndim > 0);
+  const int active_j = (ndim > 1);
+  const int active_k = (ndim > 2);
+
+  auto ib = md->GetBoundsI(IndexDomain::interior, face);
+  auto jb = md->GetBoundsJ(IndexDomain::interior, face);
+  auto kb = md->GetBoundsK(IndexDomain::interior, face);
+
+  // Reproduce the isotropic halo the (domain, halo) overload would have applied, then add
+  // the transverse MHD layer on top of it.
+  const int hi = active_i * (nhalo + (DIR != X1DIR));
+  const int hj = active_j * (nhalo + (DIR != X2DIR));
+  const int hk = active_k * (nhalo + (DIR != X3DIR));
+  ib.s -= hi;
+  ib.e += hi;
+  jb.s -= hj;
+  jb.e += hj;
+  kb.s -= hk;
+  kb.e += hk;
+
+  return LoopType_t::GetIndexSpace(nblocks, kb, jb, ib, md);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void Hydro::CalculateFluxesImpl
 //! \brief Templated single-direction flux calculation. Reconstructs bulk and per-material
 //!        quantities to faces, rescales reconstructed volume fractions to sum to one,
@@ -478,7 +610,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                          const AdvPack_t &adv, const RiotReconstruction::Type recon_tag,
                          const RiotReconstruction::Type vfrac_recon_tag,
                          const RiemannSolver rsolver_tag, const bool store_vf,
-                         const StrengthArr &mat_strength, const bool do_viscosity) {
+                         const StrengthArr &mat_strength, const bool do_viscosity,
+                         const bool do_mhd, const Real mu0) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -492,7 +625,11 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                                        : parthenon::TopologicalElement::F3);
 
   const int nhalo = 2 * do_viscosity;
-  auto idx_space = lt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, face);
+  // Hydro keeps the (domain, halo) form verbatim so its bounds are unchanged bit for bit;
+  // only the MHD path takes the transversely-widened space.
+  auto idx_space =
+      do_mhd ? MHDFluxIndexSpace<DIR, lt>(md, nblocks, nhalo, face)
+             : lt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, face);
 
   // Select the appropriate halo range to reconstruct over
 
@@ -512,6 +649,11 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
       idx_space, 2);
   AddPerPointScratch<Real, halo, 5>(idx_space, 2); // summed bulk stress accumulators
   AddPerPointScratch<Real, halo>(idx_space, 2);    // advection recon (minus/plus)
+  // Reconstructed cell-centered magnetic field, touched only on the MHD solver path.
+  // Declared unconditionally because the scratch arena is keyed by type list, so the
+  // bucket must exist for the Get inside the outer body to be well formed -- the same
+  // arrangement the strength path uses.
+  AddTypeIndexedPerPointScratch<Real, halo, mhd_bulk_recon_types>(idx_space, 2);
 
   auto delta = idx_space.GetDelta(DIR);
   // Directional basis (normal + cyclic transverse offsets/components) for GetVdiff.
@@ -646,6 +788,19 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
         halo_range.TeamBarrier();
 
+        // Reconstruct the cell-centered magnetic field for the MHD solver. Cell-centered,
+        // so the flat pack view is the correct accessor here; the face-centered normal
+        // component is handled separately inside MHDFluxes.
+        auto mhd_minus =
+            GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
+        auto mhd_plus =
+            GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
+        if (do_mhd) {
+          ReconCells<ccbulk::magnetic_field>(pv, halo_range, delta, mhd_minus, mhd_plus,
+                                             recon_tag);
+          halo_range.TeamBarrier();
+        }
+
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
         // BulkRiemannFluxes<DIR, FLUX_FN> instantiation. The low-Mach solvers
         // (chllc/lhllc) additionally need the transverse velocity differences dvn/dvt
@@ -684,6 +839,12 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
           BulkRiemannFluxesLM<DIR, lr_to_flux_lhllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
               sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
+          break;
+        case RiemannSolver::mhd_hlle:
+          MHDFluxes<DIR, MHD::lr_to_flux_mhd_hlle<dir>>(
+              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
+              sum_bulk_plus, mhd_minus, mhd_plus, face_vel, riemann_vel, b, mu0,
+              store_vf);
           break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG>(v, vstr, idx_range, halo_range, delta,
@@ -741,6 +902,10 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   const auto &strength_mats =
       pm->packages.Get("materials")->Param<std::vector<int>>("strength_mats");
 
+  // MHD parameters. mu0 is only meaningful when the mhd package exists.
+  const bool do_mhd = pm->packages.Get("riot")->Param<bool>("do_mhd");
+  const Real mu0 = do_mhd ? pm->packages.Get("mhd")->Param<Real>("mu0") : 1.0;
+
   // ionization parameters
   const bool do_ionization = pm->packages.Get("riot")->Param<bool>("do_ionization");
   bool do_plasma_viscosity = false;
@@ -751,11 +916,19 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   // Create pack of reconstructed vars, fluxes, and auxiliary vars. The per-material
   // sparse fields here are allocated on *all* materials, so a single sparse index
   // addresses them uniformly.
-  auto v = riot::MakePack<ccbulk::velocity, ccbulk::pressure, ccbulk::bulk_modulus,
-                          ccbulk::shear_modulus, ccbulk::momentum,
-                          ccbulk::total_material_energy, ccbulk::face_signal,
-                          ccbulk::face_velocity, ccmat::volume_fraction,
-                          ccmat::internal_energy, ccmat::rho, cm::rho>(
+  //
+  // The two magnetic entries are absent from the pack when the mhd package is not
+  // registered, which is harmless: every read of them is behind do_mhd. NOTE that
+  // face_variables::bulk::magnetic_field must only ever be read through MHD::FaceB --
+  // face storage is node-shaped and the flat pack/flux views index with cell strides, so
+  // reaching it through `pv` or `fv` would compile and silently address the wrong
+  // element. Its edge flux register (the EMF) is written in Stage 4 by the MHD package,
+  // not here.
+  auto v = riot::MakePack<
+      ccbulk::velocity, ccbulk::pressure, ccbulk::bulk_modulus, ccbulk::shear_modulus,
+      ccbulk::momentum, ccbulk::total_material_energy, ccbulk::face_signal,
+      ccbulk::face_velocity, ccmat::volume_fraction, ccmat::internal_energy, ccmat::rho,
+      cm::rho, ccbulk::magnetic_field, face_variables::bulk::magnetic_field>(
       md, std::vector<int>{}, std::set<parthenon::PDOpt>{parthenon::PDOpt::WithFluxes});
   const int nblocks = v.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
@@ -772,13 +945,13 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto adv = MakeAdvectionPack(md);
 
   CalculateFluxesImpl<X1DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                             store_vf, mat_strength, do_viscosity);
+                             store_vf, mat_strength, do_viscosity, do_mhd, mu0);
   if (ndim > 1)
     CalculateFluxesImpl<X2DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                               store_vf, mat_strength, do_viscosity);
+                               store_vf, mat_strength, do_viscosity, do_mhd, mu0);
   if (ndim > 2)
     CalculateFluxesImpl<X3DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                               store_vf, mat_strength, do_viscosity);
+                               store_vf, mat_strength, do_viscosity, do_mhd, mu0);
 
   return TaskStatus::complete;
 }

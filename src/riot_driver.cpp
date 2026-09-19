@@ -35,6 +35,7 @@
 #include "laser/laser.hpp"
 #include "levelsets/levelsets.hpp"
 #include "materials/materials.hpp"
+#include "mhd/mhd.hpp"
 #include "mix/mix.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
 #include "riot_driver.hpp"
@@ -89,6 +90,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_lasers = riot_pkg->Param<bool>("do_lasers");
   do_gravity = riot_pkg->Param<bool>("do_gravity");
   do_ionization = riot_pkg->Param<bool>("do_ionization");
+  do_mhd = riot_pkg->Param<bool>("do_mhd");
   curvilinear = riot_pkg->Param<bool>("curvilinear");
 
   // enable FPE trapping
@@ -190,6 +192,12 @@ TaskCollection RiotDriver::RiotStepTasks() {
     auto &mu1 = pmesh->mesh_data.GetOrAdd(mdname::u1, i);
     tl.AddTask(none, sparse_update::DeepCopyIndependentData<MeshData<Real>>, mu1.get(),
                mu0.get());
+    // Face-centered independent state (MHD's constrained-transport B) needs its own
+    // copy: DeepCopyIndependentData walks a cell-centered index space and would truncate
+    // the last face plane in each normal direction. A no-op when no face-centered
+    // independent field is registered, so it is added unconditionally.
+    tl.AddTask(none, sparse_update::DeepCopyIndependentFaceData<MeshData<Real>>,
+               mu1.get(), mu0.get());
   }
 
   // now do multi-stage RK integration of physics
@@ -236,8 +244,19 @@ TaskCollection RiotDriver::RiotStepTasks() {
             hydro_flx | mix_flx, Ionization::ComputePlasmaViscousFluxes, mu0.get());
       }
 
+      // Assemble the constrained-transport EMFs. Depends on hydro_flx, which writes both
+      // inputs: the transverse induction fluxes and the material mass fluxes that select
+      // the upwind side of each extrapolation.
+      auto mhd_emf = none;
+      if (do_mhd) {
+        mhd_emf = tl.AddTask(hydro_flx, MHD::AssembleEdgeEMF, mu0.get());
+      }
+
       // send flux corrections
-      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx,
+      // NOTE: mhd_emf is a dependency because the EMF lives in the edge flux register of
+      // the face field, so it must exist before flux corrections are packed and sent --
+      // that register is how coarse/fine EMF averaging happens.
+      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx | mhd_emf,
                                  parthenon::LoadAndSendFluxCorrections, mu0);
 
       // geometric sources, if curvilinear
@@ -316,6 +335,16 @@ TaskCollection RiotDriver::RiotStepTasks() {
                                sparse_update::UpdateToNextStage, mu0.get(), mu1.get(),
                                gam0, gam1, beta * dt, dudt_args);
 
+      // Constrained-transport face update. Deliberately separate from UpdateToNextStage,
+      // which is a cell-centered flux divergence and excludes face-centered fields by
+      // metadata. Needs set_flx so that EMFs on coarse/fine boundaries have been
+      // corrected before they are differenced.
+      auto update_mhd = none;
+      if (do_mhd) {
+        update_mhd = tl.AddTask(mhd_emf | set_flx, MHD::ApplyFaceUpdate, mu0.get(),
+                                mu1.get(), gam0, gam1, beta * dt);
+      }
+
       // Set maximum signal speeds
       // NOTE(@pdmullen): This task goes away if we permit Metadata::FillGhost for
       // Metadata::CellMemAligned face fields
@@ -357,10 +386,23 @@ TaskCollection RiotDriver::RiotStepTasks() {
                                Hydro::GuessCellVolumeFractions, mu0.get());
       }
 
+      // Re-derive the cell-centered magnetic field from the advanced face state, on the
+      // interior. Must precede communication: the cell-centered field is FillGhost, so
+      // its ghosts arrive from neighbors' interiors, and it is read next stage by both
+      // reconstruction and the cell-centered EMFs.
+      auto mhd_derived = none;
+      if (do_mhd) {
+        mhd_derived =
+            tl.AddTask(update_mhd, MHD::SetDerived, mu0.get(), IndexDomain::interior);
+      }
+
       // set required fields before communication
-      auto int_derived =
-          tl.AddTask(update | radial_return | electron_entropy_to_energy | set_vfrac,
-                     PreCommFillDerived<MeshData<Real>>, mu0.get());
+      // NOTE: update_mhd is a dependency because PreCommFillDerived recovers the thermal
+      // energy by subtracting the magnetic energy from the conserved total (ADR-002); it
+      // must see the advanced face state, not the previous stage's.
+      auto int_derived = tl.AddTask(update | radial_return | electron_entropy_to_energy |
+                                        set_vfrac | update_mhd | mhd_derived,
+                                    PreCommFillDerived<MeshData<Real>>, mu0.get());
 
       // communicate boundaries
       auto set_bc = parthenon::AddBoundaryExchangeTasks(int_derived | max_signal, tl, mu0,
