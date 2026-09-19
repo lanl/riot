@@ -53,6 +53,19 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   rather than by a stored MD5 (see TEST_LEDGER H01 re-run for why the stored hash is not a
   valid cross-session invariant). Numeric results in `TEST_LEDGER.md`.
 
+- **HLLD** (`MHD::lr_to_flux_mhd_hlld`, TEST_LEDGER G5.1-G5.4): all donor degeneracy guards
+  verbatim, ideal gas only. Beats HLLE on every Brio-Wu field against the Athena++ reference
+  (ratios 0.65-0.80), corroborated by higher field-loop energy retention and less Orszag-Tang
+  shock heating. `ctest` 41/41.
+- **All five reconstruction modes certified with MHD** (TEST_LEDGER G5.5): CONSTANT, PLM,
+  PPM4, WENO5, MP5. div B at roundoff and the axial field identically zero for every mode;
+  `nghost >= stencil_width + 1` verified sufficient by a bitwise min-vs-min+1 comparison and
+  verified to abort with an actionable message below that. Measured spatial order (with the
+  temporal term suppressed) 0.9 / 1.8 / 2.1 / 4.2 / 4.0. **Recorded limitation: WENO5 and MP5
+  cannot reach their formal order with `rk2` at fixed CFL — the O(dt^2) temporal term floors
+  them.** Quantified: 8x CFL cut gives 63x error reduction, and HLLD reproduces HLLE's numbers
+  in every digit, so the floor is the integrator, not the solver or the reconstruction.
+
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`

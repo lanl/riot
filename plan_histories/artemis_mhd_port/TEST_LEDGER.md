@@ -842,3 +842,119 @@ cd tst && python run_tests.py hydro --reuse_build --save_build
 `linwave` 41.7 s · `linwave_mm` 51.5 s · `rt_amr` 145 s · `rt_unigrid` 304 s.
 
 Unit tests `ctest` **41/41**.
+
+### G5.5 — Reconstruction certification with MHD
+
+Every MHD result before this entry used `recon=plm` and nothing else, leaving four of the five
+`RiotReconstruction::Type` modes entirely unexercised with a magnetic field. All five are now
+certified. Stencil widths are `CONSTANT 0, PLM 1, PPM4 2, WENO5 2, MP5 2`
+(`src/reconstruction/reconstruction.hpp:32-36`) and the requirement is
+`nghost > stencil_width` (`src/hydro/hydro.cpp:86`), so the minimum is 1/2/3/3/3.
+
+#### Ghost budget: sufficient, and proven rather than argued
+
+`MHDFluxIndexSpace` widens the flux bounds by one layer in the two directions TRANSVERSE to
+the sweep. The comment there argues this keeps the requirement at `nghost > stencil_width`
+rather than raising it — but the fit is exact, with zero margin, so it was tested instead of
+trusted. Each mode was run at its minimum `nghost` and again with one more layer, on the
+4-block 2D field loop so block boundaries are crossed:
+
+| mode | min nghost | min vs min+1 |
+| --- | --- | --- |
+| CONSTANT | 1 | **bitwise identical** |
+| PLM | 2 | **bitwise identical** |
+| PPM4 | 3 | **bitwise identical** |
+| WENO5 | 3 | **bitwise identical** |
+| MP5 | 3 | **bitwise identical** |
+
+An extra halo layer changes nothing, so the minimum really is sufficient. Had it not been, the
+extra transverse flux layer would have been built from stale ghost data and `div B` would have
+broken at the block boundaries — which is why a multi-block case was used.
+
+**Negative test.** Every mode run one ghost BELOW its minimum aborts with
+`Must have enough ghosts for reconstruction stencil <NAME>` — an actionable message naming the
+mode. Checked for all five; none silently produced a wrong answer.
+
+#### CT invariants, 2D field loop (4 blocks, one full crossing)
+
+| mode | axial field | eta (normalized div B) | emag retained | dE/E |
+| --- | --- | --- | --- | --- |
+| CONSTANT | **0.0** | 1.192112e-14 | 0.1461848 | 2.22e-16 |
+| PLM | **0.0** | 5.267631e-15 | 0.8711372 | 2.22e-16 |
+| PPM4 | **0.0** | 5.261217e-15 | 0.9102367 | 0.0 |
+| WENO5 | **0.0** | 5.662492e-15 | 0.9261151 | 2.22e-16 |
+| MP5 | **0.0** | 5.287496e-15 | 0.9337241 | 0.0 |
+
+Divergence at roundoff and the axial field identically zero for every mode. Magnetic-energy
+retention increases monotonically with reconstruction order, which is the independent evidence
+that each mode is genuinely active and behaving as its order implies rather than silently
+falling back to a lower one.
+
+#### Order of accuracy, and a finding about the time integrator
+
+Measured on the CPAW. At the default CFL 0.4 with `rk2`, WENO5 and MP5 do NOT show their
+formal order — they plateau at apparent order ~1 and, tellingly, converge to the *same* L1
+(2.049459e-04 at N=64, 9.302529e-05 at N=128, agreeing to five digits). A shared floor points
+away from the reconstruction, and two experiments identify it:
+
+- **Not the solver.** WENO5 with `mhd_hlld` instead of `mhd_hlle` reproduces those numbers in
+  every digit.
+- **It is `rk2`.** Cutting CFL from 0.4 to 0.05 at fixed N = 64 drops L1 from 2.049459e-04 to
+  3.255717e-06 — a factor of **63**, against the 8^2 = 64 expected from a second-order-in-time
+  term. So the total error is `A*dx^p + B*dt^2`, and with `dt ~ dx` at fixed CFL the temporal
+  term dominates once the spatial term is small enough.
+
+Re-running with `dt ~ dx^2.5` (`cfl = 0.4*(16/N)^1.5`), which pushes the temporal term to
+O(dx^5), exposes the spatial order:
+
+| mode | N=16 | N=32 | N=64 | N=128 | observed order |
+| --- | --- | --- | --- | --- | --- |
+| CONSTANT | 4.630736e-01 | 2.953412e-01 | 1.698002e-01 | 9.143864e-02 | 0.65 → 0.89 (first order) |
+| PLM | 5.690184e-02 | 1.910746e-02 | 5.537642e-03 | — | 1.57 → 1.79 |
+| PPM4 | 5.109414e-02 | 1.488293e-02 | 3.638068e-03 | 8.461690e-04 | 1.78 → 2.03 → 2.10 |
+| WENO5 | 9.180752e-04 | 4.961728e-05 | 3.255717e-06 | 1.825677e-07 | 4.21 / 3.93 / 4.16 |
+| MP5 | 7.221003e-04 | 4.729316e-05 | 3.237291e-06 | 1.822929e-07 | 3.93 / 3.87 / 4.15 |
+
+**The PLM control run under the identical dt scaling is unchanged** (1.57 → 1.79, versus
+1.55 → 1.74 at fixed CFL), which is what shows the scaling exposes order rather than
+manufacturing it: PLM's spatial error still dominates, so suppressing the temporal term does
+nothing for it.
+
+WENO5 and MP5 reach ~4, not their formal 5. The cap is not the reconstruction — plausibly the
+second-order EMF corner averaging in the CT update — and is recorded as measured rather than
+explained away. MP5 additionally holds `|B|` uniform to **roundoff at every resolution**
+(spread <= 2.2e-16), i.e. it preserves the circular polarization exactly, which WENO5 does not
+(spread 1.2e-05 → 2.6e-10).
+
+**Practical consequence, and the reason this belongs in the docs:** with `rk2` at CFL 0.4,
+WENO5 and MP5 buy nothing over PPM4 asymptotically. They are still dramatically better at
+coarse resolution (62-79x lower L1 at N = 16), which is where it usually matters, but a user
+expecting fifth-order convergence will not get it without a higher-order time integrator or a
+CFL that shrinks faster than dx.
+
+#### Shock robustness, Brio & Wu, all five modes
+
+All five: `max|Bx - 0.75|`, `max|Bz|`, `max|vz|`, `max|divB|` **all exactly 0.0**; `min rho`
+and `min P` positive with margin (no floor activation); no non-finite values.
+
+Normalized L1 vs the Athena++ reference:
+
+| mode | rho | press | vx | vy | By |
+| --- | --- | --- | --- | --- | --- |
+| CONSTANT | 1.506631e-02 | 1.590445e-02 | 2.833858e-02 | 2.105584e-02 | 9.087799e-03 |
+| PLM | 2.659044e-03 | 2.280626e-03 | 5.799217e-03 | 4.006543e-03 | 1.689883e-03 |
+| PPM4 | 2.025147e-03 | 2.492375e-03 | 6.391433e-03 | 4.020663e-03 | 1.832337e-03 |
+| WENO5 | 1.938905e-03 | 1.989748e-03 | 5.785285e-03 | 3.111283e-03 | 1.394793e-03 |
+| MP5 | 1.882237e-03 | 1.862492e-03 | 5.192272e-03 | 2.688953e-03 | 1.287064e-03 |
+
+CONSTANT is roughly 6x worse than the rest, as its first-order accuracy requires. Among the
+others the ordering is not uniform — PPM4 is better than PLM on density but slightly worse on
+pressure, vx and By — which is expected at a discontinuity, where limiter behaviour rather
+than formal order decides the result. No mode is unstable or non-positive at a shock.
+
+#### Verdict
+
+**All five reconstruction modes are certified for use with MHD.** None needs to be marked
+unsupported. Requirements: `nghost >= stencil_width + 1`, enforced already and verified to
+abort with an actionable message below that. Recorded limitation: WENO5 and MP5 cannot reach
+their formal order with `rk2` at a fixed CFL.
