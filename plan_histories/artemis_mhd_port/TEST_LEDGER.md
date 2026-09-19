@@ -1503,3 +1503,85 @@ corroborating measurement I had not instrumented.
   could have changed the scratch footprint or register pressure, and the file's own comment
   records that such a change once perturbed linear-wave L1 errors in the 7th digit.
 - Silent when nothing is wrong: Brio & Wu with HLLD emits no diagnostic lines at all.
+
+---
+
+## G5.10 — Documentation and published limitations, 2026-09-19
+
+Gate G5 requires the certified matrix to be **published in the docs and printed at startup**,
+not merely enforced. Both halves are now done. This entry exists because a documentation
+deliverable can be "finished" without being correct, and the checks below are what make it
+verifiable rather than a claim.
+
+| Field | Value |
+| --- | --- |
+| Revision | `62903d9` + this change |
+| Artifacts | `doc/sphinx/src/packages/mhd.rst` (new), `doc/sphinx/index.rst`, `doc/sphinx/src/introduction.rst`, `doc/sphinx/src/packages/hydro.rst`, `src/mhd/mhd.cpp` (startup banner) |
+| Result | **PASS** — docs build clean under CI's own strict flags; banner verified in a live run |
+
+### What is documented
+
+- Governing equations, in RIOT's own notation rather than the donor's.
+- **The energy convention, as an admonition rather than a sentence in a paragraph.**
+  `ccbulk::total_material_energy` includes `B^2/(2 mu0)` when and only when MHD is on. This is
+  the single most likely way for a user to get a wrong answer from a correct code, so it is
+  stated in the MHD chapter *and* cross-referenced from the hydro chapter's field table, which
+  is where someone looking up `total_material_energy` will actually land. The docs say
+  explicitly that `magnetic_energy` exists to DECOMPOSE the total, not to be added to it.
+- The `mu0` normalization table, both conventions, and why `mu0 = 1` is what the test problems
+  use.
+- Shared-normal-B substitution in reconstruction, and the CT/EMF construction including why
+  the divergence is preserved algebraically rather than approximately.
+- The fast magnetosonic speed and the unchanged directional-sum CFL form.
+- **The two measured reconstruction caveats from G5.5**, stated as measured limitations: the
+  ~4th-order cap on `weno5`/`mp5` attributed to the second-order EMF corner averaging, and the
+  fact that `rk2` at fixed CFL floors them so they buy nothing over `ppm4` asymptotically.
+  Written to be useful rather than exculpatory: it also says they are 60-80x better at coarse
+  resolution, which is where a user actually operates.
+- **The HLLD fallback caveat**, with the instruction to read the counter before interpreting
+  any HLLD-vs-HLLE comparison. This is the G5.9 lesson made permanent in user-facing form.
+- The `density_floor` counter described as a FAILED result rather than a rescued one.
+- Restart behaviour, honestly: bitwise for face B, the conserved variables and magnetic derived
+  state; 1-2 ulp on `velocity`/`pressure` with the reason (recomputed, not read); 5.6e-15 on an
+  evolved restart, rank-count-independent. The two rejected restart configurations.
+- The full rejection table with reasons, and the "not available at all" list (resistive, Hall,
+  Biermann, ambipolar, Nernst, Braginskii) so the capability cannot be mistaken for extended MHD.
+- That the package has **not been run on a GPU**.
+- How to write an MHD pgen: face B from a discrete curl of a vector potential (and why assigning
+  an analytic B to faces is not equivalent -- CT preserves the initial error forever), and the
+  mandatory `MHD::AddMagneticEnergyToTotal` call last.
+
+### Startup banner
+
+`MHD::Initialize` prints five lines on rank 0 when MHD is enabled. The rejections in
+`riot.cpp` only fire for a configuration the user *asked for*; they say nothing to a user who
+is inside the supported matrix but does not know where its edge is. The banner states the
+validated boundary unconditionally.
+
+Verified live:
+
+```
+$ build/src/riot -i inputs/mhd/brio_wu.rin parthenon/time/nlim=2
+MHD: ideal MHD with face-centered constrained transport is enabled.
+MHD: validated for Cartesian, uniform-grid, single-material, ideal-gas,
+MHD:   single-temperature problems only; see the MHD chapter of the docs.
+MHD: no resistivity, Hall term, Biermann battery, or anisotropic transport.
+MHD: not run on GPU. total_material_energy INCLUDES B^2/(2*mu0).
+```
+
+### Checks that make this more than a claim
+
+| Check | Why it matters | Result |
+| --- | --- | --- |
+| `sphinx-build -b html -W --keep-going -n` | `.github/workflows/docs.yml` builds with exactly these flags, so any warning is a CI failure. `-n` (nitpicky) catches a broken `:ref:` that would otherwise render as literal text | **PASS**, `build succeeded`, zero warnings |
+| Output variable names taken from a real deck | The docs first used `ccbulk::magnetic_field`, which is the C++ variable name and NOT what an output block accepts. Corrected to `c.c.bulk.magnetic_field` against `inputs/mhd/orszag_tang.py` | fixed before commit |
+| Restart claim checked against G5.6 rather than paraphrased | The first draft said restart is "verified bitwise ... including on a different rank count". G5.6 says bitwise for the zero-step reload and 5.6e-15 for the evolved case. Overclaiming in the docs is worse than in a ledger, because a user cannot check it | corrected |
+| Parameter table checked against `MHD::Initialize` | `mu0`, `monitor_divb`, `allow_zero_field_restart` -- names, types and defaults read from the registration calls, not from the plan | matches |
+| `ctest` and a live MHD run after the banner | The banner is host-side and cannot change numerics, but "cannot" is not "did not" | `ctest` **49/49**; Brio-Wu runs unchanged |
+| `CAPABILITY_MATRIX.md` refreshed | It still described the port as "mid-implementation, no end-to-end MHD simulation run", which was true at Stage 2 and badly wrong at Stage 5. A stale matrix is worse than none: it is the file everything else points at for what may be claimed | rewritten against the ledger |
+
+### Deliberately not claimed in the docs
+
+No performance numbers, no statement about GPU behaviour beyond "not run", no absolute
+accuracy claim for Brio & Wu (there is no absolute threshold -- concern C3), and no mention of
+AMR working. The reconstruction order table gives *measured* orders, not formal ones.

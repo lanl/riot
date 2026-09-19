@@ -43,6 +43,20 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto mhd = std::make_shared<StateDescriptor>("mhd");
   Params &params = mhd->AllParams();
 
+  // Published limitations, printed as well as documented (Gate G5). The startup
+  // rejections in riot.cpp already refuse everything outside the certified matrix, but a
+  // rejection only fires for a configuration the user actually asked for. This banner
+  // states the boundary of what has been VALIDATED even when the run is inside it, so a
+  // user does not have to infer the scope from the absence of an error. It is not a
+  // warning and does not indicate a problem.
+  if (parthenon::Globals::my_rank == 0) {
+    printf("MHD: ideal MHD with face-centered constrained transport is enabled.\n"
+           "MHD: validated for Cartesian, uniform-grid, single-material, ideal-gas,\n"
+           "MHD:   single-temperature problems only; see the MHD chapter of the docs.\n"
+           "MHD: no resistivity, Hall term, Biermann battery, or anisotropic transport.\n"
+           "MHD: not run on GPU. total_material_energy INCLUDES B^2/(2*mu0).\n");
+  }
+
   // Magnetic normalization. See ADR-001: magnetic energy density is B^2/(2 mu0), so
   // mu0 = 4*pi is Gaussian CGS (B in Gauss, energy B^2/8pi), consistent with the CGS
   // units RIOT uses throughout for EOS and opacity. mu0 = 1 reproduces the donor's

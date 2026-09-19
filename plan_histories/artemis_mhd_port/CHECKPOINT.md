@@ -1,6 +1,6 @@
 # Checkpoint
 
-Updated UTC: 2026-09-18
+Updated UTC: 2026-09-19
 Riot original base SHA: `193b3fa2a61557cb4fc761bb87de6687ca781edf`
 Donor head / comparison base: `3e5aeb5` / `e8a4e0f5ad965a8ddb0171f6dad81d6a653870ee`
 Branch: `taitano/mhd-porting`
@@ -100,6 +100,15 @@ gaps are listed under "Not implemented" — none of them blocks G4.
 - **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
   control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
   parameters).
+- **Docs and published limitations** (TEST_LEDGER G5.10): `doc/sphinx/src/packages/mhd.rst`,
+  wired into the toctree, with the energy convention cross-referenced from the hydro field
+  table (that is where a user looking up `total_material_energy` lands). Plus a five-line
+  startup banner in `MHD::Initialize` — the rejections only speak to a user who asked for
+  something unsupported, so the banner states the validated boundary unconditionally. Docs
+  build clean under CI's own `-W --keep-going -n`. **`CAPABILITY_MATRIX.md` was rewritten**:
+  it still said "mid-implementation, no end-to-end MHD simulation has been run", which was
+  true at Stage 2 and badly wrong now — and it is the file everything else points at for what
+  may be claimed.
 
 ## Open concerns — READ THIS BEFORE CLAIMING ANYTHING
 
@@ -123,7 +132,8 @@ Do not delete entries from that file; move them to its Resolved section with evi
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
-regression harness;
+regression harness (the tests themselves exist as scripts under
+`claude_sessions/mhd_runs/`, but are not yet suite members driven by `tst/run_tests.py`);
 U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
@@ -223,9 +233,18 @@ only, so no test propagates a wave obliquely to the grid.
    $R/build/src/riot -i $R/inputs/mhd/field_loop_3d.rin hydro/riemann=mhd_hlld \
      parthenon/time/nlim=3 mhd/monitor_divb=true
    ```
-8. Remaining Stage 5: MHD docs in `doc/sphinx` (currently zero MHD content), the
-   `tst/scripts/mhd/` harness, and the eight-suite regression sweep LAST (C1). The sweep is
-   hours of runtime but nearly free in context, so it is the one item worth backgrounding.
+8. ~~**MHD docs**~~ — **DONE** (TEST_LEDGER G5.10). To re-check the docs the way CI does:
+   ```
+   . riot_venv/bin/activate && pip install sphinx sphinx-rtd-theme sphinx-multiversion
+   cd doc/sphinx && sphinx-build -b html -W --keep-going -n . /tmp/riot_docs
+   ```
+   `-W -n` are the flags in `.github/workflows/docs.yml`, so a warning is a CI failure and a
+   mistyped `:ref:` renders as literal text rather than erroring by default. Note the venv
+   binary is named `clang-format`, not `clang-format-20`, despite being 20.1.8 — `format.sh`
+   aborts with "No clang format found" if you pass the versioned name.
+9. Remaining Stage 5: the `tst/scripts/mhd/` harness, and the eight-suite regression sweep
+   LAST (C1). The sweep is hours of runtime but nearly free in context, so it is the one item
+   worth backgrounding.
 
 ## Do not repeat
 

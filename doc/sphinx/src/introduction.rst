@@ -93,6 +93,10 @@ chapter.
      - bool
      - ``true``
      - Enable hydrodynamics.
+   * - mhd
+     - bool
+     - ``false``
+     - Enable ideal MHD with face-centered constrained transport. Supported only for Cartesian, uniform-grid, single-material, ideal-gas problems; every other combination — including every other toggle in this table — is rejected at startup (Chapter :ref:`chap:mhd`).
    * - strength
      - bool
      - ``false``
