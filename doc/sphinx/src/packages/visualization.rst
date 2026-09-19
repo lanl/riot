@@ -211,11 +211,11 @@ same length as one another or as ``alpha``.
    * - field_alpha
      - string
      - ``field``
-     - Field that drives opacity.
+     - Field that drives opacity in ``volume`` layers.  Also used to color contours in ``contour_slice`` layers.
    * - field_use_grad
      - string
      - ``none``
-     - ``none``, ``magnitude``, or ``log_magnitude`` transform of ``field``.
+     - ``magnitude`` and ``log_magnitude`` apply a gradient operator to ``field`` and plot its magnitude.  ``none`` does nothing.
    * - field_alpha_use_grad
      - string
      - ``none``
