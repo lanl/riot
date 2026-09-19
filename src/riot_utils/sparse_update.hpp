@@ -299,10 +299,20 @@ namespace impl {
 //! safe to copy unconditionally regardless of dimensionality -- which is required,
 //! because a transverse face field is physically nonzero and evolving even when its
 //! normal direction is collapsed (B2/B3 in 1D, B3 in 2D).
+//!
+//! LoopConstraint::DifferentMemSpaces is REQUIRED, not a performance choice. It selects
+//! inner_tag::logical_coords, so make_var_view forwards each access to
+//! pack(b, te, var, k, j, i) and Parthenon indexes the array with its own strides. The
+//! default flat contract instead caches a base pointer and applies the index space's
+//! single memory indexer, which only ever describes cell- or node-shaped storage
+//! (index_space.hpp:203). Face storage is node-shaped, so a cell-shaped indexer would
+//! silently address the wrong elements -- no fault, no assertion, just a corrupt stage
+//! register. This is the rule stated in
+//! external/parthenon/src/loop_abstraction/LOOP_ABSTRACTION_CONTRACTS.md:96.
 template <parthenon::TopologicalElement FACE_TE, typename Pack_t, typename T>
 void DeepCopyOneFaceElement(const Pack_t &dst, const Pack_t &src, T *from,
                             const int nblocks) {
-  using lt = RiotUtils::LoopType<>;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, FACE_TE);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {

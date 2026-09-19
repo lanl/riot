@@ -56,36 +56,59 @@ namespace fbulk = face_variables::bulk;
 constexpr Real kTightTol = 1.0e-12;
 
 //----------------------------------------------------------------------------------------
-// A minimal stand-in for a Parthenon pack view over the face-centered magnetic field.
+// A minimal stand-in for a Parthenon SparsePack over the face-centered magnetic field.
 //
-// MHD::FaceToCellB and MHD::CellMagneticEnergyFromFaces are templated on the view type
-// precisely so they can be exercised here without standing up a Mesh. The stub supports
-// the two operations they use: pv(TE, magnetic_field(), idx) and idx + offset.
-struct StubFaceView {
-  const Real *b1;
-  const Real *b2;
-  const Real *b3;
+// MHD::FaceToCellB and MHD::CellMagneticEnergyFromFaces are templated on the pack type
+// precisely so they can be exercised here without standing up a Mesh. The stub provides
+// the one operation they use: v(b, TE, magnetic_field(), k, j, i).
+//
+// The three component arrays are deliberately NODE-shaped -- one extra element per
+// direction relative to the cell count -- because that is how Parthenon actually
+// allocates a face field that does not carry Metadata::CellMemAligned
+// (interface/metadata.cpp:381-387). Indexing with those strides here means that a
+// regression to cell-shaped flat addressing would read the wrong element and fail these
+// tests, which is exactly the silent bug class documented in MHD::FaceB.
+struct StubFacePack {
+  static constexpr int ncell = 3;         // active cells per direction
+  static constexpr int nface = ncell + 1; // face planes per direction
+  static constexpr int size = nface * nface * nface;
 
-  Real operator()(TE te, const fbulk::magnetic_field &, const int idx) const {
-    switch (te) {
-    case TE::F1:
-      return b1[idx];
-    case TE::F2:
-      return b2[idx];
-    default:
-      return b3[idx];
-    }
+  Real b1[size] = {};
+  Real b2[size] = {};
+  Real b3[size] = {};
+
+  static constexpr int flat(const int k, const int j, const int i) {
+    return (k * nface + j) * nface + i;
+  }
+
+  Real &at(const TE te, const int k, const int j, const int i) {
+    Real *a = (te == TE::F1) ? b1 : ((te == TE::F2) ? b2 : b3);
+    return a[flat(k, j, i)];
+  }
+
+  // Fill every plane of one component with a single value.
+  void SetUniform(const TE te, const Real value) {
+    for (int k = 0; k < nface; ++k)
+      for (int j = 0; j < nface; ++j)
+        for (int i = 0; i < nface; ++i)
+          at(te, k, j, i) = value;
+  }
+
+  Real operator()(const int, const TE te, const fbulk::magnetic_field &, const int k,
+                  const int j, const int i) const {
+    const Real *a = (te == TE::F1) ? b1 : ((te == TE::F2) ? b2 : b3);
+    return a[flat(k, j, i)];
   }
 };
 
-// Uniform field: both bounding faces in each direction carry the same value, so the
-// face-to-cell average must return that value exactly.
-struct UniformFaces {
-  Real v1[2], v2[2], v3[2];
-  StubFaceView View() const { return StubFaceView{v1, v2, v3}; }
-};
-UniformFaces MakeUniformFaces(Real bx, Real by, Real bz) {
-  return UniformFaces{{bx, bx}, {by, by}, {bz, bz}};
+// Uniform field: every face plane carries the same value, so the face-to-cell average
+// must return that value exactly.
+StubFacePack MakeUniformFaces(Real bx, Real by, Real bz) {
+  StubFacePack p;
+  p.SetUniform(TE::F1, bx);
+  p.SetUniform(TE::F2, by);
+  p.SetUniform(TE::F3, bz);
+  return p;
 }
 
 } // namespace
@@ -263,17 +286,16 @@ TEST_CASE("Face-to-cell B reproduces a uniform field and its energy", "[mhd][fac
   // shift.
   const Real mu0 = 4.0 * M_PI;
   const Real bx = 0.75, by = -1.25, bz = 0.5;
-  const auto faces = MakeUniformFaces(bx, by, bz);
-  const auto pv = faces.View();
+  const auto v = MakeUniformFaces(bx, by, bz);
 
-  // Index 0, with unit offsets into the second slot of each face array.
+  // Interior cell (1,1,1) of a 3D stub, so all six bounding faces are distinct slots.
   Real rbx, rby, rbz;
-  MHD::FaceToCellB(pv, 0, 1, 1, 1, rbx, rby, rbz);
+  MHD::FaceToCellB(v, 0, 1, 1, 1, /*multi_d=*/1, /*three_d=*/1, rbx, rby, rbz);
   CHECK(rbx == Approx(bx).margin(kTightTol));
   CHECK(rby == Approx(by).margin(kTightTol));
   CHECK(rbz == Approx(bz).margin(kTightTol));
 
-  CHECK(MHD::CellMagneticEnergyFromFaces(pv, 0, 1, 1, 1, mu0) ==
+  CHECK(MHD::CellMagneticEnergyFromFaces(v, 0, 1, 1, 1, 1, 1, mu0) ==
         Approx(MHD::MagneticEnergyDensity(bx, by, bz, mu0)).margin(kTightTol));
 }
 
@@ -281,14 +303,16 @@ TEST_CASE("Face-to-cell B averages a linearly varying face field", "[mhd][faces]
   // For a linear profile the arithmetic mean of the two bounding faces is the exact
   // cell-centered value, so this pins the averaging convention (mean, not one-sided
   // pickup) that must match between the energy subtraction and re-synthesis.
-  const Real lo = 1.0, hi = 3.0;
-  const Real f1[2] = {lo, hi};
-  const Real f2[2] = {-2.0, 6.0};
-  const Real f3[2] = {0.5, 0.5};
-  const StubFaceView pv{f1, f2, f3};
+  StubFacePack v;
+  v.at(TE::F1, 1, 1, 1) = 1.0;
+  v.at(TE::F1, 1, 1, 2) = 3.0;
+  v.at(TE::F2, 1, 1, 1) = -2.0;
+  v.at(TE::F2, 1, 2, 1) = 6.0;
+  v.at(TE::F3, 1, 1, 1) = 0.5;
+  v.at(TE::F3, 2, 1, 1) = 0.5;
 
   Real bx, by, bz;
-  MHD::FaceToCellB(pv, 0, 1, 1, 1, bx, by, bz);
+  MHD::FaceToCellB(v, 0, 1, 1, 1, /*multi_d=*/1, /*three_d=*/1, bx, by, bz);
   CHECK(bx == Approx(2.0).margin(kTightTol)); // (1 + 3)/2
   CHECK(by == Approx(2.0).margin(kTightTol)); // (-2 + 6)/2
   CHECK(bz == Approx(0.5).margin(kTightTol)); // uniform
@@ -296,18 +320,21 @@ TEST_CASE("Face-to-cell B averages a linearly varying face field", "[mhd][faces]
 
 TEST_CASE("Face-to-cell B keeps transverse components in a collapsed direction",
           "[mhd][faces]") {
-  // In a reduced-dimension run the offset for a collapsed direction is zero, so both
-  // reads hit the same slot and the mean returns that value. Transverse field
-  // components are physically nonzero and evolving in 1D/2D, so dropping them (for
-  // instance by zeroing a component when nx2 == 1) would be a physics bug, not an
-  // optimization. This test locks in the non-dropping behavior.
-  const Real f1[2] = {0.25, 0.75};
-  const Real f2[2] = {-1.5, 999.0}; // second slot must never be read
-  const Real f3[2] = {2.25, 999.0}; // second slot must never be read
-  const StubFaceView pv{f1, f2, f3};
+  // In a reduced-dimension run multi_d/three_d are zero, so both reads hit the same slot
+  // and the mean returns that value. Transverse field components are physically nonzero
+  // and evolving in 1D/2D, so dropping them (for instance by zeroing a component when
+  // nx2 == 1) would be a physics bug, not an optimization. This test locks in the
+  // non-dropping behavior. The poisoned neighbor slots must never be read.
+  StubFacePack v;
+  v.at(TE::F1, 0, 0, 0) = 0.25;
+  v.at(TE::F1, 0, 0, 1) = 0.75;
+  v.at(TE::F2, 0, 0, 0) = -1.5;
+  v.at(TE::F2, 0, 1, 0) = 999.0;
+  v.at(TE::F3, 0, 0, 0) = 2.25;
+  v.at(TE::F3, 1, 0, 0) = 999.0;
 
   Real bx, by, bz;
-  MHD::FaceToCellB(pv, 0, /*di=*/1, /*dj=*/0, /*dk=*/0, bx, by, bz);
+  MHD::FaceToCellB(v, 0, 0, 0, 0, /*multi_d=*/0, /*three_d=*/0, bx, by, bz);
   CHECK(bx == Approx(0.5).margin(kTightTol)); // averaged: (0.25 + 0.75)/2
   CHECK(by == Approx(-1.5).margin(kTightTol));
   CHECK(bz == Approx(2.25).margin(kTightTol));

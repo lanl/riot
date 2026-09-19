@@ -74,8 +74,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_hlle(
     const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
     const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
     const Real mu0, Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &f_b1,
-    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face,
-    Real &riemann_vel) {
+    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel) {
 
   rhol = std::max(rhol, 1.e-100);
   rhor = std::max(rhor, 1.e-100);

@@ -144,24 +144,19 @@ void SetDerivedMagneticFields(MeshData<Real> *md, IndexDomain domain) {
   auto pm = md->GetParentPointer();
   const Real mu0 = pm->packages.Get("mhd")->template Param<Real>("mu0");
   const int ndim = pm->ndim;
-  const bool multi_d = (ndim > 1);
-  const bool three_d = (ndim > 2);
+  const int multi_d = (ndim > 1);
+  const int three_d = (ndim > 2);
 
   auto v = riot::MakePack<fbulk::magnetic_field, ccbulk::magnetic_field,
                           ccbulk::magnetic_energy, ccbulk::div_magnetic_field>(md);
   if (v.GetNBlocks() == 0) return;
 
+  // The cell-centered writes go through the flat pack view; the face reads go through
+  // the pack with logical coordinates (see MHD::FaceB for why face storage must never
+  // be addressed with the cell-shaped memory indexer). Because no *view* here mixes the
+  // two layouts, the loop keeps the default (fast) inner contract.
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(domain, 0, v.GetNBlocks(), md, TE::CC);
-
-  // Offsets to the upper face in each direction. These are zero in a collapsed
-  // dimension, which makes the two face reads coincide: the face-to-cell average
-  // degenerates to the single available value, and the corresponding divergence term
-  // cancels identically. That is the correct behavior -- a transverse field component
-  // still evolves in a reduced-dimension run.
-  auto di = idx_space.GetDelta(X1DIR);
-  auto dj = idx_space.GetDelta(X2DIR);
-  auto dk = idx_space.GetDelta(X3DIR);
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -171,8 +166,13 @@ void SetDerivedMagneticFields(MeshData<Real> *md, IndexDomain domain) {
         RiotLoop::inner(idx_range, [&](const auto kji) {
           const auto [k, j, i] = idx_range.GetKJI(kji);
 
+          // multi_d / three_d are zero in a collapsed dimension, which makes the two
+          // face reads coincide: the face-to-cell average degenerates to the single
+          // available value, and the corresponding divergence term cancels identically.
+          // That is the correct behavior -- a transverse field component still evolves
+          // in a reduced-dimension run.
           Real bx, by, bz;
-          FaceToCellB(pv, kji, di, dj, dk, bx, by, bz);
+          FaceToCellB(v, b, k, j, i, multi_d, three_d, bx, by, bz);
           pv(ccbulk::magnetic_field(0), kji) = bx;
           pv(ccbulk::magnetic_field(1), kji) = by;
           pv(ccbulk::magnetic_field(2), kji) = bz;
@@ -183,21 +183,21 @@ void SetDerivedMagneticFields(MeshData<Real> *md, IndexDomain domain) {
           // centered differences of the cell-centered field -- is essential: it is the
           // quantity that constrained transport holds at roundoff, and it is the only
           // form in which the shared-edge EMF contributions cancel algebraically.
-          Real divb = coords.template FaceArea<X1DIR>(k, j, i + 1) *
-                          pv(TE::F1, fbulk::magnetic_field(), kji + di) -
-                      coords.template FaceArea<X1DIR>(k, j, i) *
-                          pv(TE::F1, fbulk::magnetic_field(), kji);
+          Real divb =
+              coords.template FaceArea<X1DIR>(k, j, i + 1) *
+                  FaceB(v, b, TE::F1, k, j, i + 1) -
+              coords.template FaceArea<X1DIR>(k, j, i) * FaceB(v, b, TE::F1, k, j, i);
           if (multi_d) {
-            divb += coords.template FaceArea<X2DIR>(k, j + 1, i) *
-                        pv(TE::F2, fbulk::magnetic_field(), kji + dj) -
-                    coords.template FaceArea<X2DIR>(k, j, i) *
-                        pv(TE::F2, fbulk::magnetic_field(), kji);
+            divb +=
+                coords.template FaceArea<X2DIR>(k, j + 1, i) *
+                    FaceB(v, b, TE::F2, k, j + 1, i) -
+                coords.template FaceArea<X2DIR>(k, j, i) * FaceB(v, b, TE::F2, k, j, i);
           }
           if (three_d) {
-            divb += coords.template FaceArea<X3DIR>(k + 1, j, i) *
-                        pv(TE::F3, fbulk::magnetic_field(), kji + dk) -
-                    coords.template FaceArea<X3DIR>(k, j, i) *
-                        pv(TE::F3, fbulk::magnetic_field(), kji);
+            divb +=
+                coords.template FaceArea<X3DIR>(k + 1, j, i) *
+                    FaceB(v, b, TE::F3, k + 1, j, i) -
+                coords.template FaceArea<X3DIR>(k, j, i) * FaceB(v, b, TE::F3, k, j, i);
           }
           pv(ccbulk::div_magnetic_field(), kji) = divb / coords.CellVolume(k, j, i);
         });

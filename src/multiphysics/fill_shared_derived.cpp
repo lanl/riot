@@ -79,13 +79,12 @@ void FillInteriorDerived(MeshData<Real> *md) {
 
   if (v.GetNBlocks() == 0) return;
 
+  const int multi_d = (pm->ndim > 1);
+  const int three_d = (pm->ndim > 2);
+
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
-  // Offsets to the upper face in each direction; zero in a collapsed dimension.
-  auto di = idx_space.GetDelta(X1DIR);
-  auto dj = idx_space.GetDelta(X2DIR);
-  auto dk = idx_space.GetDelta(X3DIR);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
@@ -113,8 +112,17 @@ void FillInteriorDerived(MeshData<Real> *md) {
           // energy is formed, so that no magnetic energy can reach the EOS as heat.
           // Face state is valid on IndexDomain::interior here because the constrained-
           // transport face update precedes PreCommFillDerived in the task graph.
-          const Real emag =
-              do_mhd ? MHD::CellMagneticEnergyFromFaces(pv, kji, di, dj, dk, mu0) : 0.0;
+          //
+          // The face read is deliberately NOT routed through `pv`: face storage is
+          // node-shaped, so the flat pack view's cell-shaped memory indexer would
+          // address it incorrectly (see MHD::FaceB). Keeping the face access on the
+          // pack's logical-coordinate path lets this hot kernel retain the fast
+          // cell-centered inner contract, so hydro-only runs are unaffected.
+          Real emag = 0.0;
+          if (do_mhd) {
+            const auto [k, j, i] = idx_range.GetKJI(kji);
+            emag = MHD::CellMagneticEnergyFromFaces(v, b, k, j, i, multi_d, three_d, mu0);
+          }
           pv(ccbulk::internal_energy(), kji) =
               pv(ccbulk::total_material_energy(), kji) - emag -
               0.5 * pv(ccbulk::rho(), kji) *
@@ -216,13 +224,12 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                      ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter,
                      face_variables::bulk::magnetic_field>(md);
 
+  const int multi_d = (pm->ndim > 1);
+  const int three_d = (pm->ndim > 2);
+
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
-  // Offsets to the upper face in each direction; zero in a collapsed dimension.
-  auto di = idx_space.GetDelta(X1DIR);
-  auto dj = idx_space.GetDelta(X2DIR);
-  auto dk = idx_space.GetDelta(X3DIR);
   idx_space.template AddPerPointScratch<Real>(1);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -363,9 +370,13 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           // Magnetic energy is added back through the SAME helper that removed it in
           // FillInteriorDerived, which is what guarantees the two cannot disagree about
           // the face-to-cell convention. Face ghosts are valid here because this runs
-          // after the boundary exchange, so IndexDomain::entire is safe.
-          const Real emag =
-              do_mhd ? MHD::CellMagneticEnergyFromFaces(pv, kji, di, dj, dk, mu0) : 0.0;
+          // after the boundary exchange, so IndexDomain::entire is safe. See the note in
+          // FillInteriorDerived on why the face read bypasses the flat pack view.
+          Real emag = 0.0;
+          if (do_mhd) {
+            const auto [k, j, i] = idx_range.GetKJI(kji);
+            emag = MHD::CellMagneticEnergyFromFaces(v, b, k, j, i, multi_d, three_d, mu0);
+          }
           pv(ccbulk::total_material_energy(), kji) =
               pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq + emag;
         });

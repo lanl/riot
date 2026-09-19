@@ -97,6 +97,35 @@ KOKKOS_FORCEINLINE_FUNCTION Real SignalSpeedBound(const Real bmod, const Real rh
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  Real MHD::FaceB
+//! \brief Read the face-centered magnetic field at logical coordinates (k, j, i).
+//!
+//! WHY THIS TAKES THE RAW PACK AND LOGICAL COORDINATES, and never a loop-abstraction
+//! pack_view: RIOT's face field is the first genuine (non-CellMemAligned) face field in
+//! the code, so its storage is NODE-shaped -- Metadata::GetArrayDims
+//! (external/parthenon/src/interface/metadata.cpp:381-387) adds one element per
+//! non-degenerate direction when CellMemAligned is absent. The loop abstraction's
+//! flat/memory pack views cache `data() + shift` and index with the index space's single
+//! memory indexer, which is cell-shaped (IndexSpace only accepts memory_te == CC or NN,
+//! index_space.hpp:203). Addressing node-shaped face storage with cell strides is
+//! silently wrong -- wrong element, no out-of-bounds, no assertion. The loop-abstraction
+//! contract states the rule directly: a kernel touching fields with different memory
+//! layouts must use inner_tag::logical_coords
+//! (LOOP_ABSTRACTION_CONTRACTS.md:96, i.e. RIOT's LoopConstraint::DifferentMemSpaces).
+//!
+//! Going through the pack with logical coordinates sidesteps that constraint entirely:
+//! Parthenon's own accessor indexes each variable's array with that array's strides. It
+//! costs one index computation per access and lets the surrounding loop keep the fast
+//! cell-centered flat contract, which matters because two of the call sites are in the
+//! hot hydro kernels (fill_shared_derived.cpp) that must not slow down when MHD is off.
+template <typename Pack_t>
+KOKKOS_FORCEINLINE_FUNCTION Real FaceB(const Pack_t &v, const int b, const TE te,
+                                       const int k, const int j, const int i) {
+  namespace fbulk = face_variables::bulk;
+  return v(b, te, fbulk::magnetic_field(), k, j, i);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void MHD::FaceToCellB
 //! \brief Cell-centered magnetic field from the two bounding face values per direction.
 //!
@@ -107,20 +136,15 @@ KOKKOS_FORCEINLINE_FUNCTION Real SignalSpeedBound(const Real bmod, const Real rh
 //! Degenerate directions are handled by taking the single available face value rather
 //! than by zeroing the component: a transverse magnetic field is physically nonzero and
 //! evolving even when its own direction is collapsed (B2 and B3 in 1D, B3 in 2D). The
-//! caller passes offsets that are already zero in collapsed directions (from
-//! IndexSpace::GetDelta), so the two reads coincide and the mean is the value itself --
-//! no branch is required.
-template <typename PackView_t, typename Index_t, typename Offset_t>
+//! caller passes multi_d/three_d as 0 in a collapsed direction, so the two reads
+//! coincide and the mean is the value itself -- no branch is required.
+template <typename Pack_t>
 KOKKOS_FORCEINLINE_FUNCTION void
-FaceToCellB(const PackView_t &pv, const Index_t &kji, const Offset_t &di,
-            const Offset_t &dj, const Offset_t &dk, Real &bx, Real &by, Real &bz) {
-  namespace fbulk = face_variables::bulk;
-  bx = 0.5 * (pv(TE::F1, fbulk::magnetic_field(), kji) +
-              pv(TE::F1, fbulk::magnetic_field(), kji + di));
-  by = 0.5 * (pv(TE::F2, fbulk::magnetic_field(), kji) +
-              pv(TE::F2, fbulk::magnetic_field(), kji + dj));
-  bz = 0.5 * (pv(TE::F3, fbulk::magnetic_field(), kji) +
-              pv(TE::F3, fbulk::magnetic_field(), kji + dk));
+FaceToCellB(const Pack_t &v, const int b, const int k, const int j, const int i,
+            const int multi_d, const int three_d, Real &bx, Real &by, Real &bz) {
+  bx = 0.5 * (FaceB(v, b, TE::F1, k, j, i) + FaceB(v, b, TE::F1, k, j, i + 1));
+  by = 0.5 * (FaceB(v, b, TE::F2, k, j, i) + FaceB(v, b, TE::F2, k, j + multi_d, i));
+  bz = 0.5 * (FaceB(v, b, TE::F3, k, j, i) + FaceB(v, b, TE::F3, k + three_d, j, i));
 }
 
 //----------------------------------------------------------------------------------------
@@ -132,12 +156,18 @@ FaceToCellB(const PackView_t &pv, const Index_t &kji, const Offset_t &di,
 //! Multiphysics::PostCommsFillDerived (see ADR-002). Sharing one helper is what
 //! guarantees the subtraction and the addition cannot disagree, which is the failure
 //! mode that shows up as spurious heating in a static uniform field.
-template <typename PackView_t, typename Index_t, typename Offset_t>
-KOKKOS_FORCEINLINE_FUNCTION Real
-CellMagneticEnergyFromFaces(const PackView_t &pv, const Index_t &kji, const Offset_t &di,
-                            const Offset_t &dj, const Offset_t &dk, const Real mu0) {
+//!
+//! Deliberately reads FACE state rather than the derived ccbulk::magnetic_energy field.
+//! The derived field would be cheaper, but it introduces an ordering hazard -- a stale
+//! or un-communicated value would make the subtraction and the addition disagree, which
+//! is precisely the failure ADR-002 exists to rule out. Reading the authoritative state
+//! at both sites makes agreement structural instead of scheduling-dependent.
+template <typename Pack_t>
+KOKKOS_FORCEINLINE_FUNCTION Real CellMagneticEnergyFromFaces(
+    const Pack_t &v, const int b, const int k, const int j, const int i,
+    const int multi_d, const int three_d, const Real mu0) {
   Real bx, by, bz;
-  FaceToCellB(pv, kji, di, dj, dk, bx, by, bz);
+  FaceToCellB(v, b, k, j, i, multi_d, three_d, bx, by, bz);
   return MagneticEnergyDensity(bx, by, bz, mu0);
 }
 
