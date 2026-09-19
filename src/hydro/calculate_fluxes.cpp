@@ -232,19 +232,33 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
 //!        identical to the donor's skip-then-overwrite (DONOR_KERNELS.md section 11) and
 //!        keeps the substitution in one place instead of at every call site.
 template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
-          typename IdxRange, typename Delta, typename SetBulk, typename SumBulk,
-          typename MhdBulk, typename Scratch>
+          typename IdxRange, typename HaloRange, typename Delta, typename SetBulk,
+          typename SumBulk, typename Scratch>
 KOKKOS_INLINE_FUNCTION void
-MHDFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
-          const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
-          const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
-          const MhdBulk &mhd_minus, const MhdBulk &mhd_plus, Scratch &face_vel,
-          Scratch &riemann_vel, const int b, const Real mu0, const bool store_vf) {
+MHDFluxes(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_range,
+          Delta delta, const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
+          const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus, Scratch &face_vel,
+          Scratch &riemann_vel, const int b, const Real mu0,
+          const RiotReconstruction::Type recon_tag, const bool store_vf) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
-  auto fv = RiotLoop::make_flux_pack_view(idx_range, v, DIR);
   auto pv = RiotLoop::make_pack_view(idx_range, v);
+
+  // Reconstruct the cell-centered magnetic field into scratch owned by this path, as
+  // StrengthFluxes does. Keeping the allocation here rather than in CalculateFluxesImpl
+  // is what lets the hydro-only path skip it entirely: an unconditional bucket changes
+  // the scratch footprint, which changes the inner chunking, which changes the order of
+  // floating-point reductions -- enough to perturb the linear-wave L1 errors in their 7th
+  // significant digit and cost the bitwise-unchanged invariant for no benefit. It also
+  // keeps large mesh blocks from hitting the device scratch limit on hydro-only runs.
+  auto mhd_minus = GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
+  auto mhd_plus = GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
+  ReconCells<ccbulk::magnetic_field>(pv, halo_range, delta, mhd_minus, mhd_plus,
+                                     recon_tag);
+  halo_range.TeamBarrier();
+
+  auto fv = RiotLoop::make_flux_pack_view(idx_range, v, DIR);
   RiotLoop::inner(idx_range, [&](const auto kji) {
     const auto kji_L = kji - delta;
     const auto kji_R = kji;
@@ -649,11 +663,13 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
       idx_space, 2);
   AddPerPointScratch<Real, halo, 5>(idx_space, 2); // summed bulk stress accumulators
   AddPerPointScratch<Real, halo>(idx_space, 2);    // advection recon (minus/plus)
-  // Reconstructed cell-centered magnetic field, touched only on the MHD solver path.
-  // Declared unconditionally because the scratch arena is keyed by type list, so the
-  // bucket must exist for the Get inside the outer body to be well formed -- the same
-  // arrangement the strength path uses.
-  AddTypeIndexedPerPointScratch<Real, halo, mhd_bulk_recon_types>(idx_space, 2);
+  // Reconstructed cell-centered magnetic field. Allocated ONLY on the MHD path: an
+  // unconditional bucket would change the scratch footprint of every hydro-only run, and
+  // with it the inner chunking and the order of floating-point reductions. See the note
+  // in MHDFluxes.
+  if (do_mhd) {
+    AddTypeIndexedPerPointScratch<Real, halo, mhd_bulk_recon_types>(idx_space, 2);
+  }
 
   auto delta = idx_space.GetDelta(DIR);
   // Directional basis (normal + cyclic transverse offsets/components) for GetVdiff.
@@ -788,19 +804,6 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
         halo_range.TeamBarrier();
 
-        // Reconstruct the cell-centered magnetic field for the MHD solver. Cell-centered,
-        // so the flat pack view is the correct accessor here; the face-centered normal
-        // component is handled separately inside MHDFluxes.
-        auto mhd_minus =
-            GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
-        auto mhd_plus =
-            GetTypeIndexedPerPointScratch<Real, mhd_bulk_recon_types>(halo_range);
-        if (do_mhd) {
-          ReconCells<ccbulk::magnetic_field>(pv, halo_range, delta, mhd_minus, mhd_plus,
-                                             recon_tag);
-          halo_range.TeamBarrier();
-        }
-
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
         // BulkRiemannFluxes<DIR, FLUX_FN> instantiation. The low-Mach solvers
         // (chllc/lhllc) additionally need the transverse velocity differences dvn/dvt
@@ -842,8 +845,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
           break;
         case RiemannSolver::mhd_hlle:
           MHDFluxes<DIR, MHD::lr_to_flux_mhd_hlle<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, mhd_minus, mhd_plus, face_vel, riemann_vel, b, mu0,
+              v, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
               store_vf);
           break;
         case RiemannSolver::strong:

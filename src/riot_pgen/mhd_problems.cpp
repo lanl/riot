@@ -18,19 +18,19 @@
 // CONTRACT FOR EVERY MHD PROBLEM GENERATOR (ADR-003):
 //
 //   1. Write ONLY the face-centered magnetic field, never the cell-centered one. The
-//      cell-centered field, the magnetic energy, and div B are all derived from face state
-//      by MHD::PostInitialization, which is installed as the mhd package's
+//      cell-centered field, the magnetic energy, and div B are all derived from face
+//      state by MHD::PostInitialization, which is installed as the mhd package's
 //      PostInitializationMesh hook. A pgen that wrote cell-centered B directly would
 //      produce a state that is not representable on the staggered mesh, and the first CT
 //      update would silently overwrite it.
 //
 //   2. Set total_material_energy to the HYDRO total (u + kinetic), exactly as every other
-//      RIOT pgen does, then call MHD::AddMagneticEnergyToTotal(pmb) as the LAST step. That
-//      helper adds B^2/(2 mu0) through the same shared definition that
+//      RIOT pgen does, then call MHD::AddMagneticEnergyToTotal(pmb) as the LAST step.
+//      That helper adds B^2/(2 mu0) through the same shared definition that
 //      Multiphysics::FillInteriorDerived subtracts (ADR-002), so the conventions cannot
-//      drift. It has to happen inside the pgen rather than in PostInitialization -- see the
-//      comment on that function for the initialization-ordering reason. Do not open-code
-//      the magnetic term here, and do not call the helper twice.
+//      drift. It has to happen inside the pgen rather than in PostInitialization -- see
+//      the comment on that function for the initialization-ordering reason. Do not
+//      open-code the magnetic term here, and do not call the helper twice.
 //
 //   3. Where the field is not trivially divergence free by construction, initialize it as
 //      a DISCRETE CURL OF A VECTOR POTENTIAL, using the same difference stencil that the
@@ -39,8 +39,9 @@
 //      nonzero initial divergence is indistinguishable, later, from a defective CT
 //      implementation.
 //
-// Staggering convention for the vector potential: A_d lives on the edge along direction d,
-// so A1 sits at (x1c, x2f, x3f), A2 at (x1f, x2c, x3f), and A3 at (x1f, x2f, x3c). Then
+// Staggering convention for the vector potential: A_d lives on the edge along direction
+// d, so A1 sits at (x1c, x2f, x3f), A2 at (x1f, x2c, x3f), and A3 at (x1f, x2f, x3c).
+// Then
 //
 //   B1(k,j,i) = [A3(k,j+1,i) - A3(k,j,i)]/dx2 - [A2(k+1,j,i) - A2(k,j,i)]/dx3
 //   B2(k,j,i) = [A1(k+1,j,i) - A1(k,j,i)]/dx3 - [A3(k,j,i+1) - A3(k,j,i)]/dx1
@@ -68,8 +69,8 @@ void AllocateAll(MeshBlock *pmb, std::shared_ptr<parthenon::MeshBlockData<Real>>
 }
 
 //! Guard shared by every MHD pgen: these setups only make sense with the mhd package on,
-//! and the failure mode without it (an unallocated face field) is obscure, so it is caught
-//! here with a message that says what to do.
+//! and the failure mode without it (an unallocated face field) is obscure, so it is
+//! caught here with a message that says what to do.
 void RequireMHD(MeshBlock *pmb, const char *problem) {
   PARTHENON_REQUIRE(pmb->packages.AllPackages().count("mhd") == 1,
                     std::string(problem) + " requires MHD; set <physics>/mhd = true.");
@@ -90,14 +91,14 @@ namespace mhd_shock_tube {
 //! Right (x > x0): rho = 0.125, P = 0.1, By = -1
 //! Bx = 0.75 everywhere, Bz = 0, v = 0, gamma = 2.
 //!
-//! The reference solution at t = 0.08 includes a compound structure (a slow shock attached
-//! to a rotational discontinuity) that is sensitive to the solver, which is what makes this
-//! a real test rather than a smoke test. artemis/tst/scripts/mhd/athena_bw.std is an
-//! independent Athena++ solution for it.
+//! The reference solution at t = 0.08 includes a compound structure (a slow shock
+//! attached to a rotational discontinuity) that is sensitive to the solver, which is what
+//! makes this a real test rather than a smoke test. artemis/tst/scripts/mhd/athena_bw.std
+//! is an independent Athena++ solution for it.
 //!
 //! No vector potential is needed: the field is uniform along x, so div B = d_1 B1 = 0
-//! holds exactly for any By(x) profile. The transverse discontinuity is placed on the same
-//! x0 as the fluid discontinuity.
+//! holds exactly for any By(x) profile. The transverse discontinuity is placed on the
+//! same x0 as the fluid discontinuity.
 void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -198,9 +199,9 @@ namespace mhd_field_loop {
 //!
 //! A3 = a0 * max(0, r_loop - r) with r measured from the loop center, so
 //! B = curl A is a purely in-plane loop of field confined to r < r_loop, embedded in a
-//! uniform, uniformly moving gas. The field is dynamically negligible (beta ~ 1e6), so the
-//! exact solution is pure advection: after one crossing time the loop must return to its
-//! initial position with its shape and magnetic energy intact.
+//! uniform, uniformly moving gas. The field is dynamically negligible (beta ~ 1e6), so
+//! the exact solution is pure advection: after one crossing time the loop must return to
+//! its initial position with its shape and magnetic energy intact.
 //!
 //! This is the sharpest available test of the CT implementation, because the two failure
 //! modes it exposes are ones no 1D test can see: an EMF averaging error diffuses the loop
@@ -272,7 +273,8 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real dx1 = coords.Dx<parthenon::X1DIR>();
   const Real dx2 = coords.Dx<parthenon::X2DIR>();
 
-  // The x1 faces run to ib.e + 1; the extra plane is why each element gets its own bounds.
+  // The x1 faces run to ib.e + 1; the extra plane is why each element gets its own
+  // bounds.
   auto f1 = pmb->cellbounds.GetBoundsI(IndexDomain::entire, TE::F1);
   pmb->par_for(
       "ProblemGenerator::mhd_field_loop_b1", kb.s, kb.e, jb.s, jb.e, f1.s, f1.e,

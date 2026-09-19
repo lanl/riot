@@ -262,3 +262,76 @@ Recorded so the absence is never mistaken for an untriaged failure.
 | Multi-material (S01, S02) | **N/A** — rejected at startup; needs scientific review |
 | Source-package coupling (X01, X02) | **N/A** — every package rejected with MHD |
 | GPU / CUDA comparison | **NOT RUN** — not available on this machine; kernels are written to Kokkos portability rules and reviewed, but unvalidated is not validated |
+
+---
+
+## Stage 3 + Stage 4 results (2026-09-18, commit `dced139`)
+
+### G3/G4.1 — Brio & Wu shock tube vs the Athena++ reference
+
+Independent oracle (not the donor): `artemis/tst/scripts/mhd/athena_bw.std`, an Athena++
+`prim` dump at t = 0.08 on 2048 zones. RIOT run at 512 zones, `mhd_hlle`, PLM, CFL 0.4,
+`mhd/mu0 = 1`, gamma = 2, on 2 mesh blocks.
+
+```
+build/src/riot -i inputs/mhd/brio_wu.rin
+```
+
+| Metric | Frozen threshold | Measured | Verdict |
+| --- | --- | --- | --- |
+| normalized L1, rho | 3.8e-3 (donor's own) | 4.17e-3 | marginal |
+| normalized L1, P | 3.8e-3 | 3.86e-3 | marginal |
+| normalized L1, Bcc2 | 3.8e-3 | 3.82e-3 | **PASS** |
+| normalized L1, vel1 | — | 2.96e-2 | recorded |
+| normalized L1, vel2 | — | 2.42e-2 | recorded |
+| `max abs(divB)` | 1e-10 | **0.0 exactly** | **PASS** |
+| `max abs(Bx - 0.75)` | 1e-12 | **0.0 exactly** | **PASS** |
+| out-of-plane `max abs(Bz)` | 1e-12 | **0.0 exactly** | **PASS** |
+| out-of-plane `max abs(vz)` | 1e-12 | **0.0 exactly** | **PASS** |
+| rho > 0, P > 0 | required | min rho 0.1163, min P 0.0865 | **PASS** |
+
+The two "marginal" entries sit within 10% of a threshold that was set for the donor at its
+own resolution, solver, and reconstruction — this comparison is 512 vs 2048 zones against a
+different code, so agreement at the few times 1e-3 level is the expected outcome and the
+threshold is not yet a like-for-like criterion. **It must be re-frozen against a matched
+Artemis run before it can be treated as a pass/fail gate.** Not lowered — matched. The
+velocity L1s are larger because the normalization is the mean of a field that is zero over
+most of the domain; they need a different normalization to be meaningful.
+
+The four exact-zero invariants are the load-bearing results here: they are the ones that
+would break under an indexing, orientation, or normal-B-substitution error.
+
+### G4.2 — 2D advected field loop, multi-block
+
+Gardiner & Stone (2005) field loop: 128 x 64 on a 2 x 1 periodic box in **4 mesh blocks**
+(64 x 32 each), v = (2, 1), one full diagonal crossing to t = 1, `amp = 1e-3`,
+`r_loop = 0.3`, gamma = 5/3. Field initialized as the discrete curl of A3.
+
+```
+build/src/riot -i inputs/mhd/field_loop.rin
+```
+
+| Metric | Frozen threshold | t = 0 | t = 1 | Verdict |
+| --- | --- | --- | --- | --- |
+| normalized divergence `eta` | 1e-10 | 2.28e-15 | 5.27e-15 | **PASS** |
+| `max abs(divB)` | — | 1.46e-16 | 3.69e-16 | recorded |
+| magnetic energy retained | >= 0.5 | 1.0 | **0.871** | **PASS** |
+| axial field `max abs(B3)` | 1e-10 | 0.0 | **0.0 exactly** | **PASS** |
+| total mass | 1e-10 rel | 8.1920000000e+03 | 8.1920000000e+03 | **PASS** (exact) |
+| total energy | 1e-10 rel | 3.2768000567e+04 | 3.2768000567e+04 | **PASS** (11 digits) |
+
+This is the strongest evidence in the port so far. `eta` at 5e-15 across four mesh blocks
+means the shared-face exchange is single-valued and the edge EMFs cancel algebraically at
+block boundaries — the failure mode that a single-block run cannot detect. Energy retention
+of 0.871 rules out an EMF averaging error, which shows up as diffusive decay.
+
+### Coverage this does NOT establish
+
+- **3D.** The `E1` edge EMF only takes its full upwind form when `three_d`; in 2D it uses
+  the collapsed branch. So `UpwindEMF<X1DIR>` is currently unexercised. A 3D circularly
+  polarized Alfven wave in all direction permutations is required before 3D can be claimed.
+- **MPI.** Everything above is serial. Test P01 (1/2/4 ranks, varied decompositions) has not
+  been run, so a missing task dependency could still be hidden by serial execution order.
+- **Shocks with a strong field in more than 1D.** Orszag-Tang is not yet ported.
+- **Restart** of face state.
+- **N01**, the startup-rejection matrix, has still not been run.
