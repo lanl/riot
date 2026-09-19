@@ -7,7 +7,8 @@ Branch: `taitano/mhd-porting`
 Commits: `725a19a` (Stages 0-2), `f0af069` (Stage 3 solver), `4d1a8e0` (checkpoint),
 `1350c20` (face memory-layout fix), `dced139` (flux wiring + CT + pgens)
 
-Current stage: **Stage 4 complete. Gates G0, G1, G2, G3 and G4 all pass.** Brio-Wu agrees
+Current stage: **Stage 4 complete, Stage 5 in progress (HLLD, reconstruction, N01 done).
+Gates G0, G1, G2, G3 and G4 all pass.** Brio-Wu agrees
 with the Athena++ reference; the 2D and 3D field loops hold div B at roundoff; Orszag-Tang
 holds it through a shock network; the CPAW converges at second order with error identical
 across all three axes; and every result is bitwise independent of rank count. Remaining known
@@ -77,16 +78,19 @@ undercut results recorded in this file if they turn out badly:
   shared `sparse_update` machinery that every physics package uses. This is *scheduled* Stage 5
   work rather than a skipped step, and it should be sequenced **after the last code change** so
   it validates the final state — see C1 for why running it earlier just means running it twice.
-- **C2**: the startup rejections (N01) have never been executed, so every certified-matrix claim
-  rests on unsupported configurations being unreachable — which is untested.
+- ~~**C2**: the startup rejections (N01) have never been executed~~ — **RESOLVED 2026-09-18**,
+  23/23 with a positive and a negative control (TEST_LEDGER "N01"). It found two real defects:
+  the HLLD ideal-gas guard read the wrong input block and was dead code, and both general-PTE
+  guards read the input flag rather than the resolved one, so a non-ideal `eos_type` bypassed
+  them entirely. Two residual gaps are recorded in the C2 Resolved entry.
 
 Do not delete entries from that file; move them to its Resolved section with evidence.
 
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
-regression harness; HLLD and LLF; `mhd/monitor_divb` is registered but not yet consumed;
-restart of face state untested; test N01 (startup rejections) not run; U05 (face stage copy
+regression harness; LLF; `mhd/monitor_divb` is registered but not yet consumed;
+restart of face state untested; U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
 uniform-grid, so no coarse/fine flux or EMF correction is exercised. The CPAW is axis-aligned
@@ -147,9 +151,22 @@ only, so no test propagates a wave obliquely to the grid.
    the shell is zsh, where an unquoted `$VAR` holding several arguments is **not**
    word-split — build override lists as an array and expand `"${arr[@]}"`, or the whole list
    arrives as one argument and produces exactly that divisibility abort.
-4. **`tst/scripts/mhd/`** harness, adopting the donor's own thresholds.
-5. Stage 5: HLLD (keep its degeneracy guards verbatim, DONOR_KERNELS.md section 13), LLF,
-   reconstruction certification, restart equivalence.
+4. ~~**Startup rejections (N01)**~~ — **DONE, PASS**, 23/23. To re-run:
+   ```
+   mkdir -p /tmp/n01 && cd /tmp/n01
+   R=/Users/taitano/Documents/git/riot
+   . $R/riot_venv/bin/activate
+   python3 $R/claude_sessions/mhd_runs/n01_startup_rejections.py
+   ```
+   Add `--cyl-exe <path>` to include the non-Cartesian case, which needs a build configured
+   with `-DPARTHENON_COORDINATES=UniformCylindrical` (the coordinate type is compile-time, so
+   no input can reach that rejection in the normal binary). The `base` positive control and
+   the `cyl_control` negative control are load-bearing, not decoration — without them the
+   sweep can pass vacuously. Requires `inputs/mhd/brio_wu.rin` and, for the curvilinear case,
+   `inputs/sedov_rz.rin`; both are generated from their `.py` sources.
+5. Remaining Stage 5: LLF, solver-failure/floor counters (C6), `mhd/monitor_divb` (C7),
+   restart equivalence (C5), MHD docs in `doc/sphinx`, the `tst/scripts/mhd/` harness, and
+   the eight-suite regression sweep LAST (C1).
 
 ## Do not repeat
 
@@ -170,6 +187,16 @@ only, so no test propagates a wave obliquely to the grid.
   positive; where it is clipped the information is gone. Observed as Brio-Wu's right state
   at P = 0.78125 (exactly `B^2/2`) instead of 0.1, **while the left state came out exactly
   right** — a bug that only corrupts states where a floor triggers.
+- **Do not validate a configuration by reading the input file when a package has already
+  resolved it.** `pin->GetOrAddBoolean(...)` returns what the user typed, or a default —
+  which is *not* the value the code will use if a package derives it. Concretely,
+  `materials.cpp:450` sets `use_general_pte = true` for any non-ideal `eos_type` regardless
+  of the flag, so both MHD general-PTE guards read `false` on exactly the configurations they
+  existed to reject. It is also easy to name the wrong block and get a silent default
+  forever: the `hydro.cpp` guard read `<multiphysics>` for an option that lives in
+  `<materials>` and was dead code from the day it was written, with `GetOrAdd` quietly
+  creating the bogus entry. Read `pkg->Param<T>(...)` and order the check after that
+  package's `Initialize`. Found by N01; both fixed.
 - **Do not filter the update pack on `Metadata::Conserved`.** Advected scalars
   (`scalars.cpp:62,81`) and level sets (`levelsets.cpp:41`) are updated by
   `UpdateToNextStage` and carry no `Conserved` flag.

@@ -164,11 +164,11 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                       "preserving prolongation and coarse/fine EMF correction are "
                       "registered but untested; set parthenon/mesh/refinement = none.");
 
-    PARTHENON_REQUIRE(
-        !pin->GetOrAddBoolean("materials", "use_general_pte", false),
-        "MHD with the general PTE closure is not yet supported. The mixed-cell "
-        "closure and the general-EOS acoustic derivative both need separate "
-        "validation; set materials/use_general_pte = false.");
+    // The general-PTE rejection is NOT here. Reading materials/use_general_pte from the
+    // input at this point would miss the case that matters most: materials.cpp:450 turns
+    // the flag on unconditionally when any material's eos_type is not ideal, whatever the
+    // input said. The resolved value only exists once Materials::Initialize has run, so
+    // the check lives immediately after that call below.
 
     PARTHENON_REQUIRE(!fixed_fluid, "MHD with a frozen fluid background is not "
                                     "supported: the induction equation transports the "
@@ -252,6 +252,17 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_hydro) {
     auto mat_pkg = Materials::Initialize(pin.get());
     packages.Add(mat_pkg);
+    // Deferred half of the MHD support gate above. This reads the RESOLVED closure flag
+    // rather than the input one, which is the only version that reflects a non-ideal
+    // eos_type having forced general PTE on (materials.cpp:450).
+    if (do_mhd) {
+      PARTHENON_REQUIRE(!mat_pkg->Param<bool>("use_general_pte"),
+                        "MHD with the general PTE closure is not yet supported. The "
+                        "mixed-cell closure and the general-EOS acoustic derivative both "
+                        "need separate validation. Set materials/use_general_pte = false "
+                        "AND use an ideal-gas eos_type -- a non-ideal EOS enables the "
+                        "general closure on its own.");
+    }
     packages.Add(Hydro::Initialize(pin.get(), mat_pkg.get()));
   }
   // MHD registers immediately after hydro: it needs the hydro/materials fields to

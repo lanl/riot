@@ -154,10 +154,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // HLLD's star-state derivation and its degeneracy tolerances assume an ideal gas, as
   // the donor's own PARTHENON_REQUIRE does (DONOR_KERNELS.md section 13). HLLE has no
   // such restriction: it only needs the bulk modulus, which RIOT supplies for any EOS.
+  // Read the flag from the materials PACKAGE, not from the input file. The input option
+  // lives in <materials>, not <multiphysics>, and more importantly materials.cpp:450 sets
+  // it from the eos_type even when the input leaves it false -- so an input-file read
+  // cannot see a non-ideal EOS at all. Materials::Initialize runs before this (riot.cpp),
+  // which is what makes the resolved value available here.
   if (solver == "mhd_hlld") {
-    const bool general_pte =
-        pin->GetOrAddBoolean("multiphysics", "use_general_pte", false);
-    PARTHENON_REQUIRE(!general_pte,
+    PARTHENON_REQUIRE(!mat_pkg->Param<bool>("use_general_pte"),
                       "hydro/riemann = mhd_hlld requires an ideal gas; use mhd_hlle "
                       "for a general EOS.");
   }

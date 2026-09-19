@@ -84,7 +84,7 @@ numeric), no unsupported configuration can run, face-aware stage copy proven.
 | G1.1 | Unit tests after the `sparse_update` filter change + package shell | 18/18, no change | **PASS** — `100% tests passed out of 18` |
 | G1.2 | Hydro regression suite, MHD off | 7/7 pass; numeric outputs MD5-identical to G0.2 | **PASS** — see below |
 | U05 | Face-aware stage register copy over the full face extent, distinct stage values | exact | **NOT RUN** — needs a live Mesh with a registered face field; scheduled with the CT update (Stage 4) |
-| N01 | Every rejected configuration fails at startup with an actionable message | must throw | **NOT RUN** |
+| N01 | Every rejected configuration fails at startup with an actionable message | must throw | **PASS** — 23/23, 2026-09-18; see the N01 section at the end. Found and fixed two dead general-PTE guards. |
 
 ### G1.2 detail — and a harness artifact worth recording
 
@@ -334,7 +334,8 @@ of 0.871 rules out an EMF averaging error, which shows up as diffusive decay.
   been run, so a missing task dependency could still be hidden by serial execution order.
 - **Shocks with a strong field in more than 1D.** Orszag-Tang is not yet ported.
 - **Restart** of face state.
-- **N01**, the startup-rejection matrix, has still not been run.
+- **N01**, the startup-rejection matrix, has still not been run *as of this G4.2 entry*. It
+  ran later on 2026-09-18 and passed 22/22 — see the N01 section at the end of this file.
 
 ### H01 (re-run) — hydro bitwise unchanged: resolved by direct A/B, not by stored MD5
 
@@ -958,3 +959,129 @@ than formal order decides the result. No mode is unstable or non-positive at a s
 unsupported. Requirements: `nghost >= stencil_width + 1`, enforced already and verified to
 abort with an actionable message below that. Recorded limitation: WENO5 and MP5 cannot reach
 their formal order with `rk2` at a fixed CFL.
+
+---
+
+## N01 — startup rejection matrix, 2026-09-18
+
+This closes concern C2, which was the highest-consequence gap in the port: every accuracy
+result above is stated only for the certified matrix and is silent about everything outside
+it, and that silence is only safe if the outside configurations cannot **run**. Until this
+test ran, "rejected at startup" was an unverified claim about untested code.
+
+| Field | Value |
+| --- | --- |
+| Harness | `claude_sessions/mhd_runs/n01_startup_rejections.py` |
+| Command | `cd /tmp/n01 && python3 <repo>/claude_sessions/mhd_runs/n01_startup_rejections.py` |
+| Base deck | `inputs/mhd/brio_wu.rin` (regenerated from `brio_wu.py`), with `parthenon/time/nlim=0` |
+| Criterion per case | nonzero exit **and** an output message containing a fragment unique to the rejection being tested |
+| Result | **PASS** — 23/23, plus a positive and a negative control |
+
+### Why the criterion has two halves
+
+A run that aborts for an unrelated reason — a mistyped override, an unreadable deck — also
+exits nonzero, and a harness that checked only the exit status would record it as a
+successful rejection. Each case therefore also requires a message fragment that appears in
+exactly one `PARTHENON_REQUIRE` in `src/`. Generic fragments such as "not supported" were
+deliberately not used: several messages share that phrase, so one rejection could stand in
+for another.
+
+The `base` case (unmodified deck, expect exit 0) is a positive control and is not optional.
+Without it, a harness in which *every* invocation fails — wrong executable path, missing
+deck — reports a clean sweep of passes.
+
+### Cases
+
+| Case | Override | Rejected by |
+| --- | --- | --- |
+| `hydro_solver_with_mhd` | `hydro/riemann=hllc` | `hydro.cpp:148` |
+| `mhd_solver_without_mhd` | `physics/mhd=false` | `hydro.cpp:148` |
+| `two_materials` | `material1/eos_type=IdealGas` | `riot.cpp` |
+| `refinement_adaptive` | `parthenon/mesh/refinement=adaptive` | `riot.cpp` |
+| `refinement_static` | `parthenon/mesh/refinement=static` | `riot.cpp` |
+| `general_pte_flag` | `materials/use_general_pte=true` | `riot.cpp` (deferred check) |
+| `non_ideal_eos` | `material0/eos_type=Gruneisen` + its 10 required parameters | `riot.cpp` (deferred check) |
+| `fixed_fluid` | `physics/fixed_fluid=true` | `riot.cpp` |
+| `strength`, `mix`, `tn`, `ionization`, `levelsets`, `multigroup_diffusion`, `radiation_transport`, `prescribed_sources`, `gravity`, `scalars`, `tracers` | `physics/<name>=true` | `riot.cpp` |
+| `lasers_needs_ionization` | `physics/lasers=true` | `riot.cpp:125` (see note) |
+| `mu0_zero`, `mu0_negative` | `mhd/mu0=0.0`, `mhd/mu0=-1.0` | `mhd.cpp:55` |
+
+Two cases need their expected message explained rather than assumed:
+
+- **`lasers_needs_ionization`** asserts `"Lasers requires ionization"`, not the MHD laser
+  message. Lasers require ionization independently of MHD, and that check runs first, so
+  asserting the MHD message here would have failed for a reason unrelated to MHD. The
+  MHD-specific laser line is consequently unreachable from a valid input: reaching it needs
+  ionization on, which is itself rejected earlier in the gate. It is covered by inspection,
+  not by execution, and that is recorded rather than papered over.
+- **`non_ideal_eos`** asserts the broad MHD general-PTE message, not HLLD's
+  `"requires an ideal gas"`. The MHD gate runs before `Hydro::Initialize`, so it shadows the
+  HLLD-specific message by design. The HLLD line is defense in depth for if the broader gate
+  is ever relaxed.
+
+### Two real defects found by running this
+
+Both were in the general-PTE rejections, and both are the reason this test was worth running
+rather than assuming.
+
+1. **`hydro.cpp` read the wrong input block.** It used
+   `pin->GetOrAddBoolean("multiphysics", "use_general_pte", false)`, but the option lives in
+   `<materials>` (`materials.cpp:373`). The read therefore always returned the default
+   `false` — and, being a `GetOrAdd`, silently created a spurious
+   `multiphysics/use_general_pte` entry in the recorded input. **The HLLD ideal-gas guard
+   was dead code and could never have fired.**
+
+2. **Both checks read the input flag, which cannot see a non-ideal EOS.**
+   `materials.cpp:450` sets `use_general_pte = true` whenever any material's `eos_type` is
+   not ideal, *regardless of the input flag*. So the most likely way for a user to reach the
+   general closure — selecting a real EOS, never touching the flag — was exactly the way
+   neither check could detect. Verified directly: with `eos_type=Gruneisen` the original code
+   ran past both guards.
+
+Fixed by reading the **resolved** package parameter instead of the input file:
+`hydro.cpp` now uses `mat_pkg->Param<bool>("use_general_pte")`, and the MHD gate's
+general-PTE clause moved out of the block at `riot.cpp:140` to immediately after
+`Materials::Initialize`, since the resolved value does not exist before that call. A comment
+at the original site records why the check is not there.
+
+Regression evidence for the fix: `ctest` **41/41**, and `inputs/mhd/brio_wu.rin` reproduces
+its G5.5 PLM row exactly (`rho 2.659044e-03`, `press 2.280626e-03`, `vx 5.799217e-03`,
+`vy 4.006543e-03`, `By 1.689883e-03`), with all four structural invariants exactly 0.0. Both
+changes are startup-only and cannot affect a run that starts.
+
+One cosmetic consequence, recorded so it is not mistaken for a regression later: HLLD runs
+no longer carry the spurious `multiphysics/use_general_pte` line in the input deck embedded
+in their `.phdf` attributes. Array data is unaffected.
+
+### The non-Cartesian rejection needs a second binary
+
+`COORDINATE_TYPE` is a **compile-time** setting (`external/parthenon/src/config.hpp.in:25`,
+driven by `-DPARTHENON_COORDINATES`, default `UniformCartesian`). In a Cartesian binary
+`IsCoord<UniformCartesian>()` is constexpr-true, so no input deck can make that rejection
+fire. It was therefore tested against a separate build:
+
+```
+cmake -S . -B /tmp/riot_cyl_build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=/opt/homebrew/bin/gcc-16 -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16 \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DRIOT_ENABLE_MPI=ON -DRIOT_ENABLE_HDF5=ON \
+  -DRIOT_BUILD_PYTHON=ON -DRIOT_BUILD_CATCH2=ON -DRIOT_ENABLE_UNIT_TESTS=OFF \
+  -DPARTHENON_COORDINATES=UniformCylindrical
+cmake --build /tmp/riot_cyl_build --parallel 8
+python3 claude_sessions/mhd_runs/n01_startup_rejections.py --cyl-exe /tmp/riot_cyl_build/src/riot
+```
+
+| Case | Command | Result |
+| --- | --- | --- |
+| `cyl_control` | cylindrical binary on `inputs/sedov_rz.rin`, `nlim=2` | **exit 0**, 38 mesh blocks, ran to completion |
+| `non_cartesian` | cylindrical binary on `inputs/mhd/brio_wu.rin` | **exit 134**, `"MHD is only supported in Cartesian coordinates."` |
+
+The control is the point of the pair. "A cylindrical build aborts on an MHD deck" is not by
+itself evidence about the MHD gate — a cylindrical build that could not run anything would
+give the same result. Running hydro RZ successfully in the *same* binary makes `physics/mhd`
+the only difference between completing and aborting.
+
+Two incidental facts worth recording, since both were open questions before the build:
+RIOT **does** compile against a curvilinear Parthenon (the build succeeded with no source
+changes), and the MHD coordinate rejection fires before Parthenon objects to the Brio–Wu
+deck's negative radial range — so it is genuinely the first thing to stop the run, not a
+lucky ordering.

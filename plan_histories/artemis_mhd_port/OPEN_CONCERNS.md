@@ -13,7 +13,8 @@ Rules for this file:
 - Severity is about **what a defect here would cost**, not about how likely it is.
 - If a concern is a guess rather than a measurement, it says so.
 
-Last updated: 2026-09-18, after commit `bd51645` (reconstruction certification).
+Last updated: 2026-09-18, after N01 (startup rejections). **C2 is resolved** — and it found two
+real defects, which is the argument for keeping this file honest rather than optimistic.
 
 ---
 
@@ -53,21 +54,7 @@ or `analyze()` throws on doubled output and it reads as a regression that is not
 are mandatory: without `--save_build` the runner deletes `tst/build`, and without `--reuse_build`
 it reconfigures with AppleClang, which cannot compile RIOT.
 
-## C2 — Startup rejections (N01) have never been executed [HIGH]
-
-The ledger has said `NOT RUN` since Stage 1. The port claims to reject, at startup: `nmat > 1`,
-non-Cartesian coordinates, `refinement != none`, `use_general_pte`, `fixed_fluid`, and every one
-of strength / mix / tn / ionization / levelsets / multigroup diffusion / radiation transport /
-lasers / prescribed sources / scalars / tracers.
-
-**None of those rejections has been observed to fire.** Untested rejection code is code that
-might not reject. This is the highest-consequence gap in the port, because every other
-verification result is conditional on the unsupported configurations being unreachable — if
-`nmat > 1` with MHD silently runs instead of aborting, it produces a physically meaningless
-answer with no warning, and the entire certified-matrix claim is void.
-
-**To close:** one run per rejected combination, asserting a nonzero exit and a message that
-names the offending option. Cheap — each aborts during initialization.
+## C2 — Startup rejections (N01) have never been executed → **RESOLVED**, see Resolved section
 
 ## C3 — Brio–Wu has no absolute frozen threshold [MEDIUM]
 
@@ -188,4 +175,47 @@ is enabled, and it will not be obvious then that this was never checked.
 
 ## Resolved
 
-Nothing yet. Items move here with the evidence that closed them, and are not deleted.
+Items move here with the evidence that closed them, and are not deleted.
+
+### C2 — Startup rejections (N01) had never been executed [was HIGH] — closed 2026-09-18
+
+**The original concern.** The ledger had said `NOT RUN` since Stage 1. The port claimed to
+reject, at startup: `nmat > 1`, non-Cartesian coordinates, `refinement != none`,
+`use_general_pte`, `fixed_fluid`, and every one of strength / mix / tn / ionization /
+levelsets / multigroup diffusion / radiation transport / lasers / prescribed sources /
+scalars / tracers. None had been observed to fire. It was rated the highest-consequence gap
+because every other verification result is conditional on the unsupported configurations
+being unreachable.
+
+**Evidence that closed it.** `claude_sessions/mhd_runs/n01_startup_rejections.py`, 23/23
+cases passing with both a positive control (unmodified deck must exit 0) and, for the
+compile-time coordinate case, a negative control (the cylindrical binary must run hydro RZ
+successfully). Each case asserts a nonzero exit **and** a message fragment unique to the
+specific rejection, so an abort for an unrelated reason cannot be recorded as a rejection.
+Full detail in `TEST_LEDGER.md` under "N01 — startup rejection matrix".
+
+**The concern was justified: it found two real defects, both in the general-PTE rejections.**
+
+1. `hydro.cpp` read `pin->GetOrAddBoolean("multiphysics", "use_general_pte", false)`, but the
+   option lives in `<materials>`. The read always returned the default, so the HLLD
+   ideal-gas guard was **dead code that could never fire** — and being a `GetOrAdd`, it also
+   silently injected a spurious `multiphysics/use_general_pte` entry into the recorded input.
+2. Both the `hydro.cpp` and `riot.cpp` checks read the *input flag*, which cannot see
+   `materials.cpp:450` forcing `use_general_pte = true` whenever any `eos_type` is
+   non-ideal. So the most natural route to the general closure — pick a real EOS, never touch
+   the flag — was the one route neither guard could detect. Confirmed by direct run:
+   `eos_type=Gruneisen` sailed past both.
+
+Both now read the **resolved** package parameter. `riot.cpp`'s general-PTE clause had to move
+out of the main gate to just after `Materials::Initialize`, because the resolved value does
+not exist earlier; a comment at the original site records why it is not there.
+
+**Two residual limitations, stated rather than glossed:**
+
+- The MHD-specific *laser* rejection (`"MHD with lasers"`) is unreachable from any valid
+  input: lasers require ionization, which is itself rejected earlier in the gate. So it is
+  covered by inspection, not execution. Harmless today, but it means that one line has never
+  run — relevant if the ionization rejection is ever lifted.
+- The non-Cartesian case needs a purpose-built binary and so is **not** part of the routine
+  sweep. It will silently drop out of any CI that does not build a curvilinear RIOT. If this
+  test is promoted to `tst/scripts/mhd/`, decide there whether to skip it loudly or omit it.
