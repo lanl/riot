@@ -17,7 +17,7 @@ Last updated: 2026-09-18, after commit `bd51645` (reconstruction certification).
 
 ---
 
-## C1 — Eight regression suites have never been run [HIGH]
+## C1 — Eight regression suites not yet run [HIGH severity, but SCHEDULED — do this LAST]
 
 `tst/scripts/` contains `advection`, `hydro`, `ionization`, `levelsets`, `mix`,
 `radiation_diffusion`, `radiation_transport`, `strength`, `tn`. **Only `hydro` has ever been
@@ -36,8 +36,22 @@ originally planned `{WithFluxes, Conserved}` would have broken advected scalars 
 That is direct evidence this filter is easy to get wrong, which raises rather than lowers the
 value of running `levelsets` and the rest.
 
-**To close:** `cd tst && python run_tests.py --reuse_build --save_build` for each suite with MHD
-off, and record counts in the ledger. Expect several hours; `rt_unigrid` alone is ~5 min.
+**This is not an oversight — it is planned Stage 5 work.** The plan schedules it there
+("Confirm hydro-only regressions unchanged, including unrelated source packages"), and Gate G1
+only ever required the *hydro* baseline. The severity above is about the risk still being
+open, not about a step having been skipped.
+
+**And it should stay last.** The sweep validates whatever the final state of the code is, so
+running it before the remaining Stage 5 code changes (LLF, failure counters, `monitor_divb`)
+would only mean running it again afterwards. Sequence it after the last code change lands.
+
+**To close:** `cd tst && python run_tests.py <suite> --reuse_build --save_build` for each of
+advection, ionization, levelsets, mix, radiation_diffusion, radiation_transport, strength, tn,
+with MHD off, and record counts in the ledger. Expect several hours. Delete the stale
+accumulator files first (`tst/build/src/{linwave-errs.dat,linwave_mm-errs.dat,compression.out0.hst}`)
+or `analyze()` throws on doubled output and it reads as a regression that is not one. Both flags
+are mandatory: without `--save_build` the runner deletes `tst/build`, and without `--reuse_build`
+it reconfigures with AppleClang, which cannot compile RIOT.
 
 ## C2 — Startup rejections (N01) have never been executed [HIGH]
 

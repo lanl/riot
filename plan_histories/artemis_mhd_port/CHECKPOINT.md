@@ -73,8 +73,10 @@ opposed to the "Not implemented" list below, which is features not yet written. 
 a defect could currently be hiding behind a passing test. Two items there are HIGH and both
 undercut results recorded in this file if they turn out badly:
 
-- **C1**: eight of the nine `tst/scripts/` suites have never been run, despite Stage 1 changing
-  shared `sparse_update` machinery that every physics package uses.
+- **C1**: eight of the nine `tst/scripts/` suites are not yet run, despite Stage 1 changing
+  shared `sparse_update` machinery that every physics package uses. This is *scheduled* Stage 5
+  work rather than a skipped step, and it should be sequenced **after the last code change** so
+  it validates the final state — see C1 for why running it earlier just means running it twice.
 - **C2**: the startup rejections (N01) have never been executed, so every certified-matrix claim
   rests on unsupported configurations being unreachable — which is untested.
 
