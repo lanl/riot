@@ -75,7 +75,9 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   fed to the first stage's Riemann solve was zero), and restarting across an MHD/hydro change ran
   silently in both directions (MHD checkpoint into a hydro run reinterprets B^2/2mu0 as heat: an
   80% pressure error on Brio-Wu at exit code 0). Both directions are now rejected.
-  **Not** bitwise for `velocity`/`pressure` — that is pre-existing RIOT behaviour, concern C13.
+  **Not** bitwise for `velocity`/`pressure`; whether the port caused that is **UNPROVEN** and is
+  concern C13 — the hydro-only control used the current binary, not `193b3fa`, so it excludes
+  MHD-specific code but not the Stage 1 edits to shared `sparse_update` machinery.
 - **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
   control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
   parameters).

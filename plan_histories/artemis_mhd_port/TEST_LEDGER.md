@@ -1175,17 +1175,26 @@ is how the MHD-reduces-to-hydro check (H02) is posed. Registered in `MHD::Initia
 than on the restart path so it appears in the parameter table of every MHD run — otherwise a
 user hitting the rejection could not discover the escape hatch its message names.
 
-### The residual: RIOT restarts are not bitwise for derived primitives, and that is pre-existing
+### The residual: restarts are not bitwise for derived primitives
 
 Even the zero-step reload leaves `velocity` at 2.2e-16 and `pressure` at 1.1e-15. Those are
 derived from the checkpointed conserved state by a different arithmetic path than the one that
-produced them before the dump. **The hydro-only control (test #2) shows the identical
-signature with MHD never enabled**, so this is a property of RIOT's restart that MHD inherits,
-not something this port introduced. It is why tests #4/#5 are stated at rel ≤ 1e-14 instead of
-bitwise: the threshold is derived from the measured 1.1e-15 seed plus modest amplification
-over 20 steps, and it still sits eleven orders of magnitude below the 3.7e-06 defect that
-motivated the work. Recorded as an open concern rather than absorbed silently into a
-tolerance.
+produced them before the dump. The hydro-only control (test #2) shows the identical signature
+with MHD never enabled.
+
+**What that control does and does not establish.** It was run with the CURRENT, MHD-modified
+binary, *not* with the pre-port commit `193b3fa`. So it rules out `src/mhd/`, the restart of
+face state, and the magnetic-energy add/subtract in `fill_shared_derived.cpp` — all gated on
+`do_mhd`, none executed in the control. It does **not** rule out this port's Stage 1 edits to
+shared machinery, which do run in hydro-only mode: `sparse_update.hpp` (`UpdateToNextStage`
+gaining `{Cell, Independent}`, `DeepCopyIndependentData` gaining `Cell`). Calling the residual
+"pre-existing RIOT behaviour" therefore overstates the evidence; the supported statement is
+"not caused by MHD-specific code". Tracked as concern **C13**, which records the H01-style A/B
+against `193b3fa` that settles it and the consequence if it comes out the other way.
+
+This is why tests #4/#5 are stated at rel ≤ 1e-14 instead of bitwise: the threshold comes from
+the measured 1.1e-15 seed plus modest amplification over 20 steps, and it still sits eleven
+orders of magnitude below the 3.7e-06 defect that motivated the work.
 
 ### Reproducing
 

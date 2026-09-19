@@ -15,7 +15,8 @@ Rules for this file:
 
 Last updated: 2026-09-18, after G5.6 (restart equivalence). **C2 and C5 are both resolved** — and
 between them they found four real defects, which is the argument for keeping this file honest
-rather than optimistic. C13 is new, and is pre-existing RIOT behaviour rather than the port's.
+rather than optimistic. C13 is new: restarts are not bitwise for derived primitives, and whether that is the port's
+fault is **UNPROVEN** — the control that looked conclusive did not use the pre-port binary.
 
 ---
 
@@ -89,7 +90,7 @@ exonerated), or accept order 4 as the scheme's property with evidence rather tha
 
 ## C5 — Restart of face-centered state is untested → **RESOLVED**, see Resolved section
 
-## C13 — RIOT restarts are not bitwise for derived primitives [LOW, and PRE-EXISTING]
+## C13 — Restarts are not bitwise for derived primitives [LOW **IF** pre-existing; HIGH if not — UNPROVEN]
 
 Found while closing C5. Even a zero-step reload — restart, integrate nothing, dump — leaves
 `c.c.bulk.velocity` differing by 2.2e-16 and `c.c.bulk.pressure` by 1.1e-15 from the
@@ -97,8 +98,34 @@ uninterrupted run's snapshot at the same cycle. The conserved fields and the fac
 bitwise; only the derived primitives differ, because they are recomputed from the checkpointed
 conserved state by a different arithmetic path than the one that produced them before the dump.
 
-**This is not MHD's doing.** The same test on a hydro-only run (`inputs/noh.rin`, MHD never
-enabled) shows the identical signature. It is recorded here anyway for two reasons:
+**"PRE-EXISTING" IS NOT YET PROVEN — read this before repeating the claim.** The evidence is a
+hydro-only control: `inputs/noh.rin` with `physics/mhd` never enabled, which shows the identical
+signature (conserved bitwise, `velocity` 2.2e-16, `pressure` 3.6e-17). But that control was run
+with the **current, MHD-modified binary**, not with the pre-port commit `193b3fa`.
+
+So the control establishes something narrower than "pre-existing":
+
+- **Ruled out**: anything in `src/mhd/`, the restart of face state itself, and the
+  magnetic-energy add/subtract in `fill_shared_derived.cpp`. All of those are gated on `do_mhd`
+  and none of them executes in the control.
+- **NOT ruled out**: this port's Stage 1 edits to *shared* machinery, which DO run in hydro-only
+  mode. Specifically `sparse_update.hpp` (`UpdateToNextStage` gaining required flags
+  `{Cell, Independent}`, `DeepCopyIndependentData` gaining `Cell`) and any ungated edit in
+  `fill_shared_derived.cpp`. If one of those changed which fields get copied into a stage
+  register, a derived primitive could plausibly be recomputed by a different path after a
+  restart — which is exactly the observed symptom.
+
+**To settle it, run the H01 A/B**: `git worktree add /tmp/riot_base 193b3fa`, symlink `external/*`
+from the main tree so the submodule SHAs are provably identical, configure with the *same* cmake
+arguments, and run the zero-step reload test from G5.6 on `inputs/noh.rin` with both binaries. If
+`193b3fa` shows the same 2.2e-16 / 3.6e-17, the concern is genuinely RIOT's. If it restarts
+bitwise, **this is a defect introduced by this port** and the severity of this entry goes from
+LOW to HIGH, because it would mean a Stage 1 change to shared machinery perturbed every physics
+package's restart.
+
+Until that runs, the honest statement is "not caused by MHD-specific code", not "pre-existing".
+
+It is recorded here anyway for two reasons:
 
 1. It means **no RIOT restart can be claimed bitwise**, so any future test that asserts
    bitwise restart equivalence — for any physics package, not just MHD — will fail, and the
@@ -224,8 +251,10 @@ evolved restart agrees to rel ≤ 1e-14 at both the same and a changed rank coun
 
 **Residual limitations, stated rather than glossed:**
 
-- Derived primitives are not bitwise across a restart, and that is pre-existing RIOT behaviour
-  — split out as its own entry, **C13**.
+- Derived primitives are not bitwise across a restart. I described this as pre-existing RIOT
+  behaviour on the strength of a hydro-only control, but that control used the CURRENT binary,
+  not `193b3fa`, so it does not actually exclude this port's Stage 1 changes to shared
+  machinery. Split out as **C13**, where the gap and the test that settles it are written down.
 - The zero-field escape hatch `mhd/allow_zero_field_restart` disables the data-based half of
   the checkpoint-mismatch check. A user who sets it *and* passes an `mhd/*` override on the
   command line has defeated both halves. Judged acceptable — it takes two deliberate opt-outs
