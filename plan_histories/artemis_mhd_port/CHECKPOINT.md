@@ -279,6 +279,51 @@ only, so no test propagates a wave obliquely to the grid.
     it is the one item worth backgrounding. D01 is now fixed, so this is the next action and it
     will validate the final state.
 
+## C1 sweep runbook — the last remaining task
+
+Eight suites have never been run in this port: `advection`, `ionization`, `levelsets`, `mix`,
+`radiation_diffusion`, `radiation_transport`, `strength`, `tn`. They matter because Stage 1
+changed **shared** machinery (`sparse_update::UpdateToNextStage` and `DeepCopyIndependentData`
+filters) that every physics package uses, and `riot.cpp` now also disables sparse physics when MHD
+is on. MHD is OFF in all eight, so nothing MHD-specific should run.
+
+```bash
+cd /Users/taitano/Documents/git/riot/tst
+# MANDATORY: stale accumulators make linear_modes' analyze() throw and look like a regression
+rm -f build/src/linwave-errs.dat build/src/linwave_mm-errs.dat build/src/compression.out0.hst
+. ../riot_venv/bin/activate
+# carbuncle-style pgens import numpy in the EMBEDDED interpreter, so this must be exported
+export PYTHONPATH=/Users/taitano/Documents/git/riot/riot_venv/lib/python3.12/site-packages
+python run_tests.py advection ionization levelsets mix radiation_diffusion \
+    radiation_transport strength tn --reuse_build --save_build --log_file /tmp/c1.log
+```
+
+`--reuse_build --save_build` are both mandatory: without `--reuse_build` the harness reconfigures
+from scratch with default compilers, which on macOS is AppleClang and fails; without
+`--save_build` it deletes `tst/build` and the numeric outputs with it. Hours of runtime, so
+background it.
+
+### Two failure modes that are NOT regressions
+
+Recognizing these matters more than the run itself, because each looks exactly like a physics
+regression:
+
+1. **`loader.exec_module failed: No module named 'numpy'`** (exit 134). The embedded Python
+   interpreter cannot see numpy. Fix with the `PYTHONPATH` export above. This bit the hydro suite
+   during the D01 verification: `carbuncle` "failed", and re-running it with `PYTHONPATH` set gave
+   a clean pass in 176 s.
+2. **A doubled `*-errs.dat`** making `analyze()` throw. `linear_modes.cpp` APPENDS when the file
+   exists, so a leftover accumulator doubles the rows.
+
+### If a failure is NOT one of those two
+
+Treat it as a possible real regression from the Stage 1 shared-machinery change and **do not
+attribute it by inspection**. Build the pre-port commit `193b3fa` and run the same suite there
+(recipe in TEST_LEDGER "H01 (re-run)": worktree at `193b3fa`, symlink `external/*` from the main
+tree so submodule SHAs are provably identical, identical cmake args). Change one thing at a time —
+see the two near-miss attributions recorded in TEST_LEDGER's D01 methodology note. That escalation
+needs care, not throughput.
+
 ## Do not repeat
 
 - **Face fields must never be read through a flat loop-abstraction view.** Parthenon
