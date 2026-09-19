@@ -1182,15 +1182,11 @@ derived from the checkpointed conserved state by a different arithmetic path tha
 produced them before the dump. The hydro-only control (test #2) shows the identical signature
 with MHD never enabled.
 
-**What that control does and does not establish.** It was run with the CURRENT, MHD-modified
-binary, *not* with the pre-port commit `193b3fa`. So it rules out `src/mhd/`, the restart of
-face state, and the magnetic-energy add/subtract in `fill_shared_derived.cpp` — all gated on
-`do_mhd`, none executed in the control. It does **not** rule out this port's Stage 1 edits to
-shared machinery, which do run in hydro-only mode: `sparse_update.hpp` (`UpdateToNextStage`
-gaining `{Cell, Independent}`, `DeepCopyIndependentData` gaining `Cell`). Calling the residual
-"pre-existing RIOT behaviour" therefore overstates the evidence; the supported statement is
-"not caused by MHD-specific code". Tracked as concern **C13**, which records the H01-style A/B
-against `193b3fa` that settles it and the consequence if it comes out the other way.
+**That control alone was not enough, and the gap was closed with a pre-port A/B — see G5.7.**
+Run with the current binary it excludes MHD-specific code but not the port's Stage 1 edits to
+shared `sparse_update` machinery, which also run in hydro-only mode. G5.7 builds `193b3fa` and
+settles it: the pre-port binary produces the *same numbers to every digit*, so the port did not
+introduce the residual. Tracked as concern **C13**.
 
 This is why tests #4/#5 are stated at rel ≤ 1e-14 instead of bitwise: the threshold comes from
 the measured 1.1e-15 seed plus modest amplification over 20 steps, and it still sits eleven
@@ -1226,3 +1222,77 @@ attempt ended up with no cycle-20 checkpoint at all.
 Regression evidence for both fixes: `ctest` **41/41**; N01 **23/23**; a fresh
 `field_loop_3d` run is **bitwise identical** to one from before the change; Brio & Wu
 reproduces its G5.5 PLM row to every printed digit. Both fixes are inert on a fresh start.
+
+
+---
+
+## G5.7 — Is the non-bitwise restart the port's fault? Pre-port A/B, 2026-09-18
+
+Settles the attribution half of concern C13. G5.6 recorded that `velocity` and `pressure` are
+not bitwise across a restart and attributed it to pre-existing RIOT behaviour on the strength of
+a hydro-only control. **That attribution was not supported by the evidence given**, and this
+entry exists because the claim was challenged rather than because the test was planned.
+
+The hydro-only control (`inputs/noh.rin`, `physics/mhd` never enabled) was run with the
+**current, MHD-modified binary**. That excludes:
+
+- everything in `src/mhd/`,
+- the restart of face state itself,
+- the magnetic-energy add/subtract in `fill_shared_derived.cpp`,
+
+because all of those are gated on `do_mhd` and none executes with MHD off. It does **not**
+exclude this port's Stage 1 edits to *shared* machinery, which do run in hydro-only mode:
+`sparse_update::UpdateToNextStage` gained required flags `{Cell, Independent}` and
+`DeepCopyIndependentData` gained `Cell`. A change to which fields land in a stage register is a
+plausible mechanism for a derived primitive being recomputed by a different path after a
+restart, which is precisely the observed symptom. So the supported statement was "not caused by
+MHD-specific code", not "pre-existing".
+
+### Procedure
+
+The H01 method, with the build configuration held fixed so a build difference cannot be
+mistaken for a code difference:
+
+```
+git worktree add /tmp/riot_base 193b3fa
+cd /tmp/riot_base
+# submodule SHAs provably identical rather than merely equal
+for n in Catch2 kokkos-kernels parthenon singularity-eos singularity-opac; do
+  rm -rf external/$n && ln -s /Users/taitano/Documents/git/riot/external/$n external/$n
+done
+cmake -S /tmp/riot_base -B /tmp/riot_base_build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=/opt/homebrew/bin/gcc-16 -DCMAKE_CXX_COMPILER=/opt/homebrew/bin/g++-16 \
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DRIOT_ENABLE_MPI=ON -DRIOT_ENABLE_HDF5=ON \
+  -DRIOT_BUILD_PYTHON=ON -DRIOT_BUILD_CATCH2=ON -DRIOT_ENABLE_UNIT_TESTS=OFF
+cmake --build /tmp/riot_base_build --parallel 8
+```
+
+Then the G5.6 zero-step reload on `inputs/noh.rin` with each binary in turn. `noh` needs
+`PYTHONPATH` to cover site-packages *and* `script/inputs` *and* the built `singularity_eos`,
+because its pgen is a Python script that imports `riot`; without all three it aborts at 134 in a
+way that looks like a physics crash.
+
+### Result
+
+| Binary | `velocity` max\|diff\| | `pressure` max\|diff\| | `rho`, `total_material_energy` |
+| --- | --- | --- | --- |
+| pre-port `193b3fa` | 2.220446e-16 | 2.086005e-16 | bitwise |
+| current port | 2.220446e-16 | 2.086005e-16 | bitwise |
+
+**Identical to every printed digit.** Not merely the same order of magnitude — the same doubles.
+The port did not introduce the non-bitwise restart of derived primitives. C13's attribution is
+closed; the behaviour remains open as a RIOT-wide property worth raising upstream.
+
+### Two free side results
+
+| Comparison | Result |
+| --- | --- |
+| Uninterrupted `noh` at cycle 20, pre-port vs port | **bitwise identical** |
+| The two zero-step reloads, pre-port vs port | **bitwise identical** |
+
+The first is worth more than it looks: **it extends H01's "hydro unchanged" evidence to a second
+problem and a different pgen path.** H01 used `linear_modes`; `noh` is a different problem
+generator, goes through the embedded-Python pgen route, and is multi-material-capable. Getting
+bitwise agreement there is independent corroboration that the Stage 1 `sparse_update` filter
+change did not drop a field — which is exactly the risk concern C1 exists to test. It does not
+replace C1's eight suites, but it is a second data point rather than a restatement of the first.

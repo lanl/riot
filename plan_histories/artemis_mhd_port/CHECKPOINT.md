@@ -75,9 +75,11 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   fed to the first stage's Riemann solve was zero), and restarting across an MHD/hydro change ran
   silently in both directions (MHD checkpoint into a hydro run reinterprets B^2/2mu0 as heat: an
   80% pressure error on Brio-Wu at exit code 0). Both directions are now rejected.
-  **Not** bitwise for `velocity`/`pressure`; whether the port caused that is **UNPROVEN** and is
-  concern C13 — the hydro-only control used the current binary, not `193b3fa`, so it excludes
-  MHD-specific code but not the Stage 1 edits to shared `sparse_update` machinery.
+  **Not** bitwise for `velocity`/`pressure`. A pre-port A/B (TEST_LEDGER G5.7) settles that the
+  port did not cause it: `193b3fa` produces the same two numbers to every digit. Concern C13
+  stays open for the behaviour itself, which is RIOT-wide and worth raising upstream. That A/B
+  also showed the uninterrupted `noh` run bitwise identical between the two binaries, which
+  extends H01's hydro-unchanged evidence to a second problem and pgen path.
 - **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
   control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
   parameters).
@@ -209,6 +211,12 @@ only, so no test propagates a wave obliquely to the grid.
   positive; where it is clipped the information is gone. Observed as Brio-Wu's right state
   at P = 0.78125 (exactly `B^2/2`) instead of 0.1, **while the left state came out exactly
   right** — a bug that only corrupts states where a floor triggers.
+- **Do not call a difference "pre-existing" without building the pre-port commit.** Running a
+  hydro-only case with the CURRENT binary excludes MHD-specific code (it is all gated on
+  `do_mhd`) but NOT the Stage 1 edits to shared `sparse_update` machinery, which run in
+  hydro-only mode too. That distinction was collapsed once for concern C13 and had to be
+  retracted. The A/B is cheap and the recipe is in TEST_LEDGER G5.7; `/tmp/riot_base` +
+  `/tmp/riot_base_build` may still exist.
 - **Do not assume any initialization hook runs on a restart.** Parthenon calls
   `Mesh::Initialize(!is_restart, ...)`, and the ENTIRE `if (init_problem)` block
   (`mesh.cpp:872-953`) is skipped when resuming — the problem generator, every

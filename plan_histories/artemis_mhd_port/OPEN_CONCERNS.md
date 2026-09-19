@@ -15,8 +15,9 @@ Rules for this file:
 
 Last updated: 2026-09-18, after G5.6 (restart equivalence). **C2 and C5 are both resolved** — and
 between them they found four real defects, which is the argument for keeping this file honest
-rather than optimistic. C13 is new: restarts are not bitwise for derived primitives, and whether that is the port's
-fault is **UNPROVEN** — the control that looked conclusive did not use the pre-port binary.
+rather than optimistic. C13 is new: RIOT restarts are not bitwise for derived primitives. An initial claim that this was
+"pre-existing" rested on a control that did not use the pre-port binary; the proper A/B against
+`193b3fa` has since been run and confirms it, with identical numbers.
 
 ---
 
@@ -90,7 +91,7 @@ exonerated), or accept order 4 as the scheme's property with evidence rather tha
 
 ## C5 — Restart of face-centered state is untested → **RESOLVED**, see Resolved section
 
-## C13 — Restarts are not bitwise for derived primitives [LOW **IF** pre-existing; HIGH if not — UNPROVEN]
+## C13 — RIOT restarts are not bitwise for derived primitives [LOW — attribution now PROVEN pre-existing]
 
 Found while closing C5. Even a zero-step reload — restart, integrate nothing, dump — leaves
 `c.c.bulk.velocity` differing by 2.2e-16 and `c.c.bulk.pressure` by 1.1e-15 from the
@@ -98,32 +99,31 @@ uninterrupted run's snapshot at the same cycle. The conserved fields and the fac
 bitwise; only the derived primitives differ, because they are recomputed from the checkpointed
 conserved state by a different arithmetic path than the one that produced them before the dump.
 
-**"PRE-EXISTING" IS NOT YET PROVEN — read this before repeating the claim.** The evidence is a
-hydro-only control: `inputs/noh.rin` with `physics/mhd` never enabled, which shows the identical
-signature (conserved bitwise, `velocity` 2.2e-16, `pressure` 3.6e-17). But that control was run
-with the **current, MHD-modified binary**, not with the pre-port commit `193b3fa`.
+**ATTRIBUTION SETTLED by direct A/B against the pre-port commit** (2026-09-18). The first
+version of this entry called the behaviour "pre-existing" on the strength of a hydro-only
+control run with the CURRENT binary. That was an overstatement: it excluded MHD-specific code
+(all gated on `do_mhd`) but not this port's Stage 1 edits to *shared* machinery —
+`sparse_update.hpp` changed `UpdateToNextStage` to require `{Cell, Independent}` and
+`DeepCopyIndependentData` to require `Cell`, and both run in hydro-only mode. A change to which
+fields land in a stage register is a plausible route to exactly the observed symptom.
 
-So the control establishes something narrower than "pre-existing":
+So the test was run properly: `193b3fa` built in a worktree with `external/*` symlinked from the
+main tree (so the submodule SHAs are provably identical) and configured with identical cmake
+arguments, then the G5.6 zero-step reload on `inputs/noh.rin` with both binaries.
 
-- **Ruled out**: anything in `src/mhd/`, the restart of face state itself, and the
-  magnetic-energy add/subtract in `fill_shared_derived.cpp`. All of those are gated on `do_mhd`
-  and none of them executes in the control.
-- **NOT ruled out**: this port's Stage 1 edits to *shared* machinery, which DO run in hydro-only
-  mode. Specifically `sparse_update.hpp` (`UpdateToNextStage` gaining required flags
-  `{Cell, Independent}`, `DeepCopyIndependentData` gaining `Cell`) and any ungated edit in
-  `fill_shared_derived.cpp`. If one of those changed which fields get copied into a stage
-  register, a derived primitive could plausibly be recomputed by a different path after a
-  restart — which is exactly the observed symptom.
+| Binary | `velocity` max\|diff\| | `pressure` max\|diff\| | conserved |
+| --- | --- | --- | --- |
+| pre-port `193b3fa` | 2.220446e-16 | 2.086005e-16 | bitwise |
+| current port | 2.220446e-16 | 2.086005e-16 | bitwise |
 
-**To settle it, run the H01 A/B**: `git worktree add /tmp/riot_base 193b3fa`, symlink `external/*`
-from the main tree so the submodule SHAs are provably identical, configure with the *same* cmake
-arguments, and run the zero-step reload test from G5.6 on `inputs/noh.rin` with both binaries. If
-`193b3fa` shows the same 2.2e-16 / 3.6e-17, the concern is genuinely RIOT's. If it restarts
-bitwise, **this is a defect introduced by this port** and the severity of this entry goes from
-LOW to HIGH, because it would mean a Stage 1 change to shared machinery perturbed every physics
-package's restart.
+**Identical to every printed digit, not merely the same order of magnitude.** The port did not
+introduce this. Severity stays LOW and the attribution question is closed; the behaviour itself
+remains open, because RIOT restarts still are not bitwise.
 
-Until that runs, the honest statement is "not caused by MHD-specific code", not "pre-existing".
+Two side results from the same A/B, recorded because they are free evidence: the uninterrupted
+`noh` run at cycle 20 is **bitwise identical** between the two binaries, which extends H01's
+"hydro unchanged" coverage to a second problem and a different pgen path (H01 used
+`linear_modes`); and the two zero-step reloads are bitwise identical to each other.
 
 It is recorded here anyway for two reasons:
 
@@ -140,8 +140,9 @@ rounding step. That is an explanation, not a measurement — **it has not been c
 
 **To close:** either identify the specific operation whose ordering differs and make the
 recovery path reproducible, or state in the docs that RIOT restarts are equivalent to roundoff
-rather than bitwise. Worth raising with the RIOT team, since it is theirs rather than the
-port's.
+rather than bitwise. Now demonstrably a RIOT-wide property rather than the port's, so this is
+worth raising with the RIOT team — with the A/B numbers above as the evidence, since they
+predate the MHD work entirely.
 
 ## C6 — No solver-failure, floor, or invalid-state counters [MEDIUM]
 
