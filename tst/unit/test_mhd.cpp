@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -535,6 +536,10 @@ struct MHDFlux {
   Real f_b1, f_b2, f_b3;
   Real v1face, v2face, v3face, riemann_vel;
   Real smax;
+  // Solver-health counters observed for THIS call (MHD::SolverDiag). Copied back so the
+  // counters can be tested rather than merely compiled -- an instrument nobody has
+  // watched move is not evidence of anything.
+  std::int64_t n_hlld_fallback, n_density_floor;
 };
 
 template <int DIR>
@@ -580,15 +585,25 @@ MHDFlux ExactMHDFlux(const MHDState &s, const Real mu0) {
 template <class Fill>
 MHDFlux RunOnDevice(Fill fill) {
   Kokkos::View<MHDFlux> d_flux("mhd_flux");
+  // Fresh, zeroed counter storage per call, so each test sees only its own solve. Kokkos
+  // View allocation zero-initializes, which is what makes "fresh" true without an
+  // explicit memset.
+  MHD::SolverDiagView d_diag("mhd_diag", MHD::kNumSolverDiag);
+  std::int64_t *diag = d_diag.data();
   Kokkos::parallel_for(
       "run mhd riemann solver", 1, KOKKOS_LAMBDA(const int) {
         MHDFlux f{};
-        fill(f);
+        fill(f, diag);
         d_flux() = f;
       });
   auto h_flux = Kokkos::create_mirror_view(d_flux);
   Kokkos::deep_copy(h_flux, d_flux);
-  return h_flux();
+  auto h_diag = Kokkos::create_mirror_view(d_diag);
+  Kokkos::deep_copy(h_diag, d_diag);
+  MHDFlux out = h_flux();
+  out.n_hlld_fallback = h_diag(MHD::kDiagHlldFallback);
+  out.n_density_floor = h_diag(MHD::kDiagDensityFloor);
+  return out;
 }
 
 // The normal field is a single shared value, so it is taken from the left state and
@@ -596,11 +611,11 @@ MHDFlux RunOnDevice(Fill fill) {
 template <int DIR>
 MHDFlux RunMHDHLLE(const MHDState &l, const MHDState &r, const Real mu0) {
   const Real bn = NormalB<DIR>(l);
-  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f, std::int64_t *diag) {
     f.smax = MHD::lr_to_flux_mhd_hlle<DIR>(
         l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
         bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
-        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel, diag);
   });
 }
 
@@ -756,11 +771,11 @@ namespace {
 template <int DIR>
 MHDFlux RunMHDHLLD(const MHDState &l, const MHDState &r, const Real mu0) {
   const Real bn = NormalB<DIR>(l);
-  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f, std::int64_t *diag) {
     f.smax = MHD::lr_to_flux_mhd_hlld<DIR>(
         l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
         bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
-        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel, diag);
   });
 }
 
@@ -997,11 +1012,11 @@ namespace {
 template <int DIR>
 MHDFlux RunMHDLLF(const MHDState &l, const MHDState &r, const Real mu0) {
   const Real bn = NormalB<DIR>(l);
-  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f) {
+  return RunOnDevice(KOKKOS_LAMBDA(MHDFlux & f, std::int64_t *diag) {
     f.smax = MHD::lr_to_flux_mhd_llf<DIR>(
         l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
         bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, mu0, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
-        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel);
+        f.f_b1, f.f_b2, f.f_b3, f.v1face, f.v2face, f.v3face, f.riemann_vel, diag);
   });
 }
 
@@ -1140,4 +1155,62 @@ TEST_CASE("U02: LLF smears the stationary contact that HLLD transports exactly",
   const Real frho_got = f.riemann_vel * l.rho;
   CHECK(std::abs(frho_got - frho_want) <= 1.0e-12 * std::abs(frho_want));
   CHECK(std::abs(frho_want) > 1.0e-3); // the smearing is substantial, not marginal
+}
+
+//========================================================================================
+// Solver-health counters (concern C6)
+//========================================================================================
+
+TEST_CASE("C6: HLLD's fallback counter fires on degenerate states and not otherwise",
+          "[mhd][riemann][diagnostics]") {
+  // The counter exists to answer "is the solver I selected the solver I am getting?".
+  // Testing it needs both directions, because a counter stuck at zero and a counter that
+  // increments unconditionally are equally useless and equally invisible in a run.
+  const Real mu0 = 1.0;
+
+  // A well-conditioned oblique state must NOT trip any guard: if it did, HLLD would be
+  // silently degraded to HLLE everywhere and the whole point of having HLLD would be
+  // lost.
+  MHDState good{2.5, -0.4, 0.9, 0.2, 3.0, 2.0, 1.1, 0.5, -1.1, 0.3};
+  const auto g = RunMHDHLLD<X1DIR>(good, good, mu0);
+  CHECK(g.n_hlld_fallback == 0);
+  CHECK(g.n_density_floor == 0);
+
+  // A vanishing normal field is the first guard in the donor's list (|bn| <= eps), so
+  // this must fall back exactly once -- once, because the solver is called once.
+  MHDState zero_bn{1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.0, 1.0, 0.5};
+  const auto z = RunMHDHLLD<X1DIR>(zero_bn, zero_bn, mu0);
+  CHECK(z.n_hlld_fallback == 1);
+
+  // HLLE and LLF have no fallback path at all, so they must never touch that counter --
+  // this is what makes a nonzero count attributable to HLLD rather than to any MHD run.
+  CHECK(RunMHDHLLE<X1DIR>(zero_bn, zero_bn, mu0).n_hlld_fallback == 0);
+  CHECK(RunMHDLLF<X1DIR>(zero_bn, zero_bn, mu0).n_hlld_fallback == 0);
+}
+
+TEST_CASE("C6: the density floor counter fires only on a non-positive density",
+          "[mhd][riemann][diagnostics]") {
+  // All three solvers clamp density. The clamp is a repair of an invalid state, so it is
+  // counted; but a counter that also fired on healthy states would make the warning
+  // meaningless, which is the half worth testing.
+  const Real mu0 = 1.0;
+  MHDState ok{1.0, 0.3, -0.2, 0.1, 1.5, 1.0, 1.2, 0.75, 1.0, 0.0};
+  CHECK(RunMHDHLLE<X1DIR>(ok, ok, mu0).n_density_floor == 0);
+  CHECK(RunMHDHLLD<X1DIR>(ok, ok, mu0).n_density_floor == 0);
+  CHECK(RunMHDLLF<X1DIR>(ok, ok, mu0).n_density_floor == 0);
+
+  // A zero density is what a reconstruction overshoot into vacuum looks like.
+  MHDState bad = ok;
+  bad.rho = 0.0;
+  CHECK(RunMHDHLLE<X1DIR>(bad, ok, mu0).n_density_floor == 1);
+  CHECK(RunMHDHLLD<X1DIR>(bad, ok, mu0).n_density_floor == 1);
+  CHECK(RunMHDLLF<X1DIR>(bad, ok, mu0).n_density_floor == 1);
+
+  // Negative too, and the count is still one per call rather than one per bad side --
+  // recording it per call is what makes the number comparable to a face count.
+  MHDState neg = ok;
+  neg.rho = -1.0;
+  const auto n = RunMHDLLF<X1DIR>(neg, bad, mu0);
+  CHECK(n.n_density_floor == 1);
+  CHECK(AllFinite(n));
 }

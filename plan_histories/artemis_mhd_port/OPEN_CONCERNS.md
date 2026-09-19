@@ -13,9 +13,10 @@ Rules for this file:
 - Severity is about **what a defect here would cost**, not about how likely it is.
 - If a concern is a guess rather than a measurement, it says so.
 
-Last updated: 2026-09-18, after G5.6 (restart equivalence). **C2 and C5 are both resolved** — and
-between them they found four real defects, which is the argument for keeping this file honest
-rather than optimistic. C13 is new: RIOT restarts are not bitwise for derived primitives. An initial claim that this was
+Last updated: 2026-09-19, after G5.9 (counters + div B monitor). **C2, C5, C6 and C7 are resolved.**
+Between them they found six real defects and forced one correction to an earlier recorded claim
+(G5.8's field-loop corroboration), which is the argument for keeping this file honest rather
+than optimistic. C13 is new: RIOT restarts are not bitwise for derived primitives. An initial claim that this was
 "pre-existing" rested on a control that did not use the pre-port binary; the proper A/B against
 `193b3fa` has since been run and confirms it, with identical numbers.
 
@@ -144,26 +145,9 @@ rather than bitwise. Now demonstrably a RIOT-wide property rather than the port'
 worth raising with the RIOT team — with the A/B numbers above as the evidence, since they
 predate the MHD work entirely.
 
-## C6 — No solver-failure, floor, or invalid-state counters [MEDIUM]
+## C6 — No solver-failure, floor, or invalid-state counters → **RESOLVED**, see Resolved section
 
-The plan is explicit that routine floor use is a failed test, not a success, and that solver
-failures must not be hidden behind clipping. There is currently **no instrumentation at all** —
-`grep -c counter src/mhd/` returns 0 — so the port cannot answer "did a floor fire?" except by
-inspecting output positivity after the fact.
-
-Concretely: HLLD has six degeneracy guards, all of which fall back to HLLE. If one of them were
-tripping on every cell of a production run, HLLD would be silently degraded to HLLE and every
-current test would still pass. The G5.1 unit test "HLLD and HLLE are genuinely different
-fluxes" catches the *always*-falling-back case but not a *usually*-falling-back one.
-
-## C7 — `mhd/monitor_divb` is a dead parameter [LOW, but user-visible]
-
-Registered at `src/mhd/mhd.cpp:58-61` and read nowhere else in `src/`. A user who sets
-`mhd/monitor_divb = true` — as `inputs/mhd/brio_wu.py` and `field_loop.py` both do — gets
-silence, not monitoring. It is worse than a missing feature because it looks present.
-
-**To close:** implement it (mirroring `artemis/src/utils/artemis_utils.cpp:28-180`) or remove
-the parameter so the input deck errors on an unknown option.
+## C7 — `mhd/monitor_divb` is a dead parameter → **RESOLVED**, see Resolved section
 
 ## C8 — Reference and baseline data live outside the repo [MEDIUM]
 
@@ -223,6 +207,58 @@ is enabled, and it will not be obvious then that this was never checked.
 ## Resolved
 
 Items move here with the evidence that closed them, and are not deleted.
+
+### C6 — No solver-failure, floor, or invalid-state counters [was MEDIUM] — closed 2026-09-19
+
+**The original concern.** `grep -c counter src/mhd/` returned 0. HLLD's six degeneracy guards
+all fall back to HLLE, so if one were tripping on most cells HLLD would be silently degraded
+to HLLE and every existing test would still pass — the unit test asserting the two solvers
+differ catches the *always*-falling-back case, not the *usually*-falling-back one.
+
+**Evidence that closed it.** TEST_LEDGER G5.9. Two cumulative counters (`hlld_fallback`,
+`density_floor`) incremented by atomics inside the flux kernels, MPI-summed, reported on
+increase and normalized per cell per step so the number has a known ceiling. Two new unit
+tests check both directions — a healthy state must report zero, a degenerate one exactly one,
+and HLLE/LLF must never touch the HLLD counter. MHD output verified **bitwise unchanged**
+afterwards, which was the real risk of threading an argument through `MHDFluxes`.
+
+**The concern was justified: the instrument immediately corrected a recorded claim.** On the
+3D field loop, HLLD falls back on ~7 faces per cell per step — the large majority — because
+the field is planar and vanishes outside the loop. G5.8 had cited that problem's energy
+retention as *independent corroboration* of the HLLD < HLLE ordering; it is not, because both
+runs mostly execute the same solver. G5.8 is amended and Brio & Wu (zero fallbacks) is now
+the sole strong evidence for that ordering.
+
+**Residual limitations:**
+
+- Only two counters. There is no counter for non-finite intermediate states (checking would
+  cost seven `isfinite` calls per face) nor for energy-repair events outside the solver. The
+  finiteness property is covered by unit tests instead.
+- The per-cell-per-step denominator is the mesh **cell** count, not a true face-solve count,
+  because counting faces would need an atomic on every face. So the ceiling is "roughly
+  ndim × nstages", not an exact 1.0-is-everything scale. Fine for judging orders of
+  magnitude, not a precise fraction.
+- The atomics are unconditional. On a problem with a high fallback rate on a GPU this could
+  serialize; not measured, since all verification here is CPU. **Untested performance
+  concern**, flagged rather than dismissed.
+
+### C7 — `mhd/monitor_divb` was a dead parameter [was LOW but user-visible] — closed 2026-09-19
+
+**The original concern.** Registered at `src/mhd/mhd.cpp` and read nowhere in `src/`. A user
+who set it — as two tracked input decks do — got silence, which is worse than a missing
+feature because it looks present.
+
+**Evidence that closed it.** TEST_LEDGER G5.9. Now installed via `PostStepDiagnosticsMesh`,
+reporting max, volume-weighted mean, and the dimensionless eta once per step; verified
+identical to every digit at 1 vs 4 ranks, and silent when off. Reuses the already-computed
+`ccbulk::div_magnetic_field` so the monitor and the analysis scripts cannot disagree.
+
+**A dead-code bug in my own first version, kept here because it is a recurring pattern.**
+With `b_ref` set to the global max |B|, the expression `max(|B|_cell, b_ref)` is *always*
+`b_ref`, so the per-cell term did nothing and eta had silently collapsed to the weaker global
+normalization. Fixed by making `b_ref` a weak-field floor; confirmed by the reported values
+changing (cycle-2 eta 9.58e-16 → 4.88e-15). Same shape as the two N01 defects: an expression
+that reads correctly and evaluates to a constant.
 
 ### C5 — Restart of face-centered state was untested [was MEDIUM] — closed 2026-09-18
 

@@ -1372,10 +1372,18 @@ diagnostic:
 | HLLE | 1.441305e-15 | 4.055658e-15 | **0.7261** | 5.92e-16 | 3.33e-16 |
 | HLLD | 1.401965e-15 | 3.521546e-15 | **0.7381** | 7.89e-16 | 4.44e-16 |
 
-Retention reproduces the same ordering from an unrelated measurement, which is what makes the
-Brio-Wu table evidence about diffusivity rather than about the reference. Meanwhile constrained
-transport is unaffected by the solver swap: the axial field stays at roundoff and mass and
-energy are conserved to roundoff.
+Retention reproduces the same ordering from an unrelated measurement. Constrained transport is
+unaffected by the solver swap: the axial field stays at roundoff and mass and energy are
+conserved to roundoff.
+
+> **AMENDED after G5.9 — the HLLD row of this table is weak corroboration, not independent
+> evidence.** Solver-health counters added later show that on this problem HLLD falls back to
+> HLLE on ~7 faces per cell per step, i.e. on the large majority of faces, because the field
+> lies in the (x1,x2) plane with `b3 = 0` and vanishes outside the loop. So the HLLD and HLLE
+> runs here mostly execute the *same* solver, and their 1.6% retention difference comes from
+> the minority of faces with a non-negligible normal field. The **Brio & Wu** table above is
+> the real evidence for HLLD < HLLE: it has **zero** fallbacks. The LLF vs HLLE comparison is
+> unaffected, since neither solver has a fallback path. See G5.9.
 
 **MPI**: 1 vs 4 ranks on the 3D field loop is **bitwise identical** in every field, so the new
 flux path introduces no rank dependence.
@@ -1385,3 +1393,113 @@ flux path introduces no rank dependence.
 No absolute frozen threshold for LLF, for the same reason as concern C3: the donor's tolerance
 is calibrated against its own gold file. The ordering claim above is relative and therefore
 immune to that, but LLF's absolute accuracy is monitored rather than gated.
+
+---
+
+## G5.9 — Solver-health counters and the div B monitor, 2026-09-19
+
+Closes concerns C6 (no solver-failure/floor counters) and C7 (`mhd/monitor_divb` was a dead
+parameter). Both are instrumentation, and both immediately reported something that was
+previously invisible — including a correction to this ledger.
+
+### C7 — `mhd/monitor_divb` now does something
+
+Was registered at `mhd.cpp` and read nowhere, so a user who set it (as
+`inputs/mhd/brio_wu.py` and `field_loop.py` both do) got silence. Now installed via
+`PostStepDiagnosticsMesh` and reports once per step, after the update:
+
+```
+divB: cycle=1 t=1.587708e-03  max=3.122502e-17  mean=8.092140e-19  eta=9.788523e-16  |B|max=1.009930e-03
+```
+
+Three numbers rather than one, because `max|divB|` alone is **not interpretable**: it carries
+units and scales like 1/dx, so the same quality of solution reports a larger number on a
+finer mesh. `eta = |divB| * l_cell / max(|B|_cell, b_ref)` is the dimensionless one and is
+the number to judge; "at roundoff" means ~1e-16 regardless of mesh, units or field strength.
+The volume-weighted mean is there because the max-to-mean ratio distinguishes a few bad cells
+(indexing bug) from a uniformly poor solution (wrong stencil).
+
+It reuses the already-computed `ccbulk::div_magnetic_field` rather than re-deriving the face
+stencil, so the runtime monitor and the analysis scripts cannot disagree about what
+"divergence free" means.
+
+Verified: 1 vs 4 ranks reports **identical values to every printed digit**, including the
+volume-weighted sums. Off by default and silent when off (0 report lines).
+
+**A bug found in the first version of this code, worth recording because it is a pattern.**
+I first set `b_ref` to the global max |B| and wrote the denominator as
+`max(|B|_cell, b_ref)`. Since the global max is ≥ every local value, that expression is
+*always* `b_ref` — the per-cell term was **dead code** and eta had silently collapsed to a
+global normalization, which is the weaker measure. Fixed by making `b_ref` a weak-field floor
+(1e-6 of peak |B|) so the local term is live. Confirmed by the numbers changing: cycle-2 eta
+went from 9.58e-16 to 4.88e-15 once the local normalization took effect, i.e. a weaker-field
+cell now sets the value, which is exactly the sensitivity the local form is for.
+
+Also corrected: the parameter's registered description said "before and after each step",
+but only a post-step hook is installed. The description now matches the code.
+
+### C6 — solver-health counters
+
+Two cumulative counters, incremented from inside the flux kernels via
+`Kokkos::atomic_add` on a raw device pointer (a pointer, not a `View`, because the three
+solvers are handed to `MHDFluxes` as plain function pointers and a View in their signature
+would force them to become templates):
+
+| Counter | Meaning |
+| --- | --- |
+| `hlld_fallback` | HLLD hit one of its six degeneracy guards and used its HLLE fallback for that face |
+| `density_floor` | a solver clamped a non-positive reconstructed density (an *invalid state repaired*, which the verification plan classes as a failed test, not a success — so it also prints an explicit WARNING) |
+
+Reported whenever a counter **increases**, not every step (which would bury the signal) and
+not only at the end of the run (which would lose which step it happened on). Counts are
+MPI-summed, because a fallback confined to one rank's blocks would otherwise be invisible
+depending on which rank printed.
+
+Counts are also reported **per cell per step**. A raw count is the same uninterpretable-number
+mistake as raw `max|divB|`; per cell per step has a known ceiling (≈ ndim × nstages face
+solves, so ~6 for rk2 in 3D), which turns the number into an answer to "is the solver I
+selected the solver I am getting?".
+
+Why this matters: `hlld_fallback` is the one instrument that can detect HLLD being silently
+degraded to HLLE. The existing unit test "HLLD and HLLE are genuinely different fluxes"
+catches the *always*-falling-back case; nothing caught the *usually*-falling-back case.
+
+### The counters immediately corrected a claim in G5.8
+
+| run | solver | fallbacks per cell per step |
+| --- | --- | --- |
+| Brio & Wu, 512 zones | HLLD | **0** over 20 cycles |
+| 3D field loop | HLLD | **7.17, 6.74, 6.46** (cycles 1–3) |
+
+Brio & Wu has a uniform `bn = 0.75`, so no guard ever fires and HLLD is genuinely HLLD
+throughout — the G5.8 Brio-Wu ordering stands unchanged.
+
+The 3D field loop is the opposite. Its field lies in the (x1,x2) plane with `b3 = 0`, and it
+is zero outside the loop, so the normal field vanishes on a large majority of faces. At
+6.5–7.2 fallbacks per cell per step against a ceiling of roughly that same magnitude, **most
+faces are being solved by HLLE even though the user asked for HLLD.**
+
+**Consequence for G5.8, stated as a correction rather than left standing.** G5.8 cited
+field-loop magnetic-energy retention (HLLD 0.7381 vs HLLE 0.7261) as *independent
+corroboration* of the HLLD < HLLE ordering. That was overstated: on this problem the two
+runs mostly execute the same solver, so the 1.6% difference comes from the minority of faces
+with a non-negligible normal field rather than from a genuine HLLD-vs-HLLE comparison. The
+Brio-Wu table in G5.8, with zero fallbacks, is the real evidence for that ordering; the
+field-loop number is weak corroboration and G5.8 has been amended to say so. The LLF vs HLLE
+half of the ordering is unaffected — neither solver has a fallback path.
+
+This is not a defect in HLLD: falling back where the normal field vanishes is exactly what
+the guards are for, and the donor does the same. What was wrong was my confidence in a
+corroborating measurement I had not instrumented.
+
+### Verification
+
+- `ctest` 47/47 → **49/49**. The two new tests check the counters in **both** directions: a
+  well-conditioned oblique state must report zero fallbacks (a counter that always fires is
+  as useless as one that never does), a zero-`bn` state must report exactly one, HLLE and LLF
+  must never touch the HLLD counter, and the density floor must not fire on healthy states.
+- **MHD output is bitwise identical** to before this change, on the 3D field loop at 40
+  cycles. This was the risk worth checking: threading an extra argument through `MHDFluxes`
+  could have changed the scratch footprint or register pressure, and the file's own comment
+  records that such a change once perturbed linear-wave L1 errors in the 7th digit.
+- Silent when nothing is wrong: Brio & Wu with HLLD emits no diagnostic lines at all.

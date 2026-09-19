@@ -13,6 +13,7 @@
 // This file was made in part with generative AI.
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -57,8 +58,20 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   const bool monitor_divb = pin->GetOrAddBoolean(
       "mhd", "monitor_divb", false,
-      "Report max |div B| before and after each step (diagnostic; costs a reduction)");
+      "Report max and volume-weighted-mean |div B| plus the dimensionless eta once per "
+      "step, after the update (diagnostic; costs two mesh-wide reductions per step)");
   params.Add("monitor_divb", monitor_divb);
+
+  // Solver-health counters (MHD::SolverDiag). Allocated unconditionally and zero-filled:
+  // Kokkos::View zero-initializes by default, and the counters must exist before the
+  // first flux kernel runs. `params.Add` stores the View by value, so the reference count
+  // keeps the device allocation alive for the run.
+  SolverDiagView solver_diag("mhd solver diagnostics", kNumSolverDiag);
+  params.Add("solver_diag", solver_diag);
+  // Host-side mirror of the last reported values, so PostStepDiagnostics can report only
+  // when a counter INCREASES rather than printing every step. Mutable because it is state
+  // that the diagnostic updates as the run proceeds.
+  params.Add("solver_diag_reported", std::vector<std::int64_t>(kNumSolverDiag, 0), true);
 
   // Escape hatch for MHD::RestoreDerivedOnRestart's zero-field check. Registered here
   // rather than on the restart path so it appears in the parameter table of every MHD
@@ -135,6 +148,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // PostInitializationMesh does not run on a restart (see RestoreDerivedOnRestart), so
   // the same derived state has to be rebuilt from the checkpointed face field here.
   mhd->UserWorkBeforeLoopMesh = RestoreDerivedOnRestart;
+
+  // Installed unconditionally. The solver-health counters must be watched in every MHD
+  // run -- a silent HLLD degradation is not something a user opts into noticing -- and
+  // reading two int64s per step is free. The expensive half (the div B reductions) is
+  // gated on `monitor_divb` inside.
+  mhd->PostStepDiagnosticsMesh = PostStepDiagnostics;
 
   return mhd;
 }
@@ -338,6 +357,238 @@ void RestoreDerivedOnRestart(Mesh *pm, ParameterInput *pin, parthenon::SimTime &
       "checkpoint, or set <mhd>/allow_zero_field_restart = true if a zero field really "
       "is "
       "intended.");
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void MHD::PostStepDiagnostics
+//! \brief Per-step MHD health report: solver counters always, div B on request.
+void PostStepDiagnostics(parthenon::SimTime const &simtime, MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  auto pkg = pm->packages.Get("mhd");
+
+  // ------------------------------------------------------------------------------------
+  // Solver-health counters. Unconditional; see MHD::SolverDiag for why.
+  //
+  // Reported only when a counter has GONE UP since the last report. Printing every step
+  // would bury the signal, and printing only at the end of the run would lose which step
+  // it happened on -- which is the piece of information that makes the number actionable.
+  auto diag = pkg->template Param<SolverDiagView>("solver_diag");
+  auto h_diag = Kokkos::create_mirror_view(diag);
+  Kokkos::deep_copy(h_diag, diag);
+
+  auto *reported =
+      pkg->template MutableParam<std::vector<std::int64_t>>("solver_diag_reported");
+
+  // The counters are per-rank, because each rank only solves its own faces. Sum them, or
+  // a fallback confined to one rank's blocks would be invisible on every other rank and
+  // the report would depend on which rank happened to print.
+  std::vector<std::int64_t> totals(kNumSolverDiag);
+  for (int n = 0; n < kNumSolverDiag; ++n)
+    totals[n] = h_diag(n);
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(MPI_Allreduce(MPI_IN_PLACE, totals.data(), kNumSolverDiag,
+                                    MPI_INT64_T, MPI_SUM, MPI_COMM_WORLD));
+#endif
+
+  bool grew = false;
+  for (int n = 0; n < kNumSolverDiag; ++n)
+    grew |= (totals[n] > (*reported)[n]);
+  if (grew) {
+    if (parthenon::Globals::my_rank == 0) {
+      // Raw counts are not interpretable on their own -- the same count means very
+      // different things on a 64^3 mesh and a 512^3 one -- so the fallback count is also
+      // reported PER CELL PER STEP. A face is solved once per direction per RK stage, so
+      // for rk2 in 3D a value near 6 means essentially every face fell back, i.e. HLLD is
+      // running as HLLE. Anything near zero means HLLD is genuinely being used.
+      //
+      // The denominator is the mesh cell count, which is exact and free, rather than a
+      // true face-solve count: counting faces would need an atomic on every face, which
+      // would cost far more than the diagnostic is worth.
+      const std::int64_t ncells = pm->GetTotalCells();
+      const std::int64_t d_fb =
+          totals[kDiagHlldFallback] - (*reported)[kDiagHlldFallback];
+      const double per_cell =
+          (ncells > 0) ? static_cast<double>(d_fb) / static_cast<double>(ncells) : 0.0;
+      printf("MHD solver diagnostics at cycle=%d t=%.6e (cumulative): "
+             "hlld_fallback=%lld (%.2f per cell this step) density_floor=%lld\n",
+             simtime.ncycle + 1, simtime.time + simtime.dt,
+             static_cast<long long>(totals[kDiagHlldFallback]), per_cell,
+             static_cast<long long>(totals[kDiagDensityFloor]));
+      // A density floor is not a diagnostic curiosity. It means the reconstruction
+      // produced a non-positive density and the solver silently repaired it, which the
+      // verification plan classes as a failed test rather than a success.
+      if (totals[kDiagDensityFloor] > (*reported)[kDiagDensityFloor]) {
+        printf("MHD WARNING: a non-positive reconstructed density was clamped. This is a "
+               "repaired invalid state, not a benign event -- treat the result as "
+               "suspect.\n");
+      }
+    }
+    for (int n = 0; n < kNumSolverDiag; ++n)
+      (*reported)[n] = totals[n];
+  }
+
+  // ------------------------------------------------------------------------------------
+  // div B, on request only: two mesh-wide reductions per step.
+  if (pkg->template Param<bool>("monitor_divb")) MonitorDivergence(simtime, md);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void MHD::MonitorDivergence
+//! \brief Per-step div B diagnostic, enabled by `mhd/monitor_divb`.
+//!
+//! WHAT IS REPORTED, and why it is three numbers rather than one:
+//!
+//!  - `max|divB|` is the headline number, but on its own it is NOT interpretable. It
+//!    carries units and scales like 1/dx, so the same physical quality of solution
+//!    produces a larger number on a finer mesh. Reporting only this invites the reader to
+//!    conclude a refinement broke constrained transport.
+//!  - `mean|divB|` is volume weighted. A handful of bad cells and a uniformly poor
+//!    solution give very different ratios of max to mean, which is the difference between
+//!    a localized indexing bug and a systematically wrong stencil.
+//!  - `eta = |divB| * l_cell / max(|B|_cell, b_ref)` is DIMENSIONLESS and is the number
+//!  to
+//!    judge. It is the fractional field imbalance per cell, so "at roundoff" means
+//!    ~1e-16 independent of mesh, units, and field strength. This is the quantity the
+//!    analysis scripts already use, deliberately, so the runtime monitor and the test
+//!    harness cannot disagree about what "divergence free" means.
+//!
+//! Two conventions worth stating because they are choices, not derivations:
+//!
+//!  - `l_cell` is the LARGEST active cell width, not the smallest. Both are defensible;
+//!    the largest is the conservative one, because it makes eta bigger and so cannot
+//!    under-report a problem.
+//!  - The denominator is `max(|B|_cell, b_ref)` with `b_ref = kEtaFieldFloor * max|B|`,
+//!    i.e. LOCAL where the field is strong and floored where it is not. Normalizing on
+//!    the local field is the sensitive choice: a divergence error confined to a
+//!    weak-field region is invisible under a global normalization, which is exactly where
+//!    such an error is most likely to hide. The floor exists only so a field-free region
+//!    divides roundoff by a scale instead of by zero. Computing `max|B|` is the second
+//!    reduction, and the reason this whole diagnostic is opt-in.
+//!
+//! Consequence worth knowing when comparing against the analysis scripts:
+//! `analyze_field_loop.py` normalizes on the GLOBAL max |B|, so its eta is a lower bound
+//! on the one printed here. They agree when the field is roughly uniform and diverge when
+//! it is not. Neither is wrong; this one is the stricter statement.
+//!
+//! Reads the ALREADY COMPUTED `ccbulk::div_magnetic_field` rather than re-deriving the
+//! face stencil. That field comes from the face flux balance in SetDerivedMagneticFields
+//! and is refreshed every stage, so reusing it guarantees the monitor reports the same
+//! divergence the tests measure. Re-implementing the stencil here would create a second
+//! definition that could drift from the first.
+void MonitorDivergence(parthenon::SimTime const &simtime, MeshData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+
+  auto pm = md->GetParentPointer();
+  auto v = riot::MakePack<ccbulk::div_magnetic_field, ccbulk::magnetic_field>(md);
+  if (v.GetNBlocks() == 0) return;
+
+  using rmax = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+  using rsum = RiotUtils::ReductionType<Kokkos::Sum<Real>>;
+  const auto te = parthenon::TopologicalElement::CC;
+  const int nb = v.GetNBlocks();
+
+  // Pass 1: the field scale that makes eta dimensionless.
+  auto max_space = rmax::GetIndexSpace(IndexDomain::interior, 0, nb, md, te);
+  Real bmax = RiotLoop::outer_reduce(
+      max_space, KOKKOS_LAMBDA(const rmax::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &m) {
+          const Real bsq = SQR(pv(ccbulk::magnetic_field(0), idx)) +
+                           SQR(pv(ccbulk::magnetic_field(1), idx)) +
+                           SQR(pv(ccbulk::magnetic_field(2), idx));
+          m = std::max(m, std::sqrt(bsq));
+        });
+      });
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(
+      MPI_Allreduce(MPI_IN_PLACE, &bmax, 1, MPI_PARTHENON_REAL, MPI_MAX, MPI_COMM_WORLD));
+#endif
+  // A completely unmagnetized run has nothing to report and no scale to report it
+  // against; bail rather than print zeros over a divide-by-zero.
+  if (!(bmax > 0.0)) return;
+
+  const int ndim = pm->ndim;
+  // Weak-field floor for the eta denominator. 1e-6 of the peak field means a genuinely
+  // field-free cell cannot manufacture a huge eta from roundoff, while still leaving eta
+  // local -- and therefore sensitive -- across the six orders of magnitude of field
+  // strength above the floor. The value is a choice, not a derivation; it is named so it
+  // is visible rather than buried as a literal.
+  constexpr Real kEtaFieldFloor = 1.0e-6;
+  const Real b_ref = kEtaFieldFloor * bmax;
+
+  Real divb_max = RiotLoop::outer_reduce(
+      max_space, KOKKOS_LAMBDA(const rmax::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &m) {
+          m = std::max(m, std::abs(pv(ccbulk::div_magnetic_field(), idx)));
+        });
+      });
+
+  Real eta_max = RiotLoop::outer_reduce(
+      max_space, KOKKOS_LAMBDA(const rmax::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        auto &coords = v.GetCoordinates(b);
+        RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &m) {
+          const auto [k, j, i] = idx_range.GetKJI(idx);
+          // Largest ACTIVE width: a collapsed direction has no gradient in it and must
+          // not be allowed to set the length scale.
+          Real len = coords.template Dxc<X1DIR>(k, j, i);
+          if (ndim > 1) len = std::max(len, coords.template Dxc<X2DIR>(k, j, i));
+          if (ndim > 2) len = std::max(len, coords.template Dxc<X3DIR>(k, j, i));
+          const Real bsq = SQR(pv(ccbulk::magnetic_field(0), idx)) +
+                           SQR(pv(ccbulk::magnetic_field(1), idx)) +
+                           SQR(pv(ccbulk::magnetic_field(2), idx));
+          const Real bloc = std::max(std::sqrt(bsq), b_ref);
+          m = std::max(m, std::abs(pv(ccbulk::div_magnetic_field(), idx)) * len / bloc);
+        });
+      });
+
+  auto sum_space = rsum::GetIndexSpace(IndexDomain::interior, 0, nb, md, te);
+  Real divb_vol = RiotLoop::outer_reduce(
+      sum_space, KOKKOS_LAMBDA(const rsum::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        auto &coords = v.GetCoordinates(b);
+        RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &s) {
+          const auto [k, j, i] = idx_range.GetKJI(idx);
+          s += std::abs(pv(ccbulk::div_magnetic_field(), idx)) *
+               coords.CellVolume(k, j, i);
+        });
+      });
+  Real vol_tot = RiotLoop::outer_reduce(
+      sum_space, KOKKOS_LAMBDA(const rsum::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &s) {
+          const auto [k, j, i] = idx_range.GetKJI(idx);
+          s += coords.CellVolume(k, j, i);
+        });
+      });
+
+#ifdef MPI_PARALLEL
+  Real mx[2] = {divb_max, eta_max};
+  Real sm[2] = {divb_vol, vol_tot};
+  PARTHENON_MPI_CHECK(
+      MPI_Allreduce(MPI_IN_PLACE, mx, 2, MPI_PARTHENON_REAL, MPI_MAX, MPI_COMM_WORLD));
+  PARTHENON_MPI_CHECK(
+      MPI_Allreduce(MPI_IN_PLACE, sm, 2, MPI_PARTHENON_REAL, MPI_SUM, MPI_COMM_WORLD));
+  divb_max = mx[0];
+  eta_max = mx[1];
+  divb_vol = sm[0];
+  vol_tot = sm[1];
+#endif
+
+  if (parthenon::Globals::my_rank == 0) {
+    const Real divb_mean = (vol_tot > 0.0) ? divb_vol / vol_tot : 0.0;
+    // ncycle + 1 and time + dt, NOT simtime's own values. Parthenon calls this hook after
+    // Step() but BEFORE `tm.ncycle++; tm.time += tm.dt` (driver.cpp:185-190), so the
+    // state being measured here is the state at the END of the step while `simtime` still
+    // holds the labels from its START. Printing simtime directly reports the first step's
+    // result as "cycle=0 t=0", which reads as an initial-condition diagnostic and would
+    // send anyone comparing this against an output file's cycle number chasing an
+    // off-by-one.
+    printf("divB: cycle=%d t=%.6e  max=%.6e  mean=%.6e  eta=%.6e  |B|max=%.6e\n",
+           simtime.ncycle + 1, simtime.time + simtime.dt, divb_max, divb_mean, eta_max,
+           bmax);
+  }
 }
 
 //----------------------------------------------------------------------------------------

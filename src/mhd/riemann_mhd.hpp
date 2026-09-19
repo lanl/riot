@@ -40,6 +40,7 @@
 
 #include <parthenon/package.hpp>
 
+#include "mhd/mhd.hpp"
 #include "mhd/mhd_helpers.hpp"
 
 namespace MHD {
@@ -74,8 +75,15 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_hlle(
     const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
     const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
     const Real mu0, Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &f_b1,
-    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel) {
+    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    std::int64_t *diag) {
 
+  // Counted, not silently applied: routine floor activity is a failed test, not a
+  // success, and without a counter the only way to notice is to inspect output positivity
+  // after the fact. See MHD::SolverDiag.
+  if (rhol <= 0.0 || rhor <= 0.0) {
+    Kokkos::atomic_add(&diag[kDiagDensityFloor], static_cast<std::int64_t>(1));
+  }
   rhol = std::max(rhol, 1.e-100);
   rhor = std::max(rhor, 1.e-100);
 
@@ -256,8 +264,15 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_hlld(
     const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
     const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
     const Real mu0, Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &f_b1,
-    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel) {
+    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    std::int64_t *diag) {
 
+  // Counted, not silently applied: routine floor activity is a failed test, not a
+  // success, and without a counter the only way to notice is to inspect output positivity
+  // after the fact. See MHD::SolverDiag.
+  if (rhol <= 0.0 || rhor <= 0.0) {
+    Kokkos::atomic_add(&diag[kDiagDensityFloor], static_cast<std::int64_t>(1));
+  }
   rhol = std::max(rhol, 1.e-100);
   rhor = std::max(rhor, 1.e-100);
 
@@ -495,6 +510,11 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_hlld(
   Real frho, fmx, fmy, fmz, fe, fby, fbz, pface, pmag_face;
 
   if (use_hlle) {
+    // The single most important counter in the port. Every one of the six degeneracy
+    // guards above lands here, and a guard that tripped on most cells would silently turn
+    // the user's HLLD into HLLE while every existing test still passed. See
+    // MHD::kDiagHlldFallback.
+    Kokkos::atomic_add(&diag[kDiagHlldFallback], static_cast<std::int64_t>(1));
     frho = hlle_frho;
     fmx = hlle_fmx;
     fmy = hlle_fmy;
@@ -632,8 +652,15 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_mhd_llf(
     const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
     const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
     const Real mu0, Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &f_b1,
-    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel) {
+    Real &f_b2, Real &f_b3, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    std::int64_t *diag) {
 
+  // Counted, not silently applied: routine floor activity is a failed test, not a
+  // success, and without a counter the only way to notice is to inspect output positivity
+  // after the fact. See MHD::SolverDiag.
+  if (rhol <= 0.0 || rhor <= 0.0) {
+    Kokkos::atomic_add(&diag[kDiagDensityFloor], static_cast<std::int64_t>(1));
+  }
   rhol = std::max(rhol, 1.e-100);
   rhor = std::max(rhor, 1.e-100);
 

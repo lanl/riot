@@ -25,6 +25,7 @@
 // deliberate, not an oversight. Refinement metadata is registered on the face field
 // because it is cheap and correct to do so, but AMR is NOT validated and is rejected.
 
+#include <cstdint>
 #include <memory>
 
 #include <parthenon/package.hpp>
@@ -62,6 +63,49 @@ void PostInitialization(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
 //! from the checkpointed face state, which is otherwise left at zero through the first
 //! post-restart stage's reconstruction. No-op on a fresh start.
 void RestoreDerivedOnRestart(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+
+//! Solver-health counters, incremented from inside the Riemann kernels.
+//!
+//! WHY THESE EXIST. HLLD's six degeneracy guards all fall back to HLLE. If one of them
+//! were tripping on most cells of a production run, HLLD would be silently degraded to
+//! HLLE and EVERY existing test would still pass -- the unit test that asserts the two
+//! solvers differ catches the always-falling-back case, not the usually-falling-back one.
+//! The port has no other way to answer "is the solver I selected the solver I am
+//! getting?"
+//!
+//! Counters are cumulative over the run and are never reset, so the reported number is
+//! "how often since t=0", not "since the last report".
+enum SolverDiag {
+  //! HLLD hit a degenerate state and used its HLLE fallback for that face.
+  kDiagHlldFallback = 0,
+  //! A solver clamped a non-positive reconstructed density. Routine use of this is a
+  //! failed test, not a success (see the verification plan), which is why it is counted
+  //! rather than silently applied.
+  kDiagDensityFloor = 1,
+  kNumSolverDiag = 2
+};
+
+//! Device-resident counter storage. A raw pointer -- not a View -- is what gets passed
+//! into the flux kernels, because the three solvers are handed to `MHDFluxes` as plain
+//! function pointers and a View in their signature would force them to become templates.
+using SolverDiagView = Kokkos::View<std::int64_t *, parthenon::DevMemSpace>;
+
+//! Installed as StateDescriptor::PostStepDiagnosticsMesh, ALWAYS.
+//!
+//! Two jobs with different trigger conditions, which is why they share one hook:
+//!  - Solver-health counters are checked every step and reported whenever one INCREASES.
+//!    Unconditional, because a silent HLLD degradation matters whether or not the user
+//!    asked for diagnostics, and reporting on change rather than every step keeps it
+//!    quiet when nothing is wrong.
+//!  - The div B report runs only under `mhd/monitor_divb`, because unlike reading two
+//!    counters it costs two mesh-wide reductions per step. It reports max |div B|, the
+//!    volume-weighted mean, and the DIMENSIONLESS
+//!    eta = |div B| * l_cell / max(|B|_cell, b_ref).
+void PostStepDiagnostics(parthenon::SimTime const &simtime, MeshData<Real> *md);
+
+//! The div B half of PostStepDiagnostics, separated so the reduction cost is visible at
+//! the call site rather than buried behind a flag check.
+void MonitorDivergence(parthenon::SimTime const &simtime, MeshData<Real> *md);
 
 //! Assembles the Gardiner-Stone upwind EMF on every edge of the interior into the edge
 //! flux register of the face magnetic field. Depends on the hydro flux task, which

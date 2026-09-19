@@ -12,6 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string>
@@ -26,6 +27,7 @@
 
 #include "hydro.hpp"
 #include "materials/materials.hpp"
+#include "mhd/mhd.hpp"
 #include "mhd/mhd_helpers.hpp"
 #include "mhd/riemann_mhd.hpp"
 #include "microphysics/eos_riot.hpp"
@@ -239,7 +241,8 @@ MHDFluxes(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_rang
           Delta delta, const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
           const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus, Scratch &face_vel,
           Scratch &riemann_vel, const int b, const Real mu0,
-          const RiotReconstruction::Type recon_tag, const bool store_vf) {
+          const RiotReconstruction::Type recon_tag, const bool store_vf,
+          std::int64_t *mhd_diag) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
@@ -295,7 +298,7 @@ MHDFluxes(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_rang
                 mhd_minus(ccbulk::magnetic_field(1), kji_R),
                 mhd_plus(ccbulk::magnetic_field(2), kji_L),
                 mhd_minus(ccbulk::magnetic_field(2), kji_R), mu0, f_v1, f_v2, f_v3, f_eng,
-                f_b1, f_b2, f_b3, v1face, v2face, v3face, riemann_vel(kji));
+                f_b1, f_b2, f_b3, v1face, v2face, v3face, riemann_vel(kji), mhd_diag);
 
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
@@ -625,7 +628,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                          const RiotReconstruction::Type vfrac_recon_tag,
                          const RiemannSolver rsolver_tag, const bool store_vf,
                          const StrengthArr &mat_strength, const bool do_viscosity,
-                         const bool do_mhd, const Real mu0) {
+                         const bool do_mhd, const Real mu0, std::int64_t *mhd_diag) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -847,19 +850,19 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
           MHDFluxes<DIR, MHD::lr_to_flux_mhd_hlle<dir>>(
               v, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
               sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
-              store_vf);
+              store_vf, mhd_diag);
           break;
         case RiemannSolver::mhd_hlld:
           MHDFluxes<DIR, MHD::lr_to_flux_mhd_hlld<dir>>(
               v, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
               sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
-              store_vf);
+              store_vf, mhd_diag);
           break;
         case RiemannSolver::mhd_llf:
           MHDFluxes<DIR, MHD::lr_to_flux_mhd_llf<dir>>(
               v, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
               sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, b, mu0, recon_tag,
-              store_vf);
+              store_vf, mhd_diag);
           break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG>(v, vstr, idx_range, halo_range, delta,
@@ -921,6 +924,19 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   const bool do_mhd = pm->packages.Get("riot")->Param<bool>("do_mhd");
   const Real mu0 = do_mhd ? pm->packages.Get("mhd")->Param<Real>("mu0") : 1.0;
 
+  // Raw device pointer to the MHD solver-health counters (MHD::SolverDiag). A pointer
+  // rather than a View because the three MHD solvers are passed to MHDFluxes as plain
+  // function pointers, and a View in their signature would force them to be templated on
+  // its type. It is captured by value into the kernel and dereferenced on device, which
+  // is what a bare device address is for.
+  //
+  // Always a VALID pointer when MHD is on, never null: a null check would be a branch in
+  // the innermost flux loop, and the alternative -- allocating only when some diagnostic
+  // flag is set -- would mean the counters are missing exactly when someone is debugging.
+  std::int64_t *mhd_diag =
+      do_mhd ? pm->packages.Get("mhd")->Param<MHD::SolverDiagView>("solver_diag").data()
+             : nullptr;
+
   // ionization parameters
   const bool do_ionization = pm->packages.Get("riot")->Param<bool>("do_ionization");
   bool do_plasma_viscosity = false;
@@ -960,13 +976,15 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto adv = MakeAdvectionPack(md);
 
   CalculateFluxesImpl<X1DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                             store_vf, mat_strength, do_viscosity, do_mhd, mu0);
+                             store_vf, mat_strength, do_viscosity, do_mhd, mu0, mhd_diag);
   if (ndim > 1)
     CalculateFluxesImpl<X2DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                               store_vf, mat_strength, do_viscosity, do_mhd, mu0);
+                               store_vf, mat_strength, do_viscosity, do_mhd, mu0,
+                               mhd_diag);
   if (ndim > 2)
     CalculateFluxesImpl<X3DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, rsolver_tag,
-                               store_vf, mat_strength, do_viscosity, do_mhd, mu0);
+                               store_vf, mat_strength, do_viscosity, do_mhd, mu0,
+                               mhd_diag);
 
   return TaskStatus::complete;
 }

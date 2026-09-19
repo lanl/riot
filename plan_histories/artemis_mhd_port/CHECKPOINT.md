@@ -88,6 +88,15 @@ gaps are listed under "Not implemented" — none of them blocks G4.
   field-loop magnetic-energy retention 0.655 / 0.726 / 0.738 from an unrelated measurement.
   This is oracle-INDEPENDENT: the ordering follows from the wave structure. CT unaffected
   (axial field at roundoff); 1 vs 4 ranks bitwise.
+- **Instrumentation landed** (TEST_LEDGER G5.9): `mhd/monitor_divb` now works (max,
+  volume-weighted mean, and the dimensionless eta per step; identical at 1 vs 4 ranks), and
+  two solver-health counters (`hlld_fallback`, `density_floor`) report on increase, MPI-summed
+  and normalized per cell per step. `ctest` **49/49**; MHD output bitwise unchanged.
+  **The fallback counter immediately corrected G5.8**: on the 3D field loop HLLD falls back to
+  HLLE on ~7 faces per cell per step (planar field, `b3 = 0`, zero outside the loop), so that
+  problem's HLLD-vs-HLLE retention comparison is weak corroboration, not independent evidence.
+  Brio-Wu (zero fallbacks) is the real evidence. **Read a fallback rate before trusting any
+  HLLD-vs-HLLE comparison on a new problem.**
 - **Startup rejections verified** (TEST_LEDGER N01): 23/23 with a positive and a negative
   control. Found two dead general-PTE guards (see the "do not repeat" entry on resolved-vs-input
   parameters).
@@ -114,7 +123,7 @@ Do not delete entries from that file; move them to its Resolved section with evi
 ## Not implemented
 
 MHD eigenmodes in `linear_modes.cpp`; the `tst/scripts/mhd/`
-regression harness; `mhd/monitor_divb` is registered but not yet consumed;
+regression harness;
 U05 (face stage copy
 on a live mesh) not run as a unit test, though it is now exercised implicitly by every
 two-stage RK MHD run. All verification is single-node (shared memory, no interconnect) and
@@ -207,9 +216,16 @@ only, so no test propagates a wave obliquely to the grid.
    . $R/riot_venv/bin/activate
    python3 $R/claude_sessions/mhd_runs/analyze_brio_wu.py bw_mhd_llf bw_mhd_hlle bw_mhd_hlld
    ```
-7. Remaining Stage 5: solver-failure/floor counters (C6), `mhd/monitor_divb` (C7), MHD docs
-   in `doc/sphinx`, the `tst/scripts/mhd/` harness, and the eight-suite regression sweep
-   LAST (C1).
+7. ~~**Counters (C6) and `mhd/monitor_divb` (C7)**~~ — **DONE** (TEST_LEDGER G5.9). To see the
+   fallback counter do something, run the field loop under HLLD -- Brio-Wu reports nothing
+   because it never degenerates:
+   ```
+   $R/build/src/riot -i $R/inputs/mhd/field_loop_3d.rin hydro/riemann=mhd_hlld \
+     parthenon/time/nlim=3 mhd/monitor_divb=true
+   ```
+8. Remaining Stage 5: MHD docs in `doc/sphinx` (currently zero MHD content), the
+   `tst/scripts/mhd/` harness, and the eight-suite regression sweep LAST (C1). The sweep is
+   hours of runtime but nearly free in context, so it is the one item worth backgrounding.
 
 ## Do not repeat
 
