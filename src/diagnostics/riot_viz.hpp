@@ -371,12 +371,11 @@ class VizData {
     if (ilay < r.nlayers(composer->cam_id)) {
       auto vidx = composer->idx_map(r.pack_idx(composer->cam_id, ilay));
       int idx = composer->vp.GetLowerBound(composer->cell_b, vidx);
-      if (idx >= 0) { 
+      if (idx >= 0) {
         auto val = [&](const int kk, const int jj, const int ii) {
-          return composer->vp(composer->cell_b, vidx,
-                              composer->cell_k + composer->dk * kk,
-                              composer->cell_j + composer->dj * jj,
-                              composer->cell_i + ii);
+          return composer->vp(
+              composer->cell_b, vidx, composer->cell_k + composer->dk * kk,
+              composer->cell_j + composer->dj * jj, composer->cell_i + ii);
         };
         set_coeffs(val, A);
       }
@@ -387,10 +386,9 @@ class VizData {
         A_opac = A;
       } else if (idx >= 0) {
         auto val = [&](const int kk, const int jj, const int ii) {
-          return composer->vp(composer->cell_b, vidx,
-                              composer->cell_k + composer->dk * kk,
-                              composer->cell_j + composer->dj * jj,
-                              composer->cell_i + ii);
+          return composer->vp(
+              composer->cell_b, vidx, composer->cell_k + composer->dk * kk,
+              composer->cell_j + composer->dj * jj, composer->cell_i + ii);
         };
         set_coeffs(val, A_opac);
       }
@@ -413,7 +411,9 @@ class VizData {
   }
 
  private:
-  std::array<Real, 8> A{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // 0 A0, 1 Ax, 2 Ay, 3 Az, 4 Axy, 5 Axz, 6 Ayz, 7 Axyz;
+  std::array<Real, 8> A{
+      0.0, 0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0, 0.0}; // 0 A0, 1 Ax, 2 Ay, 3 Az, 4 Axy, 5 Axz, 6 Ayz, 7 Axyz;
   std::array<Real, 8> A_opac{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   KOKKOS_INLINE_FUNCTION
   Real sample_(const GradType g, const Real xt, const Real yt, const Real zt,
@@ -501,7 +501,8 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   template <typename SwarmPack_t, typename SwarmPackInt_t>
   KOKKOS_FUNCTION Composer(VarPack_t &vp, SwarmPack_t &ps, const int b, const int pidx,
                            const int ndim, SwarmPackInt_t &ps_int,
-                           const RenderingParams &rp, const parthenon::ParArray1D<parthenon::PackIdx> &idx_map)
+                           const RenderingParams &rp,
+                           const parthenon::ParArray1D<parthenon::PackIdx> &idx_map)
       : RayTrace::IntegratorBase<VarPack_t>(vp, ps, b, pidx, ndim), rp(rp),
         cam_id(ps_int(b, vr::camera_id(), pidx)), r(ps(b, vr::r(), pidx)),
         g(ps(b, vr::g(), pidx)), b(ps(b, vr::b(), pidx)), a(ps(b, vr::a(), pidx)),

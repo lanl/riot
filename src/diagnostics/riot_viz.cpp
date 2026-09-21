@@ -757,7 +757,8 @@ TaskStatus Tracer(MeshData<Real> *md) {
   auto v = desc.GetPack(md);
   auto pack_idx_map = desc.GetMap();
   std::vector<parthenon::PackIdx> pack_idx;
-  for (auto &key : scene_info.field) pack_idx.emplace_back(pack_idx_map[key]);
+  for (auto &key : scene_info.field)
+    pack_idx.emplace_back(pack_idx_map[key]);
   auto pack_idx_view = RiotUtils::VectorToDevice(pack_idx, "pack_idx_view");
 
   auto desc_ps =
