@@ -44,15 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
-
-      - name: Initialize in-tree build dependencies
-        run: |
-          git submodule update --init --recursive \
-            external/parthenon \
-            external/kokkos-kernels \
-            external/singularity-eos \
-            external/singularity-opac
+          submodules: recursive
 
       - name: Identify in-tree dependency revisions
         id: dependencies
