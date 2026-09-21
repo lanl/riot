@@ -318,6 +318,7 @@ struct RenderingParams {
       if (val <= 0.0) return {0.0, 0.0, 0.0, 0.0};
       val = std::log10(val);
     }
+    if (aval < alpha_range_min(outer, inner)) return {0.0, 0.0, 0.0, 0.0};
     Real v = (val - range_min(outer, inner)) /
              (range_max(outer, inner) - range_min(outer, inner));
     Real av = (aval - alpha_range_min(outer, inner)) /
@@ -368,21 +369,25 @@ class VizData {
         xlo(composer->template xlo<X1DIR>()), ylo(composer->template xlo<X2DIR>()),
         zlo(composer->template xlo<X3DIR>()) {
     if (ilay < r.nlayers(composer->cam_id)) {
-      {
+      auto vidx = composer->idx_map(r.pack_idx(composer->cam_id, ilay));
+      int idx = composer->vp.GetLowerBound(composer->cell_b, vidx);
+      if (idx >= 0) { 
         auto val = [&](const int kk, const int jj, const int ii) {
-          return composer->vp(composer->cell_b, r.pack_idx(composer->cam_id, ilay),
+          return composer->vp(composer->cell_b, vidx,
                               composer->cell_k + composer->dk * kk,
                               composer->cell_j + composer->dj * jj,
                               composer->cell_i + ii);
         };
         set_coeffs(val, A);
       }
+      vidx = composer->idx_map(r.pack_idx(composer->cam_id, ilay));
+      idx = composer->vp.GetLowerBound(composer->cell_b, vidx);
       if (r.alpha_pack_idx(composer->cam_id, ilay) ==
           r.pack_idx(composer->cam_id, ilay)) {
         A_opac = A;
-      } else {
+      } else if (idx >= 0) {
         auto val = [&](const int kk, const int jj, const int ii) {
-          return composer->vp(composer->cell_b, r.alpha_pack_idx(composer->cam_id, ilay),
+          return composer->vp(composer->cell_b, vidx,
                               composer->cell_k + composer->dk * kk,
                               composer->cell_j + composer->dj * jj,
                               composer->cell_i + ii);
@@ -408,8 +413,8 @@ class VizData {
   }
 
  private:
-  std::array<Real, 8> A; // 0 A0, 1 Ax, 2 Ay, 3 Az, 4 Axy, 5 Axz, 6 Ayz, 7 Axyz;
-  std::array<Real, 8> A_opac;
+  std::array<Real, 8> A{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // 0 A0, 1 Ax, 2 Ay, 3 Az, 4 Axy, 5 Axz, 6 Ayz, 7 Axyz;
+  std::array<Real, 8> A_opac{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   KOKKOS_INLINE_FUNCTION
   Real sample_(const GradType g, const Real xt, const Real yt, const Real zt,
                const std::array<Real, 8> &c) const {
@@ -496,10 +501,11 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   template <typename SwarmPack_t, typename SwarmPackInt_t>
   KOKKOS_FUNCTION Composer(VarPack_t &vp, SwarmPack_t &ps, const int b, const int pidx,
                            const int ndim, SwarmPackInt_t &ps_int,
-                           const RenderingParams &rp)
+                           const RenderingParams &rp, const parthenon::ParArray1D<parthenon::PackIdx> &idx_map)
       : RayTrace::IntegratorBase<VarPack_t>(vp, ps, b, pidx, ndim), rp(rp),
         cam_id(ps_int(b, vr::camera_id(), pidx)), r(ps(b, vr::r(), pidx)),
-        g(ps(b, vr::g(), pidx)), b(ps(b, vr::b(), pidx)), a(ps(b, vr::a(), pidx)) {
+        g(ps(b, vr::g(), pidx)), b(ps(b, vr::b(), pidx)), a(ps(b, vr::a(), pidx)),
+        idx_map(idx_map) {
     PARTHENON_REQUIRE(rp.nlayers(cam_id) < max_layers,
                       "Too many viz layers requested. Must recompile after setting "
                       "max_layers large enough");
@@ -797,6 +803,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   Real &r, &g, &b, &a;
   std::array<VizData, max_layers> data;
   std::array<bool, max_layers> mask;
+  parthenon::ParArray1D<parthenon::PackIdx> idx_map;
 };
 
 struct LayerInfo {

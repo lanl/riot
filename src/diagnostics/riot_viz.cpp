@@ -755,6 +755,10 @@ TaskStatus Tracer(MeshData<Real> *md) {
   auto desc = parthenon::MakePackDescriptor(md, scene_info.field);
   ;
   auto v = desc.GetPack(md);
+  auto pack_idx_map = desc.GetMap();
+  std::vector<parthenon::PackIdx> pack_idx;
+  for (auto &key : scene_info.field) pack_idx.emplace_back(pack_idx_map[key]);
+  auto pack_idx_view = RiotUtils::VectorToDevice(pack_idx, "pack_idx_view");
 
   auto desc_ps =
       parthenon::MakeSwarmPackDescriptor<swarm_position::x, swarm_position::y,
@@ -767,7 +771,7 @@ TaskStatus Tracer(MeshData<Real> *md) {
   auto ps_int = desc_ps_int.GetPack(md);
 
   return RayTrace::Trace<Composer, false, false>(ps, v, md->GetParentPointer(), ps_int,
-                                                 render_params);
+                                                 render_params, pack_idx_view);
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md) {
