@@ -17,7 +17,7 @@
 namespace riot {
 
 AnalysisDriver::AnalysisDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
-  : Driver(pin, app_in, pm) {
+    : Driver(pin, app_in, pm) {
   auto &pkgs = pm->packages.AllPackages();
   do_viz = pkgs.contains("riot_viz");
   // Current time was put into pin upon "restart"
@@ -28,9 +28,8 @@ DriverStatus AnalysisDriver::Execute() {
   TaskListStatus task_status;
   if (do_viz) task_status = riot_viz::Render(pmesh, current_time).Execute();
 
-  DriverStatus status = (task_status == TaskListStatus::complete
-                         ? DriverStatus::complete
-                         : DriverStatus::failed);
+  DriverStatus status = (task_status == TaskListStatus::complete ? DriverStatus::complete
+                                                                 : DriverStatus::failed);
   return status;
 }
 

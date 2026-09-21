@@ -30,6 +30,7 @@ class AnalysisDriver : public Driver {
  public:
   AnalysisDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm);
   DriverStatus Execute();
+
  private:
   bool do_viz;
   Real current_time;

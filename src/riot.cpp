@@ -39,7 +39,7 @@
 namespace riot {
 
 // need this because it's static
-//std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
+// std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
 
 //----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::RegisterPgens
@@ -230,7 +230,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot_plugins::Plugins::Initialize(pin.get(), packages);
 
   // Problem-specific package object
-  //packages.Add(ProblemPackage(pin.get()));
+  // packages.Add(ProblemPackage(pin.get()));
 
   // sparse deallocation
   bool sparse_dealloc = pin->GetOrAddBoolean("materials", "sparse_dealloc", true);

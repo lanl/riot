@@ -18,8 +18,8 @@
 #include <parthenon_manager.hpp>
 
 #include "diagnostics/diagnostics.hpp"
-#include "riot_pgen/pgen.hpp"
 #include "riot.hpp"
+#include "riot_pgen/pgen.hpp"
 #ifdef RIOT_ENABLE_PYTHON
 #include "riot_utils/py_init.hpp"
 #endif
@@ -44,7 +44,6 @@ int main(parthenon::ParthenonManager &pman) {
     // Handle ProblemGenerator user-defined modifiers
     ProblemModifier(&pman);
   }
-
 
   // Tell pman to register reflecting boundaries
   pman.app_input->RegisterDefaultReflectingBoundaryConditions();
