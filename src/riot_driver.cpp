@@ -37,12 +37,17 @@
 #include "materials/materials.hpp"
 #include "mix/mix.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
+#include "prescribed_sources/prescribed_sources.hpp"
+#include "radiation_diffusion/multigroup_diffusion.hpp"
+#include "radiation_transport/algorithms/explicit.hpp"
+#include "radiation_transport/algorithms/jacobi.hpp"
 #include "riot_driver.hpp"
 #include "riot_utils/fpe_trap.hpp"
 #include "riot_utils/sparse_update.hpp"
 #include "scalars/scalars.hpp"
 #include "strength/strength.hpp"
 #include "tnburn/tnburn.hpp"
+#include "tracers/tracers.hpp"
 #include "variables.hpp"
 
 using namespace parthenon::driver::prelude;
@@ -54,7 +59,7 @@ namespace riot {
 //! \brief
 RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
     : EvolutionDriver(pin, app_in, pm), integrator(std::make_unique<Integrator_t>(pin)) {
-
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
   if (parthenon::IsCoord<parthenon::UniformSpherical>() && pm->ndim > 1) {
     PARTHENON_FAIL(
         "riot does not support more than one dimension with spherical coordinates");
@@ -85,6 +90,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_tn = riot_pkg->Param<bool>("do_tn");
   fixed_fluid = riot_pkg->Param<bool>("fixed_fluid");
   do_multigroup_diffusion = riot_pkg->Param<bool>("do_multigroup_diffusion");
+  do_radiation_transport = riot_pkg->Param<bool>("do_radiation_transport");
   do_levelsets = riot_pkg->Param<bool>("do_levelsets");
   do_lasers = riot_pkg->Param<bool>("do_lasers");
   do_gravity = riot_pkg->Param<bool>("do_gravity");
@@ -104,6 +110,45 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   if (do_gravity) gravity_pkg = pm->packages.Get("gravity").get();
   if (do_strength) strength_pkg = pm->packages.Get("strength").get();
   if (do_ionization) ion_pkg = pm->packages.Get("ionization").get();
+
+  // setup operator split tasks
+  if (do_multigroup_diffusion) {
+    if (do_ionization) {
+      OperatorSplitTasks.push_back(
+          RadiationDiffusion::MultiGroup<ccbulk::electron_temperature>::Step);
+    } else {
+      OperatorSplitTasks.push_back(
+          RadiationDiffusion::MultiGroup<ccbulk::temperature>::Step);
+    }
+  }
+
+  if (do_radiation_transport) {
+    if (riot_pkg->Param<bool>("do_explicit")) {
+      OperatorSplitTasks.push_back(&Explicit::ExplicitTasks);
+    } else if (riot_pkg->Param<bool>("do_jacboi")) {
+      OperatorSplitTasks.push_back(&Jacobi::JacobiTasks);
+    }
+  }
+
+  if (do_levelsets) {
+    OperatorSplitTasks.push_back(Levelsets::Reinitialize);
+  }
+
+  if (do_ionization) {
+    OperatorSplitTasks.push_back(Ionization::ElectronIonCouplingStep);
+    OperatorSplitTasks.push_back(
+        Ionization::ConductionStep<Ionization::TransportSpecies::Electron>);
+    OperatorSplitTasks.push_back(
+        Ionization::ConductionStep<Ionization::TransportSpecies::Ion>);
+  }
+
+  if (riot_pkg->Param<bool>("do_prescribed_sources")) {
+    OperatorSplitTasks.push_back(PrescribedSources::Step);
+  }
+
+  if (riot_pkg->Param<bool>("do_tracers")) {
+    OperatorSplitTasks.push_back(Tracers::PushTracers);
+  }
 
   plugins.DriverParams(pin, app_in, pm);
 
