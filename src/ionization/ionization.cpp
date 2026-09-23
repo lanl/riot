@@ -1643,6 +1643,15 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   const bool plasma_diffusion = ionization_params.Get<bool>("plasma_diffusion");
   if (!plasma_diffusion) return TaskStatus::complete;
 
+  const Real diffusion_coefficient =
+      ionization_params.Get<Real>("ion_diffusion_coefficient");
+  const std::string ion_diffusion_model =
+      options->Param<std::string>("ion_diffusion_model");
+  const PlasmaDiffusionModel diffusion_model =
+      PlasmaDiffusionEnumFromString(ion_diffusion_model);
+  const Real zbar_floor = options->Param<Real>("zbar_floor");
+  const Real ion_number_density_floor = options->Param<Real>("ion_number_density_floor");
+
   auto &materials = pm->packages.Get("materials");
   const auto &ion_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
   const int max_array_size = materials->Param<int>("max_array_size");
@@ -1670,9 +1679,6 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
 
   // don't launch kernel if there are no blocks
   if (nblocks == 0) return TaskStatus::complete;
-
-  const Real diffusion_coefficient =
-      ionization_params.Get<Real>("ion_diffusion_coefficient");
 
   // pull isotope information
   const auto &iso_zaids =
@@ -1932,6 +1938,16 @@ PlasmaViscosityModel PlasmaViscosityEnumFromString(const std::string &model) {
     return PlasmaViscosityModel::FokkerPlanckLandau;
   } else {
     PARTHENON_FAIL("Invalid choice for ionization/plasma_viscosity_model");
+  }
+}
+
+PlasmaDiffusionModel PlasmaDiffusionEnumFromString(const std::string &model) {
+  if (model == "constant") {
+    return PlasmaDiffusionModel::Constant;
+  } else if (model == "fokker_planck_landau") {
+    return PlasmaDiffusionModel::FokkerPlanckLandau;
+  } else {
+    PARTHENON_FAIL("Invalid choice for ionization/plasma_diffusion_model");
   }
 }
 
