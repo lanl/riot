@@ -2183,3 +2183,95 @@ than a prolongation port.
 
 **AMR remains rejected at startup and unsupported.** One clean measurement is not a gate;
 G6 as specified in `DEFERRED_STAGES.md` is unchanged and unstarted.
+
+## S6.1 — Stage 6 probe, part 2: ADAPTIVE refinement with real remeshing, 2026-09-23
+
+**Not a gate and not a capability claim.** Follows S6.0, which was deliberately *static* and so
+could only test prolongation. This one remeshes continuously, which additionally exercises
+restriction on derefinement, ghost rebuild after a mesh change, and block redistribution.
+
+### The trap this probe had to be designed around
+
+**RIOT has no MHD refinement criterion, and its only criterion is vacuous for a single
+material.** `Hydro::CheckRefinement` (`src/hydro/hydro.cpp:312`) votes on jumps in
+`ccmat::volume_fraction`. With one material the volume fraction is identically 1.0, every jump is
+zero, so `vote()` returns `(0 > 0.01)*refine - (0 < 0.001)` = **−1, derefine, unconditionally** —
+and the field-loop deck's `max_bnd_level = 0` short-circuits to −1 before that anyway.
+
+An adaptive run as configured would therefore **never have refined**, reported div B at roundoff,
+and tested nothing. That is precisely the vacuous pass the D01 lesson says to design against, and
+it would have looked like a clean result. The probe build therefore added a magnetic-energy
+criterion to the pgen (`mhd_field_loop::ProblemCheckRefinementBlock`): refine above 25 % of the
+analytic peak `a0²/(2μ₀)`, derefine below 5 %. The reference is computed from the inputs, not from
+a running maximum — normalizing by a running max would refine the same fraction of the box no
+matter how the loop decayed. `hydro/amr_interface = false` keeps hydro's always-derefine vote out
+of the tally.
+
+Because the loop **advects**, the refined region has to move with it, which forces genuine refine
+*and* derefine events rather than a mesh that refines once and settles.
+
+| Field | Value |
+| --- | --- |
+| Binary | throwaway worktree `/tmp/riot_amr_probe`, since removed; relaxed AMR guard **plus** the criterion above |
+| Deck | `claude_sessions/mhd_runs/amr_probe/field_loop_adaptive.py` |
+| Refinement | `adaptive`, `numlevel = 2`, `derefine_count = 1`, `nghost = 4` |
+| Remeshing verified | **36 blocks created, 24 destroyed**; block count oscillates 8 → 26 → 20 → 26 → … through the whole run |
+
+### Result — div B holds through continuous remeshing
+
+| dump | t | nblk | levels | `max\|divB\|` | η |
+| --- | --- | --- | --- | --- | --- |
+| 00000 | 0.000 | 8 | {0: 8} | 1.4572e-16 | 2.2785e-15 |
+| 00001 | 0.125 | 26 | {0: 2, 1: 24} | 7.4940e-16 | 5.6859e-15 |
+| 00003 | 0.375 | 26 | {0: 2, 1: 24} | 1.2641e-15 | 9.3754e-15 |
+| 00005 | 0.625 | 26 | {0: 2, 1: 24} | 1.1799e-15 | 8.6426e-15 |
+| final | 1.000 | 20 | {0: 4, 1: 16} | 9.6798e-16 | 6.9946e-15 |
+
+Peak η = 9.38e-15, against 5.40e-15 for the uniform control and 9.09e-15 for the static probe
+(S6.0). **Adaptive is indistinguishable from static** — remeshing adds nothing measurable, and both
+sit at roundoff. No trend: η at t = 1 is *lower* than at t = 0.375.
+
+### The energy audit — the check div B cannot perform
+
+`DEFERRED_STAGES.md` calls this Stage 6's distinctive audit: if interpolation changes `B²/2μ₀`
+while the conserved `E` is held fixed, the difference silently becomes heat. Volume-weighted
+totals (cell volume differs by level, so each block is weighted by its own `dx·dy`):
+
+| Quantity | adaptive | uniform control |
+| --- | --- | --- |
+| total energy drift `E/E₀ − 1` | **+1.78e-15** | −2.22e-16 |
+| internal energy `U/U₀ − 1` | +2.89e-09 | +5.95e-09 |
+| magnetic energy `Emag/Emag₀ − 1` | **−6.27e-02** | **−1.29e-01** |
+| mass `m/m₀ − 1` | +1.55e-15 | — |
+
+**Total energy is conserved to roundoff across 60 remesh events**, and mass likewise. The 6.3 %
+magnetic-energy loss is **not** a remeshing defect: the uniform control at the same base
+resolution loses **twice as much** (12.9 %). It is ordinary numerical diffusion of the loop, and
+the adaptive run loses less precisely because it is locally finer. Attribution by control, not by
+inspection — a 6 % loss quoted alone would have looked alarming.
+
+Note the internal-energy rise (2.9e-09) is ~7 orders of magnitude smaller than the magnetic loss,
+so the lost magnetic energy is **not** turning into heat; it is lost to truncation in the
+advection, with the conserved total unaffected.
+
+### What S6.0 + S6.1 together establish, and what they do not
+
+**Do:** in 2D Cartesian, with Parthenon's `ProlongateInternalTothAndRoe` as registered, div B
+holds at roundoff across static level boundaries *and* through continuous adaptive remeshing, and
+total energy and mass are conserved to roundoff across remeshing. **The donor's ~450-line weighted
+prolongation is not required for 2D Cartesian AMR.**
+
+**Do not:**
+- **3D is untested.** The 2D field loop takes the collapsed-EMF branch. 3D prolongation has more
+  internal faces per coarse cell and is the harder case.
+- **MPI with refinement is untested.** Every S6.x run is serial. Block redistribution across ranks
+  during remeshing is exactly where P01's fixed-layout sweep was already shown to be blind (C14).
+- **Restart on a refined mesh is untested.**
+- **Curvilinear still needs the donor's version** — its face-area weighting exists for that.
+- **No shocks at a level boundary.** The field loop is β ~ 1e6 pure advection; a shock crossing a
+  refinement boundary is a stronger test.
+- **The criterion used is not RIOT's.** It exists only in the probe build. Any real Stage 6 needs
+  a reviewed MHD refinement criterion in the tree, which is a design question (magnetic energy?
+  current density? `|div B|` itself?) and not a port.
+
+**AMR remains rejected at startup and unsupported.** Two clean probes are not gate G6.

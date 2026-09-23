@@ -73,16 +73,37 @@ path, so it comes before design:
    original `DONOR_DELTA.md` entry was a porting error caught before it shipped.
 3. **In between** → the div B monitor is the instrument that says which.
 
-**RUN 2026-09-23 — outcome 1.** `TEST_LEDGER.md` "S6.0". With a static level-1 patch
-over half the box and the loop advecting through the boundary, η = 9.09e-15 on the
-fine level against 5.40e-15 for the uniform control, boundary-adjacent blocks no
-worse than the fine level as a whole, and no growth over 1787 cycles. Four uniform
-controls (`nghost` 2/3/4, meshblock 64/32) are identical to every digit, so
-refinement is the only variable. **The donor's weighted prolongation is not needed
-for static Cartesian refinement.** Adaptive remeshing, curvilinear, 3D, MPI, restart
-on a refined mesh, and the post-regrid energy audit are all still untouched — the
-probe was deliberately `static` to isolate prolongation, so none of those follow
-from it.
+**RUN 2026-09-23 — outcome 1, twice.** `TEST_LEDGER.md` "S6.0" (static) and "S6.1"
+(adaptive).
+
+| Probe | mesh activity | peak η | total E drift |
+| --- | --- | --- | --- |
+| uniform control | none | 5.40e-15 | −2.2e-16 |
+| S6.0 static | built refined, never remeshed | 9.09e-15 | — |
+| S6.1 adaptive | **36 blocks created, 24 destroyed** | 9.38e-15 | **+1.8e-15** |
+
+Adaptive is indistinguishable from static; both at roundoff. The post-regrid energy
+audit **passes**: total energy and mass conserved to roundoff across ~60 remesh
+events. The 6.3 % magnetic-energy loss is not a remeshing defect — the uniform
+control at the same base resolution loses 12.9 %, twice as much, so it is ordinary
+numerical diffusion and the adaptive run loses less by being locally finer.
+
+**The donor's weighted prolongation is not needed for 2D Cartesian AMR.**
+
+Two things S6.1 surfaced that change the shape of this stage:
+
+1. **RIOT has no MHD refinement criterion, and its only criterion is vacuous for a
+   single material.** `Hydro::CheckRefinement` votes on `volume_fraction` jumps,
+   which are identically zero with one material, so it always votes derefine. An
+   adaptive MHD run would never refine and would pass vacuously. The probe added a
+   magnetic-energy criterion in its own build; **the tree still has none**, and
+   choosing one (magnetic energy? current density? `|div B|`?) is a design question
+   needing review, not a port.
+2. Still untested after both probes: **3D** (these took the collapsed-EMF branch),
+   **MPI with refinement** (all runs serial — and block redistribution during
+   remeshing is exactly the blind spot that let C14 through), **restart on a refined
+   mesh**, shocks crossing a level boundary, and curvilinear, which needs the
+   donor's version regardless.
 
 This gate is analytic-only but **sharp, not weak**: div B at roundoff across a
 refinement boundary is an exact criterion, and the absence of a donor oracle costs
