@@ -91,6 +91,16 @@ must be whether the operator RIOT currently registers holds div B across a
 coarse/fine boundary in Cartesian. See [`DEFERRED_STAGES.md`](DEFERRED_STAGES.md)
 Stage 6.
 
+**That measurement has now been taken (2026-09-23, `TEST_LEDGER.md` "S6.0"): the
+registered Parthenon operator holds div B at roundoff across a *static* Cartesian
+coarse/fine boundary**, η = 9.09e-15 fine-level against 5.40e-15 uniform control,
+no growth over 1787 cycles, boundary-adjacent blocks no worse than the fine level.
+So for static Cartesian refinement the donor's weighted solve is genuinely
+unnecessary — the original "skip" verdict happens to hold *for that case*, but it
+held by luck rather than by the stated reason, and it does not extend to adaptive
+remeshing or to curvilinear geometry, which is what the donor's face-area weighting
+exists for.
+
 Note also that the donor's face-area weighting exists *for* curvilinear geometry,
 so Stage 7 needs the donor's version regardless of how the Cartesian measurement
 turns out.

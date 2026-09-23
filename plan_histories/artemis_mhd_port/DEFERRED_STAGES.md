@@ -73,6 +73,17 @@ path, so it comes before design:
    original `DONOR_DELTA.md` entry was a porting error caught before it shipped.
 3. **In between** → the div B monitor is the instrument that says which.
 
+**RUN 2026-09-23 — outcome 1.** `TEST_LEDGER.md` "S6.0". With a static level-1 patch
+over half the box and the loop advecting through the boundary, η = 9.09e-15 on the
+fine level against 5.40e-15 for the uniform control, boundary-adjacent blocks no
+worse than the fine level as a whole, and no growth over 1787 cycles. Four uniform
+controls (`nghost` 2/3/4, meshblock 64/32) are identical to every digit, so
+refinement is the only variable. **The donor's weighted prolongation is not needed
+for static Cartesian refinement.** Adaptive remeshing, curvilinear, 3D, MPI, restart
+on a refined mesh, and the post-regrid energy audit are all still untouched — the
+probe was deliberately `static` to isolate prolongation, so none of those follow
+from it.
+
 This gate is analytic-only but **sharp, not weak**: div B at roundoff across a
 refinement boundary is an exact criterion, and the absence of a donor oracle costs
 less here than the "analytic-only" framing suggests.

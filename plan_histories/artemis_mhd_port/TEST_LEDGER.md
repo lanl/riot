@@ -2088,3 +2088,98 @@ Two harness details cost a cycle and are worth recording for anyone repeating th
   invokes `./riot -i ../../../inputs/...` from `tst/build/src`, and the shell resolves that
   relative path through the symlink's *physical* target, so the deck lookup escapes the
   worktree and aborts in `IOWrapper::Open`. `mv` the build into place instead of linking it.
+
+## S6.0 — Stage 6 probe: does the REGISTERED prolongation hold div B across a coarse/fine boundary? 2026-09-23
+
+**Not a gate and not a capability claim.** A diagnostic measurement taken before opening Stage 6,
+to decide whether the donor's ~450-line `ProlongateTothAndRoe` must be ported or whether
+Parthenon's `ProlongateInternalTothAndRoe` — the one RIOT actually registered at
+`src/mhd/mhd.cpp:128` — suffices in Cartesian. Motivation and the algorithm comparison are in
+`DONOR_DELTA.md` ("Correction (2026-09-23)").
+
+### How it was run, and why not in this tree
+
+MHD + refinement is rejected at startup by design (`src/riot.cpp:162`), and there is no
+input-only way to reach the prolongation path. The guard was therefore relaxed **in a throwaway
+detached worktree at `/tmp/riot_amr_probe`, never committed**, behind an `mhd/UNSAFE_probe_allow_amr`
+flag that also printed an "UNVALIDATED PROBE BUILD" banner. Submodules were symlinked from the
+main tree so dependency SHAs are provably identical. The worktree was removed after the run;
+`git status src/` is clean and the guard is untouched on the branch. **Do not re-add that flag to
+the tree** — if Stage 6 proper needs a switch, it should be a documented parameter with its own
+N01 case, following the `mhd/allow_zero_field_restart` precedent.
+
+| Field | Value |
+| --- | --- |
+| Binary | `/tmp/riot_amr_probe/build/src/riot`, Release, gcc-16, same cmake args as `build/` |
+| Deck | `claude_sessions/mhd_runs/amr_probe/field_loop_amr.py` |
+| Problem | 2D field loop, identical pgen/resolution/solver/recon/CFL/`mu0`/`r_loop`/`amp` to `inputs/mhd/field_loop.py` |
+| Refinement | `refinement = static`, `numlevel = 2`, one fixed patch over x1 ∈ [0, 1] |
+| Mesh verified refined | **20 blocks, levels {0, 1}, 4 coarse + 16 fine, `MaxLevel = 1`** — read from the output file, not inferred from the log |
+
+`static`, not `adaptive`, deliberately: a mesh built refined and never remeshed isolates
+**prolongation at the coarse/fine boundary** from remesh-time restriction and rebalancing. The
+patch covers half the box and the loop advects with v = (2, 1), so the structure crosses the
+boundary rather than sitting inside one level.
+
+### Controls — refinement is the only variable
+
+`nghost` and meshblock size both had to move for the refined case (Parthenon rejects odd `nghost`
+under refinement with *"Selected --nghost=3 is incompatible with mesh refinement because it is not
+a multiple of 2"*), so each was swept on the **uniform** grid first. Per the lesson recorded in
+the D01 methodology note, a variable that rides along with the one under test invalidates the
+comparison.
+
+| Run | `nghost` | meshblock nx1 | `max\|divB\|` at t = 1 |
+| --- | --- | --- | --- |
+| uniform control | 2 | 64 | 3.686287e-16 |
+| uniform control | 3 | 64 | 3.686287e-16 |
+| uniform control | 3 | 32 | 3.686287e-16 |
+| uniform control | 4 | 32 | 3.686287e-16 |
+
+Identical to every printed digit across all four. Neither `nghost` nor block size is a variable,
+so the refined run differs from `ctrl_ng4` in refinement alone.
+
+### Result — **outcome 1: div B holds at roundoff**
+
+| Run | level | dx | `max\|divB\|` | dimensionless η |
+| --- | --- | --- | --- | --- |
+| `ctrl_ng4` (uniform) | 0 | 1.5625e-02 | 3.6863e-16 | 5.4027e-15 |
+| `probe_static` | 0 (coarse) | 1.5625e-02 | 5.2215e-16 | 7.7431e-15 |
+| `probe_static` | 1 (fine) | 7.8125e-03 | 1.2262e-15 | 9.0915e-15 |
+| `probe_static` | boundary-adjacent blocks only (n = 10) | — | — | **8.7464e-15** |
+
+η is `max|divB| · dx / max|B|`. The refined run sits at **1.7× the uniform control's η** — same
+order, both at roundoff. Blocks touching the refinement boundary are **not worse** than the fine
+level as a whole (8.75e-15 vs 9.09e-15), which is the specific signature that would appear if
+prolongation were injecting divergence.
+
+**No growth.** Sampled every 150th cycle over 1787 cycles:
+
+```
+6.800116e-16 → 9.853229e-16 → 1.235123e-15 → 1.226158e-15 → 1.226158e-15 (flat to cycle 1787)
+```
+
+Bounded accumulation that saturates, not a leak. The probe ran 2× the control's cycle count
+(1787 vs 894) because the fine level halves dt, so this is the *more* demanding case.
+
+### What this does and does not establish
+
+**Does:** Parthenon's `ProlongateInternalTothAndRoe`, as registered, preserves div B to roundoff
+across a *static* Cartesian coarse/fine boundary with a magnetic structure advecting through it.
+The donor's weighted least-squares solve is **not** required for this configuration. Stage 6's
+Cartesian path is therefore mostly gating, adaptive remeshing, and edge flux correction rather
+than a prolongation port.
+
+**Does not:**
+- Nothing about **adaptive** refinement. No remesh occurred; restriction-on-derefine, block
+  migration and rebalancing are all untested. That is the next measurement, not a corollary.
+- Nothing about **curvilinear**. The donor's face-area weighting exists *for* curvilinear
+  geometry, so Stage 7 still needs the donor's version.
+- Nothing about 3D, MPI-with-refinement, restart on a refined mesh, or the energy audit after
+  regrid (`E` vs reconstructed `B²/2μ₀`) that `DEFERRED_STAGES.md` Stage 6 calls the distinctive
+  audit. div B being clean says nothing about whether interpolation silently moved magnetic
+  energy into heat.
+- Nothing about shocks at a level boundary. The field loop is β ~ 1e6 pure advection.
+
+**AMR remains rejected at startup and unsupported.** One clean measurement is not a gate;
+G6 as specified in `DEFERRED_STAGES.md` is unchanged and unstarted.
