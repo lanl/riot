@@ -54,11 +54,50 @@ Status: **port** · **adapt** · **reimplement** (RIOT-native equivalent) ·
 | Donor path | Class | Status |
 | --- | --- | --- |
 | `src/geometry/{geometry.hpp,geometry.cpp,cylindrical.hpp,spherical.hpp,axisymmetric.hpp}` | algorithm | **defer** — edge scale factors `hx1e1/hx2e2/hx3e3` for curvilinear CT (Stage 7) |
-| `src/utils/refinement/prolongation.hpp` | algorithm | **skip** — donor wrote its own `ProlongateTothAndRoe`; RIOT's pinned Parthenon **already supplies** `ProlongateInternalTothAndRoe` (`pr_ops.hpp:391`). Register the framework operator instead of porting a duplicate. |
-| `src/utils/refinement/restriction.hpp` | algorithm | **skip** — same reason; Parthenon's `RestrictAverage` already handles `TE::E1/E2/E3` (`pr_ops.hpp:105-166`). |
+| `src/utils/refinement/prolongation.hpp` | algorithm | **deferred, NOT equivalent** — see the correction below. Originally recorded as "skip, Parthenon already supplies it." That was wrong: same name, **different algorithm**. |
+| `src/utils/refinement/restriction.hpp` | algorithm | **skip** — verified equivalent. Parthenon's `RestrictAverage` handles `TE::E1/E2/E3` in its dimension guards (`pr_ops.hpp:121-125`), computes the weight generically via `coords.Volume<el>` so edges get edge lengths, and carries the same `tvol > 0.0` guard the donor added (`pr_ops.hpp:160`). |
 
-Two files the donor had to write are unnecessary because RIOT's newer Parthenon
-pin provides them upstream. This is the clearest single benefit of the newer pin.
+### Correction (2026-09-23): the two prolongations share a name, not an algorithm
+
+The original entry claimed RIOT's pinned Parthenon "already supplies"
+`ProlongateInternalTothAndRoe` (`external/parthenon/src/prolong_restrict/pr_ops.hpp:391`),
+so the donor file could be skipped and the framework operator registered instead
+(`src/mhd/mhd.cpp:128`). **The names match; the algorithms do not.**
+
+| | Parthenon `ProlongateInternalTothAndRoe` | Donor `ProlongateTothAndRoe` |
+| --- | --- | --- |
+| Length | ~83 lines (`pr_ops.hpp:391-473`) | ~450 lines (`prolongation.hpp:298`ff) |
+| Method | direct formula, cyclic permutation of the x-component | assembles a divergence-constraint matrix `D`, forms the residual and the weighted normal equations `M = D·W·Dᵀ`, and solves with **partial-pivoted Gaussian elimination** on the device |
+| Face weighting | none | face-area weighted via `ArtemisUtils::GetFaceAverageWeight` |
+| Geometry | Cartesian-shaped | templated over all six donor coordinate systems |
+
+Decisive evidence that this difference is deliberate and was forced by a real
+defect: donor commit **`78dbc13`** — *"Add div(B) monitoring. **Fix issues with
+div(B) growth during prolongation. This comes at increased complexity.**"* —
+rewrote `prolongation.hpp` (+451 lines) and simultaneously wired pre/post-remesh
+`max|divB|` prints into `artemis.cpp:217`. A simpler prolongation exhibited div B
+growth across remesh and was replaced by the expensive weighted solve. The donor
+registers the least-squares version **for Cartesian as well**
+(`artemis_utils.cpp:378-387`), not only for curvilinear geometry.
+
+Neither operator has a test. `grep TothAndRoe external/parthenon/tst/` returns
+nothing; Parthenon's is exercised only by `example/fine_advection`.
+
+**Why this was harmless until now, and what makes it live:** refinement is
+rejected at startup, so the registered operator is never invoked. It becomes
+load-bearing the moment AMR is enabled. **Do not treat the name match as
+evidence of equivalence when opening Stage 6** — the first Stage 6 measurement
+must be whether the operator RIOT currently registers holds div B across a
+coarse/fine boundary in Cartesian. See [`DEFERRED_STAGES.md`](DEFERRED_STAGES.md)
+Stage 6.
+
+Note also that the donor's face-area weighting exists *for* curvilinear geometry,
+so Stage 7 needs the donor's version regardless of how the Cartesian measurement
+turns out.
+
+One of the two files the donor had to write is genuinely unnecessary because of
+RIOT's newer Parthenon pin (`restriction.hpp`, verified above). The other is a
+real deferral, not a redundancy.
 
 ## Problem generators
 

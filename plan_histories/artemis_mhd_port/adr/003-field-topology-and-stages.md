@@ -251,7 +251,12 @@ re-deriving index permutations.
 - Enabling AMR (out of scope here): the metadata is already correct, but
   `ProlongateInternalTothAndRoe` and the edge correction must then be *validated*,
   not merely registered. Refinement metadata being present is not evidence that
-  refinement works.
+  refinement works. **And note (2026-09-23) that the registered operator is not the
+  donor's**: Parthenon's `ProlongateInternalTothAndRoe` is a direct formula, while
+  the donor's same-named `ProlongateTothAndRoe` is a face-area-weighted
+  divergence-constraint solve added by donor commit `78dbc13` to stop div B growing
+  during prolongation. Validating the registered operator is therefore the first
+  Stage 6 task, not a formality — see [`../DONOR_DELTA.md`](../DONOR_DELTA.md).
 - Any future field that needs a multi-component face variable, which would
   require a new `VARIABLE_FACE_VECTOR` macro threading `NCOMP` through
   `base_w_tt_t`.

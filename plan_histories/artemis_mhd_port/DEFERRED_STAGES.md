@@ -29,6 +29,59 @@ so there is no donor oracle for it either.
 
 ## Stage 6 — Static refinement, dynamic AMR, load balancing
 
+### Read this first: the donor HAS face/edge AMR code, and RIOT did not port it
+
+Corrected 2026-09-23. Two donor commits on `dempsey/mhd` are explicitly this work:
+
+| Commit | Subject | Touches |
+| --- | --- | --- |
+| `8529742` | *amr support for face and edge fields* | `mhd.cpp`, `artemis_utils.cpp` +154, `prolongation.hpp` +150, `restriction.hpp` +27 |
+| `78dbc13` | *Add div(B) monitoring. **Fix issues with div(B) growth during prolongation. This comes at increased complexity.*** | `artemis.cpp`, `artemis_utils.cpp` +200, `prolongation.hpp` +451 |
+
+The donor registers three ops on its face B field via
+`EnrollArtemisFaceRefinementOps` (`artemis/src/mhd/mhd.cpp:52`): `ProlongateShared`,
+`RestrictAverage`, and its own **`ProlongateTothAndRoe`** — a ~450-line
+face-area-weighted least-squares divergence-constraint solve with pivoted Gaussian
+elimination, templated over all six coordinate systems, and registered **for
+Cartesian too**. It also prints pre-remesh and post-remesh `max|divB|`
+(`artemis/src/artemis.cpp:217`).
+
+RIOT registers `ProlongateSharedMinMod, RestrictAverage, ProlongateInternalTothAndRoe`
+(`src/mhd/mhd.cpp:128`), taking the last from Parthenon. **That shares the donor
+operator's name but not its algorithm** — Parthenon's is ~83 lines and a direct
+formula. `DONOR_DELTA.md` originally recorded the donor file as a redundancy to
+skip; that entry is now corrected with the full comparison. Read it before writing
+any Stage 6 code.
+
+`78dbc13`'s message is direct evidence that a simpler prolongation grew div B
+across remesh and was deliberately replaced. Neither operator has a test in either
+tree.
+
+### First measurement, before any code
+
+The Cartesian question is decidable in a day and each outcome picks a different
+path, so it comes before design:
+
+> Take the 2D field loop, refine a static patch, remesh, and measure `max|div B|`
+> across the coarse/fine boundary **with the operator RIOT already registers**,
+> using the ported `mhd/monitor_divb`.
+
+1. **div B at roundoff** → Parthenon's direct formula is divergence-preserving in
+   Cartesian, the donor's weighted solve is curvilinear generality Stage 6 does not
+   need, and Stage 6 reduces to gating plus edge flux correction.
+2. **div B grows** → the donor's ~450-line weighted solve must be ported, and the
+   original `DONOR_DELTA.md` entry was a porting error caught before it shipped.
+3. **In between** → the div B monitor is the instrument that says which.
+
+This gate is analytic-only but **sharp, not weak**: div B at roundoff across a
+refinement boundary is an exact criterion, and the absence of a donor oracle costs
+less here than the "analytic-only" framing suggests.
+
+Independent of the outcome: the donor's face-area weighting exists *for*
+curvilinear geometry, so **Stage 7 needs the donor's version either way.**
+
+### The rest of the stage
+
 - Divergence-preserving prolongation, conservative face restriction, shared-face
   synchronization.
 - Couple fluid flux correction with magnetic edge correction at coarse/fine

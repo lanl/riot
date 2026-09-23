@@ -58,10 +58,19 @@ local evidence contradicted them, the ADRs record what changed and why.
 **No dependency change is needed.** RIOT's pinned Parthenon (`928544a6d`) is
 byte-identical to the donor's in every CT-relevant file, and additionally carries
 a flux-correction race fix the donor's older pin lacks. It supplies
-`ProlongateInternalTothAndRoe`, area-weighted face/edge restriction,
-single-valued shared faces, and edge flux correction. Two donor files
-(`prolongation.hpp`, `restriction.hpp`) were therefore **not** ported — the
-framework already provides them.
+area-weighted face/edge restriction, single-valued shared faces, and edge flux
+correction. One donor file (`restriction.hpp`) was therefore **not** ported — the
+framework genuinely provides it, verified operator by operator.
+
+**Corrected 2026-09-23:** the other file, `prolongation.hpp`, was *also* recorded
+as an unnecessary duplicate, on the strength of Parthenon supplying an operator of
+the same name. **The names match and the algorithms do not** — Parthenon's
+`ProlongateInternalTothAndRoe` is a ~83-line direct formula, the donor's
+`ProlongateTothAndRoe` a ~450-line face-area-weighted divergence-constraint solve
+that donor commit `78dbc13` introduced *specifically* to stop div B growing during
+prolongation. Harmless today because refinement is rejected at startup; load-bearing
+the moment AMR is enabled. See [`DONOR_DELTA.md`](DONOR_DELTA.md) and
+[`DEFERRED_STAGES.md`](DEFERRED_STAGES.md) Stage 6.
 
 **RIOT had no genuine face field before this.** All six pre-existing "face" fields
 carry `Metadata::CellMemAligned` (cell-aligned layout, never ghost-exchanged).

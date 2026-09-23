@@ -269,6 +269,19 @@ project needing scope approval, and several need scientific review before any co
 coarse/fine edge correction, so the metadata is complete and correct. **Registered
 refinement operators are not evidence that refinement works.**
 
+Sharpened 2026-09-23, and it cuts the other way from how this report first read:
+the donor **does** have face/edge AMR code (commits `8529742`, `78dbc13`) — it is
+merely untested there, since every donor MHD input is `refinement = none`. More
+importantly, the operator RIOT registered is Parthenon's `ProlongateInternalTothAndRoe`,
+which shares a **name but not an algorithm** with the donor's `ProlongateTothAndRoe`:
+~83 lines of direct formula versus ~450 lines of face-area-weighted
+divergence-constraint solve that `78dbc13` introduced expressly to stop div B
+growing during prolongation. `DONOR_DELTA.md` had recorded the donor file as a
+redundancy to skip; that entry is corrected, and Stage 6 now opens with the
+measurement that decides whether the framework operator suffices in Cartesian. This
+is a latent porting error found before it could ship, and it is unreachable today
+only because refinement is rejected at startup.
+
 Also outstanding and cheap: MHD eigenmodes in `linear_modes.cpp`; a GPU build;
 OpenMP; a multi-node run.
 
