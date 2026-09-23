@@ -29,6 +29,7 @@ enum class IonThermalConductivityModel { Constant, Braginskii };
 enum class CoulombLogarithmKind : int { LeeMoore, Brysk, BPS, Basic };
 enum class TransportSpecies { Electron, Ion };
 enum class PlasmaViscosityModel { Constant, FokkerPlanckLandau };
+enum class PlasmaDiffusionModel { Constant, FokkerPlanckLandau };
 
 namespace IonizationModelConstants {
 // Thomas-Fermi model, fit by R. More (1981, UCRL-84991), after
