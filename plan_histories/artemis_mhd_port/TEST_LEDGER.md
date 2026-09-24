@@ -2527,3 +2527,12 @@ restart path.
 **Does not:** it does not affect any supported configuration (AMR is rejected at startup), and it
 is not fixed. The fix belongs to Stage 6 proper — see D02 for three candidate directions and why
 flipping the domain argument is not one of them.
+
+**Attribution (asked 2026-09-23): the donor almost certainly does NOT have this, and the port
+introduced it — by source reading, UNMEASURED.** The donor rebuilds cell-centered magnetic state
+from face B in `ConsToPrim` as `PreCommFillDerivedMesh`, *before* the fluxes, with a dedicated
+`ConsToPrim::MHDGhost` kernel covering `IndexDomain::entire` every stage; RIOT rebuilds it in a
+post-update task, which is why `RestoreDerivedOnRestart` exists and is the hook D02 lives in. No
+donor run was made and the donor has no MHD AMR test, so this is not settled — full statement and
+its three open gaps in [`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) D02 "Attribution", and the ordering
+delta itself in [`DONOR_DELTA.md`](DONOR_DELTA.md).

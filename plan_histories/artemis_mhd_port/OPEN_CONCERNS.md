@@ -357,6 +357,68 @@ that point. Candidate directions, none validated:
 
 **Do not attempt the fix as part of a probe.** It belongs to Stage 6 proper, with its own gate.
 
+### Attribution — does the donor have this? **Probably not; the PORT introduced it. UNPROVEN.**
+
+Asked 2026-09-23. It matters because if the donor shares the defect it belongs upstream, and if
+not it is RIOT's to fix. **The claim below is a source-reading argument against the donor tree at
+`dempsey/mhd @ 3e5aeb5` (the recorded comparison base, present at
+`/Users/taitano/Documents/git/artemis`). No donor run was made.** Labelled unproven for that
+reason; see the three gaps at the end.
+
+**The donor has no magnetic restart handling either.** Its only `is_restart` branch
+(`artemis_driver.cpp:124`) is `NBody::InitializeFromRestart` — nothing magnetic.
+`MHD::SetCellCenteredMagneticFields` is called from exactly ONE place,
+`ArtemisDerived::PostInitialization` (`fill_derived.cpp:502`), registered as
+`PostProblemGenerator` (`main.cpp:52-53`), which sits inside the `if (init_problem)` block Parthenon
+skips on resume (`mesh.cpp:751,778`). So the donor's derived magnetic state is not rebuilt at
+restart any more than RIOT's was before G5.6.
+
+**But the donor does not need it, because it redoes that work every stage, before the fluxes,
+INCLUDING GHOSTS.** `ArtemisDerived::ConsToPrim` is registered as `PreCommFillDerivedMesh`
+(`artemis.cpp:225`), and it carries a **second, dedicated kernel** — `ConsToPrim::MHDGhost`
+(`fill_derived.cpp:287-313`) — that recomputes `field::cell::B`, `cell::energy` and `cell::divB`
+from `face::B` over `IndexDomain::entire` while the main `ConsToPrim` kernel runs only on
+`interior` (`fill_derived.cpp:166-171`). That extra `entire`-domain MHD kernel exists precisely
+to keep the cell-centered magnetic ghosts consistent with face state, and it runs on every stage
+of every step, restart or not.
+
+**That is the delta, and it is architectural.** RIOT rebuilds derived magnetic state in a
+POST-update `MHD::SetDerived` task, not before the fluxes — which is exactly why the G5.6 defect
+was real there (the first post-restart Riemann solve read a zero transverse field) and why a
+dedicated `RestoreDerivedOnRestart` had to be written at all. In the donor, a restart that leaves
+`cell::B` stale or zero is self-healing at the first `PreCommFillDerived`, before anything reads
+it. **D02's mechanism — a fine block reconstructing its first fluxes from locally-derived rather
+than prolongated ghosts — is reached in RIOT through a hook the donor has no analogue of.** So
+D02 is a consequence of RIOT's derived-state ordering, i.e. introduced by the port, and not a
+donor bug inherited.
+
+**This is evidence FOR fix direction 1 above**: driving a real
+`PreCommFillDerived`/communicate/`FillDerived` cycle on the restart path is close to what the
+donor gets for free on every stage. Direction 2 (derive on `interior`, then exchange) is the
+donor's shape *without* its `entire`-domain ghost kernel, which the measurement above already
+shows is the worse half.
+
+**Three gaps, and none is closed:**
+
+1. **No donor run.** The donor was not built or executed for this. Everything above is source
+   reading.
+2. **There is no donor oracle to consult.** Artemis's MHD tests never exercise AMR at all (see
+   [`DEFERRED_STAGES.md`](DEFERRED_STAGES.md)), so there is no donor refined-mesh restart result
+   in existence. Its `78dbc13` ("*Fix issues with div(B) growth during prolongation*") shows
+   refinement was worked on, but that is prolongation, not restart.
+3. **"The D02 mechanism is absent" is NOT "the donor's refined-mesh restart is clean."** Since
+   `ConsToPrim` rebuilds cell state *from* face B, a checkpointed **face** field that were itself
+   wrong on a refined mesh would be faithfully propagated and the self-healing would not save it.
+   That is a different defect and it is not ruled out. Do not upgrade this entry to "the donor
+   restarts correctly" without running it.
+
+**What would settle it**: build the donor at `3e5aeb5`, add an MHD refinement criterion to one of
+its MHD pgens (it has none either — the same design question recorded in `DEFERRED_STAGES.md`),
+and run the S6.3 protocol on it — uninterrupted vs restarted, first post-restart cycle, with a
+uniform control. Roughly the cost of the S6.3 probe itself. Deliberately not done, because the
+conclusion does not change any action: RIOT cannot adopt the donor's ordering piecemeal, so the
+fix is RIOT's either way.
+
 ### Reproducing
 
 Needs the probe build (`amr_probe/README.md`) plus the deck

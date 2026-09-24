@@ -43,6 +43,36 @@ Status: **port** · **adapt** · **reimplement** (RIOT-native equivalent) ·
 | `src/derived/fill_derived.cpp` | algorithm | **adapt** | `divB`, cell-centered B, magnetic energy, and `E = u + KE + E_mag` → RIOT's `fill_shared_derived.cpp` touch points and `MHD::SetDerivedMagneticFields` (ADR-002). |
 | `src/utils/artemis_utils.{cpp,hpp}` | integration | **adapt** | Face refinement-op enrollment and the `divB` remesh diagnostics. `DualEnergySIE` has **no RIOT analog** — RIOT has no dual-energy scheme, and the donor's constant-γ fallback must not be transplanted into RIOT's arbitrary-EOS path (ADR-002). |
 
+### The ordering delta, recorded 2026-09-23 because it is the origin of defect D02
+
+`fill_derived.cpp` above is classified "adapt", and the kernels were adapted faithfully. **What
+did not carry across is WHEN they run**, and that is a genuine donor/port divergence with
+consequences, not a detail of transcription.
+
+| | Donor | RIOT |
+| --- | --- | --- |
+| Where cell-centered B / magnetic energy / `divB` are rebuilt from face B | `ArtemisDerived::ConsToPrim`, registered as **`PreCommFillDerivedMesh`** (`artemis.cpp:225`) | `MHD::SetDerived`, a **post-update task** in the stage graph |
+| When, relative to the fluxes | **BEFORE** — every stage, before the boundary exchange and before reconstruction | **AFTER** the update |
+| Ghost coverage | a **second dedicated kernel**, `ConsToPrim::MHDGhost` (`fill_derived.cpp:287-313`), runs on `IndexDomain::entire`; the main kernel is `interior` only | derived on `entire` once at restart by `MHD::RestoreDerivedOnRestart`; otherwise via the stage graph |
+| Restart | nothing magnetic on the restart path (only `is_restart` branch is `NBody::InitializeFromRestart`, `artemis_driver.cpp:124`) — and none needed, because the pre-flux rebuild **self-heals** a stale `cell::B` | needs `MHD::RestoreDerivedOnRestart`, written for G5.6, because nothing else rebuilds it before the first flux |
+
+**Why this matters twice over.** It is the reason the G5.6 defect existed at all (a restart left
+the transverse field zero for the first Riemann solve: 3.7e-06, permanent, divergence-free) and
+the reason **D02** exists (on a refined mesh those ghosts must be *prolongated* from the coarse
+donor, and `RestoreDerivedOnRestart` can only derive them *locally*). The donor never reaches D02
+because it has no equivalent hook — its ghosts are refreshed inside the normal communicate/fill
+cycle that a restart also runs.
+
+**Attribution is a source-reading argument, not a measurement** — no donor run was made, and the
+donor has no MHD AMR test to consult. Full statement, including the three gaps it leaves open, in
+[`OPEN_CONCERNS.md`](OPEN_CONCERNS.md) under D02 "Attribution".
+
+**Do not treat this as a TODO to adopt the donor's ordering.** Moving RIOT's magnetic derived
+state into a pre-flux `PreCommFillDerived` would touch shared machinery every package goes
+through — the C1 class of change — and the verified G2–G5 results were all obtained with the
+current ordering. It is recorded here so the *origin* of both defects is discoverable, and
+because it is evidence for D02's fix direction 1 over direction 2.
+
 ## Units
 
 | Donor path | Class | Status | Note |
