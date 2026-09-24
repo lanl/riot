@@ -78,15 +78,28 @@ The unit sphere of directions is discretized into :math:`N_{\text{ang}}` ordinat
 Multi-Material Opacities
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The cell absorption and scattering coefficients that appear in the equation above are aggregated from the per-material opacities (Section :ref:`sec:mat-opacity`) as volume-fraction-weighted sums,
+For :math:`q\in\{a,s\}`, the Amagat closure evaluates each material's specific opacity at its material density and volume-averages the resulting coefficients,
 
 .. math::
 
-     \sigma_{a,f} = \sum_m f_m\,\rho_m\,\kappa_{a,f,m}
-                  = \sum_m f_m\,\sigma_{a,f,m}, \qquad
-     \sigma_{s,f} = \sum_m f_m\,\sigma_{s,f,m},
+     \sigma^{\mathrm{A}}_{q,f}
+       = \sum_m f_m\rho_m\,\kappa_{q,f,m}(\rho_m,T).
 
-where each material’s coefficient :math:`\sigma_{a,f,m} = \rho_m\,\kappa_{a,f,m}` is evaluated from its own opacity model at the material-averaged density :math:`\rho_m` and the (shared) cell temperature. This follows the volume-fraction aggregation of Section :ref:`sec:permat-bulk`, so a mixed cell presents a single set of group coefficients to the transport solve.
+The homogeneous closure instead evaluates each material's specific opacity at its partial density :math:`f_m\rho_m`,
+
+.. math::
+
+     \sigma^{\mathrm{H}}_{q,f}
+       = \sum_m f_m\rho_m\,\kappa_{q,f,m}(f_m\rho_m,T).
+
+RIOT blends these closures with :math:`\chi=\texttt{mix_frac}`,
+
+.. math::
+
+     \sigma_{q,f} = (1-\chi)\sigma^{\mathrm{A}}_{q,f}
+                    + \chi\sigma^{\mathrm{H}}_{q,f}.
+
+The PTE-consistent Amagat closure (:math:`\chi=0`) is the default; :math:`\chi=1` selects the homogeneous closure.
 
 Matter–Radiation Coupling
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -178,6 +191,18 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
      - bool
      - ``false``
      - Fix opacities to the values set in the problem generator.
+   * - mix_frac
+     - Real
+     - ``0.0``
+     - Mixture interpolation from the PTE-consistent Amagat closure (0) to the homogeneous closure (1).
+   * - opac_rho_min
+     - Real
+     - ``0.0``
+     - Density floor for opacity evaluations.
+   * - opac_temp_min
+     - Real
+     - ``0.0``
+     - Temperature floor for opacity evaluations.
    * - units_override
      - bool
      - ``false``
@@ -286,10 +311,6 @@ The Jacobi solver adds iteration and timestep controls:
      - Real
      - ``1e4``
      - Limit the global step to a multiple of the hyperbolic step; :math:`-1` disables this controller.
-   * - dt_ratio_lag
-     - Real
-     - ``-1.0``
-     - *Experimental* step limiter accounting for lagged opacities; :math:`-1` disables it.
    * - verbose
      - int
      - ``0``
