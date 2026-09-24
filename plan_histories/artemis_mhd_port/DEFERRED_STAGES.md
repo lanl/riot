@@ -113,11 +113,20 @@ Two things these probes surfaced that change the shape of this stage:
    magnetic-energy criterion in their own build; **the tree still has none**, and
    choosing one (magnetic energy? current density? `|div B|`?) is a design question
    needing review, not a port.
-2. Still untested after all three probes: **restart on a refined mesh** (the highest-value
-   remaining item, given that G5.6 found derived magnetic state was never rebuilt on
-   restart even on a uniform mesh), **shocks crossing a level boundary** (every probe used
-   the β ~ 1e6 field loop), **more than two levels** (`numlevel = 2` throughout), and
-   curvilinear, which needs the donor's version regardless.
+2. **Restart on a refined mesh is BROKEN — defect [D02](OPEN_CONCERNS.md), found by S6.3.**
+   The probe was run (2026-09-23) and it failed: face B is perturbed by **1.87e-03** at the
+   first post-restart cycle against **3.13e-09** for a uniform control, six orders of
+   magnitude, where G5.6's criterion was 1e-14. Root cause identified and confirmed by a
+   switched-domain experiment: `MHD::RestoreDerivedOnRestart` derives cell-centered ghosts
+   *locally*, which is correct on a uniform mesh and impossible on a refined one, where a
+   fine block's ghosts at a coarse/fine interface are prolongated from the coarse donor.
+   `max|div B|` stays at roundoff throughout, so every divergence check in the port is blind
+   to it. **This is a G6 blocker and the fix is a restart-sequence change, not a one-liner** —
+   see D02 for three candidate directions and for why flipping the domain argument is not
+   one of them (`interior` is 10x *worse*).
+3. Still untested: **shocks crossing a level boundary** (every probe used the β ~ 1e6 field
+   loop), **more than two levels** (`numlevel = 2` throughout), and curvilinear, which needs
+   the donor's version regardless.
 
 This gate is analytic-only but **sharp, not weak**: div B at roundoff across a
 refinement boundary is an exact criterion, the 3D axial field is a second exact one, and
@@ -137,7 +146,9 @@ curvilinear geometry, so **Stage 7 needs the donor's version either way.**
   only at refinement boundaries.
 - Sequence: one static refinement boundary → repeated refine/derefine with no
   physical evolution → advected magnetic structure crossing a level boundary →
-  load balancing and MPI ownership change → restart on a refined mesh.
+  load balancing and MPI ownership change → restart on a refined mesh. **The first
+  four of these are probed and clean (S6.0–S6.2); the fifth is probed and BROKEN
+  (S6.3, defect D02), so it is the first piece of real Stage 6 work, not the last.**
 - **The distinctive audit**: compare conserved `E` against reconstructed
   magnetic energy after regrid. If interpolation changes `B²/2μ₀` while `E` is
   held fixed, the difference silently becomes heat. Quantify it; do not

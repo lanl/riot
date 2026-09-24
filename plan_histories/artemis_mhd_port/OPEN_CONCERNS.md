@@ -286,6 +286,82 @@ sharply checked for those two states**. Their real value is as NaN-regression ca
 separate finiteness test does assert strictly. Recorded so nobody later reads that test as
 tighter than it is.
 
+## D02 — Restart on a REFINED mesh injects ~2e-3 into the first post-restart step [HIGH, but
+## does NOT affect any supported configuration — AMR is rejected at startup]
+
+**Found by S6.3, 2026-09-23.** A restart from a checkpoint written on an adaptively refined mesh
+perturbs the face magnetic field by **1.87e-03 relative at the FIRST post-restart cycle**, against
+**3.13e-09** for a uniform-mesh control run with the same binary, same deck and same problem.
+Six orders of magnitude, and G5.6's criterion for a restart was rel <= 1e-14.
+
+**Severity is HIGH as a defect and zero as a risk today**: `refinement != none` is rejected at
+startup under MHD, so no supported configuration can reach it. It is recorded at HIGH because it
+is a **blocker for Stage 6** — gate G6 lists restart on a refined mesh — and because it descends
+from a defect (G5.6) whose whole lesson was that this failure mode is invisible.
+
+### What is established, and what each piece rules out
+
+| Observation | What it eliminates |
+| --- | --- |
+| Zero-step reload is **bitwise** on face B, and the mesh is reproduced exactly (23 blocks, both levels) | The checkpoint read. The injection is in the first **step**, not the load |
+| Mesh history **identical at every cycle** 200-250 (23 -> 26 -> 23 blocks in both runs) | Divergent refinement decisions |
+| Same run twice = **bitwise** on a refined mesh | Nondeterminism |
+| 1-rank vs 4-rank restart = **bitwise** | MPI and block redistribution |
+| Error **decays** 1.87e-3 -> 1.66e-4 over 50 cycles | Amplified roundoff. This is a one-time injection that then diffuses |
+| `max\|div B\|` stays at roundoff throughout | Any divergence-based detection. **The defect is invisible to every div B check in the port** |
+| Error concentrates at block **edges**: 8.1e-07 in the outer two columns vs 2.1e-08 strictly interior (40x), on 13 of 20 fine blocks | An interior-kernel error. This is the ghost-zone signature |
+| Uniform control shows the *same* momentum/velocity/pressure residual (2.2e-16) but is **bitwise** on all three magnetic fields where the refined case is not | The pre-existing C13 restart residual as the explanation for the magnetic part |
+
+### Root cause, confirmed by a switched-domain experiment
+
+`MHD::RestoreDerivedOnRestart` derives the cell-centered magnetic state on
+`IndexDomain::entire` — ghosts included — **locally**, from face ghosts. That is deliberate and
+correct on a uniform mesh: G5.6 measured `interior` there and it cost 1.4e-10, because nothing
+communicates between that hook and the first stage's reconstruction, so the ghosts must be
+derived rather than received.
+
+On a **refined** mesh the ghosts of a fine block at a coarse/fine interface are not something
+that can be derived locally at all — they are prolongated from the coarse donor. So the first
+post-restart reconstruction on those blocks reads locally-derived ghost values where the
+uninterrupted run had prolongated ones.
+
+Tested directly by making the domain switchable in the probe build:
+
+| `RestoreDerivedOnRestart` domain | face B rel error at cycle 201 |
+| --- | --- |
+| `entire` (shipped) | 1.874e-03 |
+| `interior` (probe) | **2.038e-02** |
+
+`interior` is **10x worse**, which confirms the ghosts are the mechanism and that `entire` is the
+better of the two — but neither is correct on a refined mesh, because the right values are
+neither locally derivable nor present. **Do not "fix" this by flipping the domain.**
+
+### What the fix needs, and why it is not a one-liner
+
+The ghosts have to be *communicated and prolongated* before the first reconstruction, not
+derived. That means a boundary exchange plus coarse/fine prolongation on the restart path, in a
+hook that runs on restart — which is a change to the restart sequence, not to MHD's own kernel,
+and it interacts with whatever Parthenon already does or does not do for cell-centered fields at
+that point. Candidate directions, none validated:
+
+1. Drive a full `PreCommFillDerived`/communicate/`FillDerived` cycle on the restart path, i.e.
+   restore the part of `Mesh::Initialize`'s `if (init_problem)` block that a restart skips. Most
+   likely correct, largest blast radius, and it must not perturb the verified uniform-mesh
+   restart (G5.6) or the fresh-start path.
+2. Derive on `interior` and then request only the magnetic fields' boundary exchange. Smaller,
+   but the measurement above shows `interior` alone is worse, so this only works if the exchange
+   genuinely lands before the first reconstruction — which is the thing to verify, not assume.
+3. Ask upstream whether a restart is *supposed* to leave cell-centered ghosts unpopulated at
+   `UserWorkBeforeLoopMesh`. If the answer is no, this is an upstream bug and the RIOT-side
+   workaround is temporary.
+
+**Do not attempt the fix as part of a probe.** It belongs to Stage 6 proper, with its own gate.
+
+### Reproducing
+
+Needs the probe build (`amr_probe/README.md`) plus the deck
+`claude_sessions/mhd_runs/amr_probe/field_loop_restart.py`. Recipe in TEST_LEDGER "S6.3".
+
 ## C15 — Sparse physics is disabled globally under MHD rather than made CT-aware [LOW, but a
 ## real performance loss and the fix is known]
 

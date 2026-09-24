@@ -2413,3 +2413,117 @@ AMR in either dimensionality.
 **AMR remains rejected at startup and unsupported.** Three clean probes are not gate G6, which also
 requires the coarse/fine edge-flux correction audit, a reviewed criterion in the tree, and
 restart.
+
+## S6.3 — Stage 6 probe, part 4: restart on a refined mesh. **FOUND DEFECT D02**, 2026-09-23
+
+**Not a gate.** The highest-value item on S6.2's "still untested" list, chosen for a specific
+reason: G5.6 found that on a *uniform* mesh the derived magnetic state was never rebuilt on
+restart, because Parthenon skips the entire `if (init_problem)` block on resume. The first
+post-restart Riemann solve therefore used a zero transverse field, and the run was permanently
+wrong by 3.7e-06 while staying divergence-free and passing every other test. A refined mesh adds
+state that must also survive resume, and nothing tested said the uniform-mesh fix covered it.
+
+**It does not. The probe found a real defect, recorded as [D02](OPEN_CONCERNS.md).**
+
+Binary: third throwaway worktree `/tmp/riot_amr_probe3`, submodules symlinked, relaxed AMR guard
+plus the pgen criterion. `git status src/` clean on the branch; 0 occurrences of `UNSAFE_probe` in
+`src/`.
+
+### The result
+
+Comparison is against the uninterrupted run at the *same cycle*; `analyze_restart.py` aborts if
+the two sides are at different cycles, which is load-bearing rather than pedantry.
+
+| Test | Refined | Uniform control | G5.6 criterion |
+| --- | --- | --- | --- |
+| Zero-step reload, face B | **bitwise** | bitwise | bitwise |
+| Zero-step reload, mesh reproduced | **23 blocks, levels {0:3, 1:20}, exactly** | n/a | — |
+| Zero-step reload, `momentum`/`velocity`/`pressure` | 2.2e-16 / 2.2e-16 / 8.9e-16 | **identical signature** | known C13 residual |
+| Zero-step reload, the three magnetic derived fields | **2.6e-17 / 1.2e-17 / nonzero** | **bitwise** | — |
+| **First post-restart cycle, face B** | **1.874e-03** | **3.133e-09** | — |
+| Evolved 50 steps, face B | 1.661e-04 | 2.943e-09 | rel <= 1e-14 |
+| Evolved, 1 rank vs 4 ranks | **bitwise** | — | — |
+| Reproducibility: same run twice | **bitwise** | — | bitwise |
+
+**Six orders of magnitude worse than the uniform control, on the first step after resume.** The
+error then *decays* (1.87e-3 at cycle 201 -> 1.66e-4 by 250), which is what identifies it as a
+one-time injection rather than amplified roundoff, and it concentrates at block edges (8.1e-07 in
+the outer two columns against 2.1e-08 strictly interior, 40x) on 13 of 20 fine blocks.
+
+Root cause and the switched-domain experiment that confirms it are in the D02 entry: the hook
+derives cell-centered ghosts *locally* on `IndexDomain::entire`, which is right on a uniform mesh
+and impossible on a refined one, where a fine block's ghosts at a coarse/fine interface are
+prolongated from the coarse donor. Forcing `interior` instead makes it **10x worse** (2.04e-02),
+so the ghosts are the mechanism and `entire` is the better of two wrong options.
+
+**`max|div B|` stays at roundoff through all of it.** Every divergence check in this port is blind
+to this defect — the same property that let the G5.6 defect survive, and the reason the evolved
+comparison against an uninterrupted trajectory is not optional.
+
+### Controls, and what each one was for
+
+None of these is decoration; the conclusion depends on all five.
+
+1. **Uniform-mesh control, same binary and deck, `refinement=none`.** Without it the 2.2e-16
+   `momentum`/`velocity`/`pressure` residual reads as a new refinement defect. It is the
+   pre-existing C13 signature and appears identically in both. It is also what converts "1.9e-03
+   is bad" into "1.9e-03 versus 3.1e-09 is a refinement-specific defect".
+2. **Reproducibility control: the same run twice, no restart.** Bitwise. Without it the whole
+   result could be nondeterminism, which has completely different implications.
+3. **Mesh-history comparison at every cycle.** Identical (23 -> 26 -> 23 in both). Two adaptive
+   runs can diverge because they *refined differently*, which says nothing about restart; the
+   analyzer checks the block set before comparing fields and refuses if it differs.
+4. **Rank-count control.** 1 vs 4 ranks bitwise, so this is not the C14 blind spot again.
+5. **The switched-domain experiment.** Turns a plausible story about ghosts into a measurement.
+
+### Two traps this probe hit
+
+1. **`tlim = -1.0` does NOT mean "no time limit".** The first cycle's time already exceeds it, so
+   the run stopped at cycle 0, wrote a checkpoint of the *unrefined root mesh*, and the entire
+   probe would have passed vacuously. The only symptom was `Number of MeshBlocks = 8; 0 created,
+   0 destroyed` in the log. Use a large positive `tlim` and let `nlim` bind. **Verify the
+   checkpoint's own block count and level distribution before restarting from it** — this probe
+   reads 23 blocks over levels {0, 1} out of the `.rhdf`, which is the only real evidence that
+   the restart resumed from a refined mesh at all.
+2. **`analyze_restart.py` could not match blocks on a refined mesh.** Its `block_order` lexsorted
+   on `LogicalLocations` alone, but a level-0 and a level-1 block can carry the same
+   `(lx1, lx2, lx3)`, so the two files' orderings were related by an arbitrary permutation within
+   each tied group and the comparison would have reported differences that were only blocks lined
+   up against the wrong partners — a defect signature manufactured by the analyzer. Fixed by
+   sorting on `(level, lx3, lx2, lx1)` and asserting that key is unique, plus a mesh-signature
+   check that aborts before comparing fields if the two block sets differ.
+
+### Reproducing
+
+```bash
+mkdir -p /tmp/s63 && cd /tmp/s63
+R=/Users/taitano/Documents/git/riot
+# probe build per amr_probe/README.md, then generate the deck:
+export PYTHONPATH=<probe>/script/inputs:<probe>/build/singularity-eos/python:$R/riot_venv/lib/python3.12/site-packages
+cp $R/claude_sessions/mhd_runs/amr_probe/field_loop_restart.py . && python3 field_loop_restart.py
+P=<probe>/build/src/riot
+$P -i field_loop_restart.rin parthenon/job/problem_id=a            # uninterrupted, ckpt at 200
+$P -r a.out2.00001.rhdf parthenon/job/problem_id=b0 parthenon/time/nlim=200   # zero-step
+$P -r a.out2.00001.rhdf parthenon/job/problem_id=b1 parthenon/time/nlim=250   # evolved
+mpiexec -n 4 $P -r a.out2.00001.rhdf parthenon/job/problem_id=b4 parthenon/time/nlim=250
+$P -i field_loop_restart.rin parthenon/job/problem_id=u parthenon/mesh/refinement=none  # CONTROL
+$P -r u.out2.00001.rhdf parthenon/job/problem_id=v1 parthenon/time/nlim=250
+. $R/riot_venv/bin/activate
+python3 $R/claude_sessions/mhd_runs/analyze_restart.py a.out1.00200.phdf b0.out1.final.phdf
+python3 $R/claude_sessions/mhd_runs/analyze_restart.py a.out1.00201.phdf b1.out1.00201.phdf
+```
+
+The evolved comparisons need the *cycle-201* snapshot specifically: the injection is largest at
+the first post-restart step and decays, so comparing only the final state understates it by an
+order of magnitude.
+
+### What this establishes
+
+**Does:** restart on a refined mesh is **broken**, by a mechanism now identified and measured, and
+invisible to div B. The checkpoint format, the mesh reconstruction, MPI and determinism are all
+fine — the defect is narrowly the cell-centered ghost state at a coarse/fine interface on the
+restart path.
+
+**Does not:** it does not affect any supported configuration (AMR is rejected at startup), and it
+is not fixed. The fix belongs to Stage 6 proper — see D02 for three candidate directions and why
+flipping the domain argument is not one of them.
