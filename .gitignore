@@ -58,6 +58,9 @@ inputs/bubble_source.dat
 # Ignore .rin input files (converted to .py)
 *.rin
 
+# Spiner files
+*.sp5
+
 # Prompt-spectrum problem: generated opacity table + its generator and reference data
 inputs/radiation_transport/prompt/make_prompt_opacity_table.py
 inputs/radiation_transport/prompt/prompt_exact.txt
