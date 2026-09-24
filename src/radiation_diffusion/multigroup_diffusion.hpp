@@ -49,7 +49,7 @@ struct MultiGroup {
 
   static Real EstimateTimestepMesh(MeshData<Real> *md);
 
-  static void MeshPostProblemGenerator(parthenon::Mesh *mesh,
+  static void MeshPostInitialization(parthenon::Mesh *mesh,
                                        parthenon::ParameterInput *pin,
                                        parthenon::MeshData<Real> *md);
 };
