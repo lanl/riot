@@ -133,7 +133,6 @@ riot.input(
 riot.input(
     "radiation_transport/jacobi",
     dt_ratio_hyperbolic=100.0,  # Multiple of light-crossing time
-    dt_ratio_lag=-1,
     verbose=1,  # Verbosity
 )
 
