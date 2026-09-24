@@ -266,6 +266,18 @@ The Jacobi solver adds iteration and timestep controls:
      - Real
      - ``1e-8``
      - Residual threshold for convergence.
+   * - per_group_residual
+     - bool
+     - ``false``
+     - Additionally require each group's relative residual to meet ``err_thr_group``.
+   * - err_thr_group
+     - Real
+     - ``err_thr``
+     - Per-group residual threshold.
+   * - per_group_residual_floor
+     - Real
+     - ``1e-3``
+     - Floor on a group's residual denominator, as a fraction of the all-group total.
    * - split_g1
      - bool
      - ``true``
