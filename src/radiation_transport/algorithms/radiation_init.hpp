@@ -92,18 +92,12 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
               const auto &osm = opac_s(opac_id);
               const Real rm = std::max(rhom, opac_rho_min);
               const Real rbarm = std::max(rhobarm, opac_rho_min);
-              const Real wamg = (rhobarm > 0) ? (1.0 - mix_frac) * vfracm : 0.0;
-              const Real whom = (rhobarm > 0) ? mix_frac : 0.0;
-              const Real aam_amg =
-                  (wamg > 0.0) ? oam.AbsorptionCoefficient(rm, temp, gg) : 0.0;
-              const Real aam_hom =
-                  (whom > 0.0) ? oam.AbsorptionCoefficient(rbarm, temp, gg) : 0.0;
-              const Real ssm_amg =
-                  (wamg > 0.0) ? osm.ScatteringCoefficient(rm, temp, gg) : 0.0;
-              const Real ssm_hom =
-                  (whom > 0.0) ? osm.ScatteringCoefficient(rbarm, temp, gg) : 0.0;
-              aa += wamg * aam_amg + whom * aam_hom;
-              ss += wamg * ssm_amg + whom * ssm_hom;
+              aa += (rhobarm > 0.0)
+                        ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
+                        : 0.0;
+              ss += (rhobarm > 0.0)
+                        ? MMOpacity(osm, rm, rbarm, vfracm, temp, gg, mix_frac)
+                        : 0.0;
             }
           }
         });
