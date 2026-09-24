@@ -90,6 +90,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   std::vector<RiotOpacity::MeanOpacS> opac_s_dvec;
   std::vector<RiotOpacity::MeanOpacS> opac_s_host;
   std::vector<int> opac_from_matid;
+  const bool save_opac_autogen =
+      pin->GetOrAddBoolean("materials", "save_opac_autogen", false);
+  const std::string opac_autogen_filename =
+      pin->GetOrAddString("materials", "opac_autogen_filename", "autogen-opac.sp5");
+  bool opac_autogen_exists = false;
 
   // Strength
   std::vector<bool> strong;
@@ -348,13 +353,15 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       const int nph = pin->GetOrAddInteger(block_name, "nphase", 1);
       for (const auto &opac_block : get_opac_blocks(block_name, nph)) {
         if (pin->GetOrAddString(opac_block, "opac_a", "none") == "table") {
-          const std::string table = pin->GetString(opac_block, "opac_a_filename");
-          RiotOpacity::MeanOpacA peek(table);
+          const std::string table = pin->GetString(opac_block, "opac_filename");
+          const std::string material = pin->GetString(opac_block, "opac_material");
+          RiotOpacity::MeanOpacA peek(table, material);
           seed_or_validate(peek.ngroups(), peek.GetGroupBounds(), table);
         }
         if (pin->GetOrAddString(opac_block, "opac_s", "none") == "table") {
-          const std::string table = pin->GetString(opac_block, "opac_s_filename");
-          RiotOpacity::MeanOpacS peek(table);
+          const std::string table = pin->GetString(opac_block, "opac_filename");
+          const std::string material = pin->GetString(opac_block, "opac_material");
+          RiotOpacity::MeanOpacS peek(table, material);
           seed_or_validate(peek.ngroups(), peek.GetGroupBounds(), table);
         }
       }
@@ -474,7 +481,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       // First get underlying absorption opacity model
       RiotOpacity::OpacA opac_a;
       std::string opac_a_type = pin->GetOrAddString(opac_block, "opac_a", "none");
-      std::string opac_a_table = "autogen-opac-a-";
+      std::string opac_a_table = opac_autogen_filename;
       if (opac_a_type == "none") {
         opac_a = singularity::photons::Gray(0.0);
       } else if (opac_a_type == "constant") {
@@ -488,26 +495,27 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         const Real nu_ref = pin->GetOrAddReal(opac_block, "kappa_Nuref_a", 1.0);
         opac_a = PowerLaw(coef_kappa_a, rho_exp, temp_exp, nu_exp, nu_ref);
       } else if (opac_a_type == "table") {
-        opac_a_table = pin->GetString(opac_block, "opac_a_filename");
+        opac_a_table = pin->GetString(opac_block, "opac_filename");
       }
 
       // Now get underlying scattering opacity model
       RiotOpacity::OpacS opac_s;
       std::string opac_s_type = pin->GetOrAddString(opac_block, "opac_s", "none");
-      std::string opac_s_table = "autogen-opac-s-";
+      std::string opac_s_table = opac_autogen_filename;
       if (opac_s_type == "none") {
         opac_s = GrayS(0.0, 1.0);
       } else if (opac_s_type == "constant") {
         const Real kappa_s = pin->GetOrAddReal(opac_block, "kappa_s", 0.0);
         opac_s = GrayS(kappa_s, 1.0);
       } else if (opac_s_type == "table") {
-        opac_s_table = pin->GetString(opac_block, "opac_s_filename");
+        opac_s_table = pin->GetString(opac_block, "opac_filename");
       }
 
       // Construct Absorption MeanOpacity
       RiotOpacity::MeanOpacA mg_opac_a;
       if (opac_a_type == "table") {
-        mg_opac_a = MeanOpacityBase(opac_a_table);
+        const std::string material = pin->GetString(opac_block, "opac_material");
+        mg_opac_a = MeanOpacityBase(opac_a_table, material);
       } else {
         const Real lRhoMin = pin->GetOrAddReal(opac_block, "lRhoMin_a", -1.0);
         const Real lRhoMax = pin->GetOrAddReal(opac_block, "lRhoMax_a", 1.0);
@@ -527,7 +535,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       // Construct Scattering MeanOpacity
       RiotOpacity::MeanOpacS mg_opac_s;
       if (opac_s_type == "table") {
-        mg_opac_s = MeanSOpacityBase(opac_s_table);
+        const std::string material = pin->GetString(opac_block, "opac_material");
+        mg_opac_s = MeanSOpacityBase(opac_s_table, material);
       } else {
         const Real lRhoMin = pin->GetOrAddReal(opac_block, "lRhoMin_s", -1.0);
         const Real lRhoMax = pin->GetOrAddReal(opac_block, "lRhoMax_s", 1.0);
@@ -546,16 +555,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
       opac_a_host.push_back(mg_opac_a);
       opac_s_host.push_back(mg_opac_s);
-      const bool save_opac_a_table =
-          pin->GetOrAddBoolean(opac_block, "save_opac_a_file", false);
-      const bool save_opac_s_table =
-          pin->GetOrAddBoolean(opac_block, "save_opac_s_file", false);
       if (parthenon::Globals::my_rank == 0) {
-        if (save_opac_a_table && opac_a_type != "table") {
-          mg_opac_a.Save(opac_a_table + opac_block + ".sp5");
+        if (save_opac_autogen && opac_a_type != "table") {
+          mg_opac_a.Save(opac_a_table, opac_block, opac_autogen_exists);
+          opac_autogen_exists = true;
         }
-        if (save_opac_s_table && opac_s_type != "table") {
-          mg_opac_s.Save(opac_s_table + opac_block + ".sp5");
+        if (save_opac_autogen && opac_s_type != "table") {
+          mg_opac_s.Save(opac_s_table, opac_block, opac_autogen_exists);
+          opac_autogen_exists = true;
         }
       }
     };
