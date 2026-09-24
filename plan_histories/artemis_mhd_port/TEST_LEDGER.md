@@ -2275,3 +2275,141 @@ prolongation is not required for 2D Cartesian AMR.**
   current density? `|div B|` itself?) and not a port.
 
 **AMR remains rejected at startup and unsupported.** Two clean probes are not gate G6.
+
+## S6.2 — Stage 6 probe, part 3: the two gaps S6.1 named — 3D and MPI-with-refinement, 2026-09-23
+
+**Not a gate and not a capability claim.** S6.1 closed with an explicit "do not" list. The two
+items on it that were cheap and load-bearing are measured here: **3D** (both earlier probes took
+the collapsed-EMF branch, so `MHD::UpwindEMF<X1DIR>` and `<X2DIR>` never ran under refinement at
+all) and **MPI with refinement** (every S6.x run was serial, and block redistribution during
+remeshing is exactly the blind spot that let C14 through — P01 swept ranks on a *fixed* block
+layout).
+
+Binary: a second throwaway detached worktree `/tmp/riot_amr_probe2`, submodules symlinked from the
+main tree, Release/gcc-16, same cmake args as `build/`. Two patches, neither committed: the
+`mhd/UNSAFE_probe_allow_amr` escape hatch and the pgen refinement criterion S6.1 introduced.
+`git status src/` is clean on the branch and `grep -c UNSAFE_probe_allow_amr src/riot.cpp` is 0.
+
+### What was fixed and controlled before any result was read
+
+**The probe build reproduces S6.1 exactly.** The 2D adaptive run rebuilt from scratch gives
+`36 blocks created / 24 destroyed` and `max|divB|` agreeing with the recorded S6.1 table **to
+every printed digit at all nine dumps**, and all four audit numbers reproduce exactly
+(+1.78e-15, +1.55e-15, −6.27e-02, +2.89e-09). The two probe builds are therefore the same
+instrument, which is what licenses comparing S6.2 numbers against S6.1's.
+
+**A negative control on the guard.** Run with `mhd/UNSAFE_probe_allow_amr=false`, the probe build
+still aborts with the shipped rejection message. The escape hatch is a switch, not a removal.
+
+**A trap in the criterion patch, worth recording.** The probe's `ProblemPackage` read
+`pin->GetOrAddReal("mhd", "mu0", 1.0)` while `MHD::Initialize` (`src/mhd/mhd.cpp:65`) defaults it
+to `4*pi`. Parthenon rejects that outright — *"Input parameter mhd/mu0 has at least two
+inconsistent default values. The ones I detected are 1 and 12.5664"* — so a pgen that re-reads a
+package's parameter must repeat its default **exactly**. It fails loudly, which is the good case.
+
+**An nghost sweep on the uniform 3D grid**, because refinement forces `nghost` to be even and so
+`nghost` moves along with the variable under test. `nghost = 2` and `4` on the uniform 3D deck are
+**identical to every digit** (`max|divB|` 1.3717e-16, η 4.0557e-15, axial 1.4413e-15, E and mass
+bit-identical). `nghost` is provably not a variable.
+
+**A negative control on the comparator.** A comparator that always prints EXACT proves nothing, so
+the 2D adaptive run was repeated with `hydro/cfl` changed from 0.400 to **0.399** — a 0.25 %
+perturbation. It reports DIFFERS on all seven fields (max 1.57e-07 on the field) and flags the
+cycle-count divergence. The EXACT verdicts below are therefore real.
+
+### S6.2a — 3D adaptive refinement, on the upwind EMF branch
+
+Deck `claude_sessions/mhd_runs/amr_probe/field_loop_3d_adaptive.py`: the Gardiner & Stone (2005)
+section 5.4 setup — loop axis x3, `v = (2, 1, 1)`, so `v3 != 0` and the axial field must stay
+**exactly** zero, because `d_t B3 = v3 * div B` holds only through the cancellation of
+`E1 = v3 B2` against `E2 = -v3 B1`. Under refinement that cancellation additionally has to survive
+prolongation and restriction, which interpolate `B1` and `B2` independently. Nothing in the 2D
+result implies it will. Geometry matches `inputs/mhd/field_loop_3d.py`, so the uniform 3D run is a
+valid control.
+
+Remeshing verified from the file, not the log: **168 blocks created, 112 destroyed**, 16 -> 72
+blocks, levels {0: 8, 1: 64}.
+
+| dump | t | ncyc | nblk | levels | `max\|divB\|` | η | axial |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 00000 | 0.000 | 0 | 16 | {0: 16} | 2.6021e-17 | 8.1315e-16 | 0 |
+| 00001 | 0.250 | 314 | 72 | {0: 8, 1: 64} | 3.4637e-16 | 5.1519e-15 | 2.14e-15 |
+| 00002 | 0.500 | 629 | 72 | {0: 8, 1: 64} | 3.9422e-16 | 5.8064e-15 | 2.61e-15 |
+| 00003 | 0.750 | 944 | 72 | {0: 8, 1: 64} | 4.9521e-16 | 7.2012e-15 | 1.94e-15 |
+| final | 1.000 | 1259 | 72 | {0: 8, 1: 64} | 4.1110e-16 | 5.8705e-15 | 2.27e-15 |
+
+**Peak η = 7.20e-15 against 4.06e-15 for the uniform 3D control** — 1.8x, same order, both at
+roundoff, and no trend (η at t = 1 is below its value at t = 0.75). The **40 boundary-adjacent
+blocks peak at 5.33e-15, below the 5.87e-15 global peak**, so there is no excess localized at the
+level interface, which is the specific signature prolongation error would leave.
+
+**The axial field stays at roundoff through remeshing: 2.27e-15, against 1.44e-15 for the uniform
+control.** This is the sharp 3D-only criterion and the one 2D structurally cannot make. The
+transverse EMFs still cancel after prolongation and restriction have touched `B1` and `B2`
+separately.
+
+Energy audit, volume-weighted per block (fine cells are smaller, so an unweighted sum is
+meaningless):
+
+| Quantity | 3D adaptive | uniform 3D control |
+| --- | --- | --- |
+| total energy `E/E0 - 1` | **0.0000e+00** | −3.9475e-16 |
+| mass `m/m0 - 1` | −2.2204e-16 | −2.2204e-16 |
+| internal energy `U/U0 - 1` | +4.6178e-09 | +1.2226e-08 |
+| magnetic energy `Emag/Emag0 - 1` | **−1.0346e-01** | **−2.7393e-01** |
+
+Total energy is conserved **exactly** across 280 remesh events. The 10.3 % magnetic-energy loss is
+again **not** a remeshing defect: the uniform control at the same base resolution loses **2.6x as
+much** (27.4 %), so it is ordinary numerical diffusion and the refined run loses less by being
+locally finer — the same attribution-by-control as S6.1, and the same number that would have
+looked alarming quoted alone. Internal energy rises by 4.6e-09, eight orders below the magnetic
+loss, so that energy goes to truncation rather than to heat.
+
+### S6.2b — MPI with refinement: rank counts across a remeshing mesh
+
+The C14 blind spot. Runs at **1/2/3/4/5 ranks in 2D and 1/3/4 ranks in 3D**; 3 and 5 are included
+deliberately because they do not divide the block count evenly, so ownership differs rather than
+just scaling.
+
+**Every rank count produces the identical mesh history** — 2D `36 created / 24 destroyed` and 3D
+`168 created / 112 destroyed`, same final block count and same cycle count. That is what makes the
+comparison interpretable at all: under adaptive refinement two runs can diverge because they made
+*different refinement decisions*, which has nothing to do with CT. The analyzer checks the
+block-key sets first and refuses to compare data if they disagree.
+
+**Results are bitwise identical to serial at every rank count, in both 2D and 3D**, on all seven
+compared fields including the face-derived `div_magnetic_field`:
+
+| comparison | blocks | cycles | verdict |
+| --- | --- | --- | --- |
+| 2D serial vs 2, 3, 4, 5 ranks | 20 | 1786 | **bitwise identical** (all 4) |
+| 3D serial vs 3, 4 ranks | 72 | 1259 | **bitwise identical** (both) |
+
+Block redistribution during remeshing does not perturb the solution at all. Note this is a
+*stronger* result than P01's, not merely its extension: there the block layout was fixed, here
+blocks are created, destroyed and re-owned 280 times mid-run.
+
+### What S6.0 + S6.1 + S6.2 together establish, and what they do not
+
+**Do:** in Cartesian 2D **and 3D**, with Parthenon's `ProlongateInternalTothAndRoe` as registered,
+div B holds at roundoff through continuous adaptive remeshing; the 3D axial-field cancellation
+survives prolongation and restriction; total energy and mass are conserved to roundoff (exactly, in
+3D) across hundreds of remesh events; and **results are bitwise independent of rank count while the
+mesh is being rebuilt**. The donor's ~450-line weighted prolongation is not required for Cartesian
+AMR in either dimensionality.
+
+**Do not:**
+- **Restart on a refined mesh is still untested.** Given what G5.6 found on a uniform mesh —
+  derived magnetic state was never rebuilt on restart — this is the highest-value remaining item.
+- **No shocks at a level boundary.** Both dimensionalities used the field loop, β ~ 1e6 pure
+  advection. A shock crossing a refinement boundary is a stronger and quite different test.
+- **Curvilinear still needs the donor's version**; its face-area weighting exists for that.
+- **Only two levels.** `numlevel = 2` throughout; a three-level mesh has level jumps a two-level
+  mesh cannot produce.
+- **The criterion used is not RIOT's.** It exists only in the probe build. The tree still has no
+  MHD refinement criterion, and choosing one is a design question needing review, not a port.
+- **No GPU.** Unchanged from Stage 5; no device on this machine.
+
+**AMR remains rejected at startup and unsupported.** Three clean probes are not gate G6, which also
+requires the coarse/fine edge-flux correction audit, a reviewed criterion in the tree, and
+restart.

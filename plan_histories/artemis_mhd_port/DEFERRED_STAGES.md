@@ -73,41 +73,56 @@ path, so it comes before design:
    original `DONOR_DELTA.md` entry was a porting error caught before it shipped.
 3. **In between** → the div B monitor is the instrument that says which.
 
-**RUN 2026-09-23 — outcome 1, twice.** `TEST_LEDGER.md` "S6.0" (static) and "S6.1"
-(adaptive).
+**RUN 2026-09-23 — outcome 1, three times.** `TEST_LEDGER.md` "S6.0" (static), "S6.1"
+(2D adaptive) and "S6.2" (3D adaptive, plus MPI).
 
 | Probe | mesh activity | peak η | total E drift |
 | --- | --- | --- | --- |
-| uniform control | none | 5.40e-15 | −2.2e-16 |
-| S6.0 static | built refined, never remeshed | 9.09e-15 | — |
-| S6.1 adaptive | **36 blocks created, 24 destroyed** | 9.38e-15 | **+1.8e-15** |
+| uniform 2D control | none | 5.40e-15 | −2.2e-16 |
+| S6.0 static, 2D | built refined, never remeshed | 9.09e-15 | — |
+| S6.1 adaptive, 2D | **36 created, 24 destroyed** | 9.38e-15 | **+1.8e-15** |
+| uniform 3D control | none | 4.06e-15 | −3.9e-16 |
+| S6.2a adaptive, **3D** | **168 created, 112 destroyed** | 7.20e-15 | **0.0e+00** |
 
-Adaptive is indistinguishable from static; both at roundoff. The post-regrid energy
-audit **passes**: total energy and mass conserved to roundoff across ~60 remesh
-events. The 6.3 % magnetic-energy loss is not a remeshing defect — the uniform
-control at the same base resolution loses 12.9 %, twice as much, so it is ordinary
-numerical diffusion and the adaptive run loses less by being locally finer.
+Adaptive is indistinguishable from static and 3D from 2D; all at roundoff. The
+post-regrid energy audit **passes** in both dimensionalities: total energy and mass
+conserved to roundoff across ~60 (2D) and 280 (3D) remesh events, exactly in 3D. The
+magnetic-energy loss is not a remeshing defect in either — the uniform control at the
+same base resolution loses **more** (12.9 % vs 6.3 % in 2D; 27.4 % vs 10.3 % in 3D), so
+it is ordinary numerical diffusion and the refined run loses less by being locally finer.
 
-**The donor's weighted prolongation is not needed for 2D Cartesian AMR.**
+S6.2 also settles the two checks 2D structurally could not make:
 
-Two things S6.1 surfaced that change the shape of this stage:
+- **The 3D axial-field cancellation survives refinement.** `d_t B3 = v3 * div B` holds only
+  through `E1 = v3 B2` cancelling `E2 = -v3 B1`, and prolongation interpolates `B1` and
+  `B2` independently. Measured 2.27e-15 against 1.44e-15 uniform. This is the first time
+  `MHD::UpwindEMF<X1DIR>`/`<X2DIR>` ran under refinement at all.
+- **MPI with refinement is bitwise.** 1/2/3/4/5 ranks in 2D and 1/3/4 in 3D are **bitwise
+  identical to serial** on all seven fields, with the identical mesh history at every rank
+  count. Stronger than P01, which swept ranks on a *fixed* layout; here blocks are created,
+  destroyed and re-owned mid-run. **C14's blind spot is closed.**
+
+**The donor's weighted prolongation is not needed for Cartesian AMR in 2D or 3D.**
+
+Two things these probes surfaced that change the shape of this stage:
 
 1. **RIOT has no MHD refinement criterion, and its only criterion is vacuous for a
    single material.** `Hydro::CheckRefinement` votes on `volume_fraction` jumps,
    which are identically zero with one material, so it always votes derefine. An
-   adaptive MHD run would never refine and would pass vacuously. The probe added a
-   magnetic-energy criterion in its own build; **the tree still has none**, and
+   adaptive MHD run would never refine and would pass vacuously. The probes added a
+   magnetic-energy criterion in their own build; **the tree still has none**, and
    choosing one (magnetic energy? current density? `|div B|`?) is a design question
    needing review, not a port.
-2. Still untested after both probes: **3D** (these took the collapsed-EMF branch),
-   **MPI with refinement** (all runs serial — and block redistribution during
-   remeshing is exactly the blind spot that let C14 through), **restart on a refined
-   mesh**, shocks crossing a level boundary, and curvilinear, which needs the
-   donor's version regardless.
+2. Still untested after all three probes: **restart on a refined mesh** (the highest-value
+   remaining item, given that G5.6 found derived magnetic state was never rebuilt on
+   restart even on a uniform mesh), **shocks crossing a level boundary** (every probe used
+   the β ~ 1e6 field loop), **more than two levels** (`numlevel = 2` throughout), and
+   curvilinear, which needs the donor's version regardless.
 
 This gate is analytic-only but **sharp, not weak**: div B at roundoff across a
-refinement boundary is an exact criterion, and the absence of a donor oracle costs
-less here than the "analytic-only" framing suggests.
+refinement boundary is an exact criterion, the 3D axial field is a second exact one, and
+bitwise rank-independence is a third. The absence of a donor oracle costs less here than
+the "analytic-only" framing suggests.
 
 Independent of the outcome: the donor's face-area weighting exists *for*
 curvilinear geometry, so **Stage 7 needs the donor's version either way.**
