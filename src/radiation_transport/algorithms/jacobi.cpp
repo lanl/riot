@@ -642,8 +642,9 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
     Real residual_group = 0.0;
     for (int gg = 0; gg < ngroups; ++gg) {
       const Real num_g = v(2 + 2 * gg);
-      const Real denom_g = std::max(v(3 + 2 * gg), denom_floor);
-      residual_group = std::max(residual_group, num_g / denom_g);
+      const Real denom_g = std::max(v(3 + 2 * gg), std::max(denom_floor, 1.0e-100));
+      residual_group =
+          std::max(residual_group, num_g / (denom_g + (denom_g <= 1.0e-100)));
     }
     jacobi_pkg->UpdateParam("current_residual_group", residual_group);
   }
