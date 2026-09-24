@@ -597,8 +597,8 @@ TaskCollection MultiGroup<temperature>::Step(Mesh *pmesh, parthenon::SimTime &tm
 
 template <class temperature>
 void MultiGroup<temperature>::MeshPostInitialization(parthenon::Mesh *mesh,
-                                                       parthenon::ParameterInput *pin,
-                                                       parthenon::MeshData<Real> *md) {
+                                                     parthenon::ParameterInput *pin,
+                                                     parthenon::MeshData<Real> *md) {
   using namespace parthenon;
   using namespace MultiGroupVars;
   namespace ccbulk = cell_variables::cell_averaged::bulk;

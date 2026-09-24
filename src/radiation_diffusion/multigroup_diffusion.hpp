@@ -50,8 +50,8 @@ struct MultiGroup {
   static Real EstimateTimestepMesh(MeshData<Real> *md);
 
   static void MeshPostInitialization(parthenon::Mesh *mesh,
-                                       parthenon::ParameterInput *pin,
-                                       parthenon::MeshData<Real> *md);
+                                     parthenon::ParameterInput *pin,
+                                     parthenon::MeshData<Real> *md);
 };
 
 // Routines in mutigroup_diffusion-solvers.cpp
