@@ -27,7 +27,7 @@ liner sputter-coated on the inner surface of the gap.  In 3-D (and in 2-D when
 the fill tube is placed on the pole) a conical glass fill tube is glued into
 bore holes drilled through the shells.
 
-This deck is parameterized with ``argparse`` and can be driven with grey
+This deck is parameterized with ``argparse`` and can be driven with gray
 radiation using either diffusion or discrete-ordinates (SN) transport, with a
 constant-temperature radiation drive.
 
@@ -71,64 +71,112 @@ EV_TO_K = 1.16045e4
 # ----------------------------------------------------------------------------------------
 # Material catalog.
 #
-# ``kappa0`` for the grey powerlaw absorption opacity follows the patriot double-shell
-# decks: kappa = kappa0 * rho * T^-3.5, with kappa0 = C * Z^2 and C = 5e22 (motivated by
-# TOPS opacities for Al/Be over T in [200 eV, 2 keV]).  Helium is treated as a
-# transparent ideal-gas background (kappa0 = 0) when using --rad transport.
+# The gray powerlaw absorption opacity follows
+#
+#       kappa = kappa0 * rho * T^-3.5,
+#
+# where
+#
+#       kappa0 = OPAC_C * (Z / Z_REF)^2 ,
+#
+# OPAC_C = 5.0e24 is a constant coefficient motivated by available TOPS Al data over
+# relevant temperature ranges.  Helium is treated as a transparent ideal-gas background
+# (kappa0 = 0) when using --rad transport.
 # ----------------------------------------------------------------------------------------
-OPAC_C = 5.0e22
+OPAC_C = 5.0e24
+OPAC_Z_REF = 13
 
 
 def _kappa0(z):
-    return OPAC_C * z * z
+    return OPAC_C * (z / OPAC_Z_REF) ** 2
 
 
+# The specific heat ``cv`` (erg/g/K) and adiabatic index ``gamma`` entries are IDEAL-GAS
+# SURROGATES that are ONLY relevant for --eos_model ideal runs; the default
+# --eos_model sesame ignores them entirely and reads the tabular SpinerEOSDependsRhoT
+# table from materials.sp5.
 MATERIALS = {
-    #  name        : sesame_id, density (g/cc), Z (for grey opacity), eos_type
-    "Helium": {"sesame_id": 5762, "density": 1.0e-5, "z": 2, "eos": "IdealGas"},
+    #  name : sesame_id, density (g/cc), Z (for gray opacity), eos_type, cv, gamma
+    #  NOTE: cv (erg/g/K) and gamma are used ONLY for --eos_model ideal runs.
+    "Helium": {
+        "sesame_id": 5762,
+        "density": 1.0e-5,
+        "z": 2,
+        "eos": "IdealGas",
+        "cv": 3.12e7,
+        "gamma": 1.66,
+    },
     "Aluminum": {
         "sesame_id": 3720,
         "density": 2.70,
         "z": 13,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 8.53e7,
+        "gamma": 1.49,
     },
-    "CH": {"sesame_id": 7592, "density": 1.02, "z": 5, "eos": "SpinerEOSDependsRhoT"},
+    "CH": {
+        "sesame_id": 7592,
+        "density": 1.02,
+        "z": 5,
+        "eos": "SpinerEOSDependsRhoT",
+        "cv": 9.15e7,
+        "gamma": 1.63,
+    },
     "CHFoam": {
         "sesame_id": 7592,
         "density": 0.035,
         "z": 5,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 8.97e7,
+        "gamma": 1.63,
     },
     "Beryllium": {
         "sesame_id": 2024,
         "density": 1.62,
         "z": 4,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 7.53e7,
+        "gamma": 1.62,
     },
     "Tungsten": {
         "sesame_id": 3541,
         "density": 19.2367,
         "z": 74,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 4.76e7,
+        "gamma": 1.34,
     },
     "Molybdenum": {
         "sesame_id": 3539,
         "density": 10.2,
         "z": 42,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 5.70e7,
+        "gamma": 1.45,
     },
-    "DT": {"sesame_id": 1018, "density": 0.20, "z": 1, "eos": "SpinerEOSDependsRhoT"},
+    "DT": {
+        "sesame_id": 1018,
+        "density": 0.20,
+        "z": 1,
+        "eos": "SpinerEOSDependsRhoT",
+        "cv": 9.93e7,
+        "gamma": 1.67,
+    },
     "Gold": {
         "sesame_id": 2705,
         "density": 19.3,
         "z": 79,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 5.01e6,
+        "gamma": 1.67,
     },
     "Glass": {
         "sesame_id": 7387,
         "density": 2.204,
         "z": 10,
         "eos": "SpinerEOSDependsRhoT",
+        "cv": 8.88e7,
+        "gamma": 1.52,
     },
 }
 
@@ -230,20 +278,35 @@ def build_parser():
         "--nlevels",
         type=int,
         default=3,
-        help="Number of AMR refinement levels."
+        help="Number of AMR refinement levels (only used for --mesh amr)."
         "   nlevels = 6 corresponds to 1 um finest resolution; default base mesh is 32 um",
+    )
+    fid.add_argument(
+        "--mesh",
+        choices=["amr", "uniform"],
+        default="amr",
+        help="Mesh model: 'uniform' uses a single-level grid at the base resolution "
+        "(rmax nx1 cells); 'amr' uses adaptive refinement with --nlevels levels, refining "
+        "on per-material density via the REFINE_LEVELS table",
     )
     fid.add_argument(
         "--rad",
         required=True,
         choices=["diffusion", "transport"],
-        help="Radiation model (grey)",
+        help="Radiation model (gray)",
     )
     fid.add_argument(
         "--solver",
         choices=["jacobi", "explicit"],
         default="jacobi",
         help="Transport solver (ignored for diffusion)",
+    )
+    fid.add_argument(
+        "--eos_model",
+        choices=["sesame", "ideal"],
+        default="sesame",
+        help="Equation of state: 'sesame' reads the tabular SpinerEOSDependsRhoT surface "
+        "from eos/materials.sp5; 'ideal' replaces every material with an IdealGas EOS",
     )
     fid.add_argument(
         "--do_tn",
@@ -428,8 +491,23 @@ def build_parser():
     drive.add_argument(
         "--tr_drive",
         type=float,
-        default=200.0,
+        default=240.0,
         help="Constant radiation drive temperature (eV)",
+    )
+
+    tracers = parser.add_argument_group("tracers (1-D)")
+    tracers.add_argument(
+        "--do_tracers",
+        action="store_true",
+        default=False,
+        help="Enroll Lagrangian + Eulerian tracer swarms, uniformly sampled in radius "
+        "(1-D only), each sampling rho, pressure, and temperature",
+    )
+    tracers.add_argument(
+        "--tracers_per_cell",
+        type=int,
+        default=10,
+        help="Number of tracers per radial cell for each swarm (--do_tracers)",
     )
 
     return parser
@@ -450,6 +528,8 @@ def resolve_args(args):
         )
     if args.dim == 1 and args.do_fill_tube:
         raise SystemExit("The fill tube requires --dim 2 (pole) or --dim 3.")
+    if args.do_tracers and args.dim != 1:
+        raise SystemExit("--do_tracers is only supported for --dim 1.")
     return args
 
 
@@ -517,11 +597,8 @@ def _mesh_params(args, rmax):
     """Build the parthenon/mesh extent + BC dict for the requested dimensionality.
 
     Physical outer faces get ``outflow`` at the mesh (hydro) level; symmetry/axis faces
-    get reflecting; the azimuthal wedge is periodic.  For transport the radiation drive is
-    layered on top of the outflow faces via the ``radiation_transport/drive`` block (see
-    make_input / _drive_faces).
+    get reflecting; the azimuthal wedge is periodic.
     """
-    drive_flag = "outflow"
 
     if args.dim == 1:
         # 1-D spherical: x1 = r >= 0.
@@ -530,7 +607,7 @@ def _mesh_params(args, rmax):
             "x1min": 0.0,
             "x1max": rmax["r"],
             "ix1_bc": "reflecting",
-            "ox1_bc": drive_flag,
+            "ox1_bc": "outflow",
             "nx2": 1,
             "x2min": 0.0,
             "x2max": np.pi,
@@ -549,12 +626,12 @@ def _mesh_params(args, rmax):
             "x1min": 0.0,
             "x1max": rmax["r"],
             "ix1_bc": "reflecting",
-            "ox1_bc": drive_flag,
+            "ox1_bc": "outflow",
             "nx2": 2 * rmax["nx1"],
             "x2min": -rmax["r"],
             "x2max": rmax["r"],
-            "ix2_bc": drive_flag,
-            "ox2_bc": drive_flag,
+            "ix2_bc": "outflow",
+            "ox2_bc": "outflow",
             "nx3": 1,
             "x3min": 0.0,
             "x3max": 2.0 * np.pi,
@@ -567,18 +644,18 @@ def _mesh_params(args, rmax):
         "nx1": n,
         "x1min": -rmax["r"],
         "x1max": rmax["r"],
-        "ix1_bc": drive_flag,
-        "ox1_bc": drive_flag,
+        "ix1_bc": "outflow",
+        "ox1_bc": "outflow",
         "nx2": n,
         "x2min": -rmax["r"],
         "x2max": rmax["r"],
-        "ix2_bc": drive_flag,
-        "ox2_bc": drive_flag,
+        "ix2_bc": "outflow",
+        "ox2_bc": "outflow",
         "nx3": n,
         "x3min": -rmax["r"],
         "x3max": rmax["r"],
-        "ix3_bc": drive_flag,
-        "ox3_bc": drive_flag,
+        "ix3_bc": "outflow",
+        "ox3_bc": "outflow",
     }
 
 
@@ -627,48 +704,73 @@ def make_input(args):
         sparse_seed_nans=True,
     )
     riot.input("parthenon/output2", file_type="rst", dt=1.0e-9)
-    riot.input("parthenon/time", nlim=-1, tlim=1.5e-8, integrator="rk2", ncycle_out=1)
+    riot.input("parthenon/time", nlim=-1, tlim=1.0e-8, integrator="rk2", ncycle_out=1)
 
-    # +/- rmax cm domain; base mesh resolution nx1 radial cells.
-    rmax = {"r": 0.2880, "nx1": 90}
-    meshparams = _mesh_params(args, rmax)
-    # Diffusion needs geometric multigrid for its implicit solve.
-    mesh_extra = {"multigrid": True} if args.rad == "diffusion" else {}
-    riot.input(
-        "parthenon/mesh",
-        refinement="adaptive",
-        numlevel=args.nlevels,
-        derefine_count=10,
-        nghost=2,
-        task_collection_timeout_in_seconds=10000,
-        **meshparams,
-        **mesh_extra,
-    )
-    riot.input(
-        "parthenon/meshblock",
-        nx1=18,
-        nx2=18 if args.dim > 1 else 1,
-        nx3=18 if args.dim > 2 else 1,
-    )
-    refine_field = 1 if args.dim == 3 else 0
-    for n, m in enumerate(REFINE_LEVELS):
+    # --- mesh --------------------------------------------------------------------------
+    # +/- rmax cm domain.  --mesh selects between a single-level uniform grid and adaptive
+    # mesh refinement (AMR) with --nlevels levels refining on per-material density
+    # (REFINE_LEVELS).  The two variants use different base resolutions / meshblock sizes.
+    if args.mesh == "amr":
+        # base mesh resolution nx1 radial cells (coarse; AMR refines up to --nlevels).
+        rmax = {"r": 0.2880, "nx1": 90}
+        meshparams = _mesh_params(args, rmax)
+        # Diffusion needs geometric multigrid for its implicit solve.
+        mesh_extra = {"multigrid": True} if args.rad == "diffusion" else {}
         riot.input(
-            f"parthenon/refinement{n}",
-            method="magnitude",
-            comparator="greater_than",
-            field=f"c.c.mat.rho_{n}",
-            refine_tol=1.5,
-            derefine_tol=0.5,
-            max_level=REFINE_LEVELS[m][refine_field],
+            "parthenon/mesh",
+            refinement="adaptive",
+            numlevel=args.nlevels,
+            derefine_count=10,
+            nghost=2,
+            task_collection_timeout_in_seconds=10000,
+            **meshparams,
+            **mesh_extra,
         )
+        riot.input(
+            "parthenon/meshblock",
+            nx1=18,
+            nx2=18 if args.dim > 1 else 1,
+            nx3=18 if args.dim > 2 else 1,
+        )
+        refine_field = 1 if args.dim == 3 else 0
+        for n, m in enumerate(REFINE_LEVELS):
+            riot.input(
+                f"parthenon/refinement{n}",
+                method="magnitude",
+                comparator="greater_than",
+                field=f"c.c.mat.rho_{n}",
+                refine_tol=1.5,
+                derefine_tol=0.5,
+                max_level=REFINE_LEVELS[m][refine_field],
+            )
+    else:
+        # single-level uniform grid at the base resolution nx1 radial cells.
+        rmax = {"r": 0.2880, "nx1": 2048}
+        meshparams = _mesh_params(args, rmax)
+        riot.input(
+            "parthenon/mesh",
+            refinement="none",
+            nghost=2,
+            task_collection_timeout_in_seconds=10000,
+            **meshparams,
+        )
+        riot.input(
+            "parthenon/meshblock",
+            nx1=16,
+            nx2=16 if args.dim > 1 else 1,
+            nx3=16 if args.dim > 2 else 1,
+        )
+
     # Try a small initial timestep to avoid any issues related to operator-splitting
     # at very early times while the radiation is coming in from the hot boundary.
     riot.input(
-        "parthenon/time", dt_init=1.0e-14 * 0.5 ** (args.nlevels - 3), dt_factor=1.2
+        "parthenon/time",
+        dt_init=1.0e-14 * 0.5 ** (args.nlevels - 3),
+        # dt_factor=1.2,
     )
 
     # --- materials + EOS ---------------------------------------------------------------
-    riot.input("materials", sparse_init=False, sparse_dealloc=True)
+    riot.input("materials", sparse_init=False, sparse_dealloc=True, use_general_pte=True)
 
     def add_material(idx, catalog_name, density=None, isotopes=None):
         info = MATERIALS[catalog_name]
@@ -706,9 +808,14 @@ def make_input(args):
             **opac,
             **iso,
         )
-        if info["eos"] == "IdealGas":
+        # Helium is always an IdealGas; other materials use the tabular SESAME data unless
+        # --eos_model ideal swaps in their IdealGas surrogate (Cv/gamma from MATERIALS).
+        if info["eos"] == "IdealGas" or args.eos_model == "ideal":
             riot.input(
-                eos_name, eos_type="IdealGas", Gamma=1.65767, Cv=31158319.97244526
+                eos_name,
+                eos_type="IdealGas",
+                Gamma=info["gamma"],
+                Cv=info["cv"],
             )
         else:
             riot.input(
@@ -934,6 +1041,7 @@ def make_input(args):
             hydro=True,
             multigroup_diffusion=True,
             tn=args.do_tn,
+            tracers=args.do_tracers,
             sparse_physics=False,
         )
     else:
@@ -942,6 +1050,7 @@ def make_input(args):
             hydro=True,
             radiation_transport=True,
             tn=args.do_tn,
+            tracers=args.do_tracers,
             sparse_physics=False,
         )
 
@@ -954,8 +1063,8 @@ def make_input(args):
         mass_frac_thresh=1.0e-8,
     )
 
-    # --- radiation configuration (grey) ------------------------------------------------
-    # Grey: leave materials/group_bounds unset -> ngroups defaults to 1.
+    # --- radiation configuration (gray) ------------------------------------------------
+    # Gray: leave materials/group_bounds unset -> ngroups defaults to 1.
     tr_drive_K = args.tr_drive * EV_TO_K
 
     if args.rad == "diffusion":
@@ -1016,9 +1125,21 @@ def make_input(args):
             troot_tol=1.0e-4,
             troot_max_iter=50,
             rotate_geo=1,
+            mix_frac=0.0,
+            opac_temp_min=298.0,
+            opac_rho_min=1.0e-6,
         )
         riot.input(
-            "radiation_transport/jacobi", err_thr=1.0e-3, niter_limit=10000, verbose=2
+            "radiation_transport/jacobi",
+            err_thr=1.0e-3,
+            niter_limit=10000,
+            verbose=2,
+            ndiverge_limit=20,
+            nreduce_limit=8,
+            reduce_factor=2,
+            # per_group_residual=True,
+            # err_thr_group=1.0e-3,
+            # per_group_residual_floor=1.0e-5,
         )
         riot.input(
             "radiation_transport/explicit",
@@ -1045,6 +1166,39 @@ def make_input(args):
         riot.input("isotope_data", filename=str(tn_data))
         # Primary DT reaction
         riot.input("tnburn", reaction0="d+t->n+a")
+
+    # --- tracers (1-D) -----------------------------------------------------------------
+    # Lagrangian (advected) + Eulerian (fixed) swarms, uniformly spaced in radius at
+    # tracers_per_cell per base-grid radial cell, each sampling rho, pressure, and
+    # temperature.
+    if args.do_tracers:
+        n_total = args.tracers_per_cell * rmax["nx1"]
+        edges = np.linspace(0.0, rmax["r"], n_total + 1)
+        radii = 0.5 * (edges[:-1] + edges[1:])
+        x1 = radii.tolist()
+        x2 = [0.5 * np.pi] * n_total
+        x3 = [np.pi] * n_total
+        sample_fields = [
+            "c.c.bulk.rho",
+            "c.c.bulk.pressure",
+            "c.c.bulk.temperature",
+        ]
+
+        riot.input("tracers/lagrangian", x1=x1, x2=x2, x3=x3, advect=True,
+                   sample_fields=sample_fields)
+        riot.input("tracers/eulerian", x1=x1, x2=x2, x3=x3, advect=False,
+                   sample_fields=sample_fields)
+
+        for n, swarm in ((3, "lagrangian"), (4, "eulerian")):
+            riot.input(
+                f"parthenon/output{n}",
+                swarms=[swarm],
+                swarm_variables=["swarm.id"],
+                auto_swarm_sample_fields=True,
+                write_swarm_xdmf=True,
+                file_type="hdf5",
+                dt=5.0e-12,
+            )
 
 
 # ========================================================================================
