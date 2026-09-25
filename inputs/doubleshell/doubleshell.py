@@ -770,7 +770,9 @@ def make_input(args):
     )
 
     # --- materials + EOS ---------------------------------------------------------------
-    riot.input("materials", sparse_init=False, sparse_dealloc=True, use_general_pte=True)
+    riot.input(
+        "materials", sparse_init=False, sparse_dealloc=True, use_general_pte=True
+    )
 
     def add_material(idx, catalog_name, density=None, isotopes=None):
         info = MATERIALS[catalog_name]
@@ -1184,10 +1186,22 @@ def make_input(args):
             "c.c.bulk.temperature",
         ]
 
-        riot.input("tracers/lagrangian", x1=x1, x2=x2, x3=x3, advect=True,
-                   sample_fields=sample_fields)
-        riot.input("tracers/eulerian", x1=x1, x2=x2, x3=x3, advect=False,
-                   sample_fields=sample_fields)
+        riot.input(
+            "tracers/lagrangian",
+            x1=x1,
+            x2=x2,
+            x3=x3,
+            advect=True,
+            sample_fields=sample_fields,
+        )
+        riot.input(
+            "tracers/eulerian",
+            x1=x1,
+            x2=x2,
+            x3=x3,
+            advect=False,
+            sample_fields=sample_fields,
+        )
 
         for n, swarm in ((3, "lagrangian"), (4, "eulerian")):
             riot.input(
