@@ -240,6 +240,8 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   }
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
 
+  riot_plugins::Plugins::Initialize(pin.get(), packages);
+
   // Problem-specific package object
   packages.Add(ProblemPackage(pin.get()));
 

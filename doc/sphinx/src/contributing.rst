@@ -183,57 +183,6 @@ projects, ideally submit issues on the relevant GitHub pages. However,
 if you can't figure out where an issue belongs, no big deal. Submit
 where you can and we'll engage with you to figure out how to proceed.
 
-
-Notes for Contributors on navigating/developing code features
--------------------------------------------------------------
-
-Performance portability concerns
-`````````````````````````````````
-
-``riot`` is performance portable, meaning it is designed to
-run not only on CPUs, but GPUs from a variety of manufacturers,
-powered by a variety of device-side development tools such as Cuda,
-OpenMP, and OpenACC. This implies several constraints on code
-style. Here we briefly discuss a few things one should be aware of.
-
-* **`portability decorators:** Functions that should be run on device
-  needs to be decorated with one of the following macros:
-  ``KOKKOS_FUNCTION``, ``KOKKOS_INLINE_FUNCTION``,
-  ``KOKKOS_FORCEINLINE_FUNCTION``. These macros are imported from the
-  Kokkos library and resolve to the appropriate decorations for a
-  given device-side backend such as Cuda so the code compiles
-  correctly. Code that doesn't need to run on device does not need
-  these decorations.
-
-* **Relocatable device code:** It is common in C++ to split code
-  between a header file and an implementation file. Functionality that
-  is to be called from within loops run on device should not be split
-  in this way. Not all accelerator languages support this and the ones
-  that do take a performance hit. Instead implement that functionality
-  only in a header file and decorate it with
-  ``KOKKOS_INLINE_FUNCTION`` or ``KOKKOS_FORCEINLINE_FUNCTION``.
-
-* **Host and device pointers:** Usually accelerators have different
-  memory spaces than the CPU they are attached to. So you need to be
-  aware that data needs to be copied to an accelerator device to be
-  used. If it is not properly copied, the code will likely crash with
-  a segfault. In general scalar data such as a single variable (e.g.,
-  ``int x``) can be easily and automatically copied to device and you
-  don't need to worry about managing it. Arrays and pointers, however,
-  are a different story. If you create an array or point to some
-  memory on CPU, then you are pointing to a location in memory on your
-  CPU. If you try to access it from your accelerator, your code will
-  not behave properly. You need to manually copy data from host to
-  device in this case.
-
-* **Real:** The ``Real`` datatype is either a single precision or
-  double precision floating point number, depending on how
-  ``Parthenon`` is configured. For most floating point numbers use
-  the ``Real`` type. However, be conscious that sometimes you will
-  specifically need a single or double precision number, in which case
-  you should specify the type as built into the language.
-
-
 How to Make a Release
 ----------------------
 
@@ -249,6 +198,41 @@ right sidebar on GitHub, and draft a new release. Set the tag to
 ``[release number]``. You can let github automatically draft a release
 note by summarizing MRs.
 
+Updating regression-test gold files
+------------------------------------
+
+Regression-test reference data is distributed separately from the source tree
+as a GitHub Release asset. This procedure is for maintainers updating that
+data. The GitHub Release is created manually so that only a maintainer with
+repository release permissions needs GitHub credentials.
+
+#. From ``tst/scripts/gold/files``, bundle the updated gold files and update
+   the CMake version and checksum pin. Optionally provide the directory from a
+   test run to refresh existing gold files:
+
+   .. code-block:: bash
+
+      ./bundle_goldfiles.sh --update-cmake [test-run-directory]
+
+   This produces ``riot_regression_gold_<version>.tgz`` and updates
+   ``RIOT_REGRESSION_GOLD_VER`` and ``RIOT_REGRESSION_GOLD_HASH`` in the
+   top-level ``CMakeLists.txt``. Do not rename or regenerate this archive after
+   running the command, because its exact contents and filename determine the
+   pinned checksum.
+
+#. On GitHub, create a release tagged ``regression-gold-<version>`` and upload
+   that exact ``riot_regression_gold_<version>.tgz`` archive as its release
+   asset. Publish the release only after confirming the tag and asset filename.
+
+#. Commit the updated top-level ``CMakeLists.txt``,
+   ``tst/scripts/gold/files/current_version``, and
+   ``tst/scripts/gold/files/README.md``. The archive and extracted gold files
+   are release artifacts and should not be committed to the source repository.
+
+#. Verify the release from a clean checkout by configuring with
+   ``-DRIOT_ENABLE_REGRESSION_TESTS=ON``. CMake should download the asset and
+   verify its SHA-512 checksum before extracting it.
+
 Continuous Integration
 ----------------------
 
@@ -260,5 +244,40 @@ instance. The GitHub actions are configured via the files located in the
 Our GitLab CI is configured via the ``.gitlab-ci.yml`` file. To
 trigger the GitLab CI runs, you need to have access to our internal
 GitLab instance, push your branch to this second Git repository, and
-create a GitLab merge request (MR). Each GitLab MR will launch a
+create a draft GitLab merge request (MR). Each GitLab MR will launch a
 pipeline with multiple jobs on various clusters.
+
+Be aware that the CI on the system runs sequentially and the number of
+concurrent jobs per user is limited. You may wish to cancel an old run
+if you no longer need the results and want your most recent run to finish.
+
+Setting git to automatically push to our CI system
+````````````````````````````````````````````````````
+
+If you would like to have git automatically push to the CI system when
+you type ``git push``, you can do so. The following procedure is
+recommended:
+
+.. code-block:: bash
+
+   git remote add ci <git ssh path to ci repo>
+   git remote add all git@github.com:lanl/riot.git
+   git remote set-url --add --push all git@github.com:lanl/riot.git
+   git remote set-url --add --push all <git ssh path to ci repo>
+   git config remote.pushDefault all
+
+With these changes,
+
+.. code-block:: bash
+
+   git pull
+   # pulls from github
+
+   git push
+   # pushes to both github and the CI machine via "all"
+
+   git push origin
+   # pushes only to github
+
+   git push ci
+   # pushes only to the CI machine

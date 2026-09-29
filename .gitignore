@@ -45,9 +45,11 @@ script/.ipynb_checkpoints/
 .ipynb_checkpoints
 *.pyc
 __pycache__
+Untitled.ipynb
 
 # AI artifacts
 .aider.*
+.virtual_documents
 
 # test-based input deck artifacts
 inputs/adiabatic_compression.rin
