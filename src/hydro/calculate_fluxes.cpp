@@ -404,9 +404,6 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
 //!        typeless SparsePack indexed by an anonymous integer -- hence the single-var
 //!        loop-abstraction views (make_var_view / make_flux_view) rather than the typed
 //!        pack views used elsewhere.
-//!
-//!        TODO(@pdmullen): The THINC treatment here needs some eyes... particularly for
-//!        electrons...
 template <parthenon::CoordinateDirection DIR, int MAX_ADV, bool DoTHINC, typename Pack_t,
           typename AdvPack_t, typename IdxRange, typename HaloRange, typename Delta,
           typename Scratch, typename HaloScratch, typename MatScratch>
@@ -489,7 +486,7 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
       if (adv_map[n] == -1) {
         RiotLoop::inner(idx_range, [&](auto kji) {
           const Real vel = riemann_vel(kji);
-          const bool left = (DoTHINC && electron) ? (face_vel(kji) >= 0.0) : (vel > 0.0);
+          const bool left = vel > 0.0;
           fadv(kji) =
               mask * fadv(kji) + (left ? adv_plus(kji - delta) : adv_minus(kji)) * vel;
         });
@@ -497,7 +494,7 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
         auto fvel = RiotLoop::make_flux_view(idx_range, v, DIR, adv_map[n] + m);
         RiotLoop::inner(idx_range, [&](auto kji) {
           const Real vel = fvel(kji);
-          const bool left = (DoTHINC) ? (face_vel(kji) >= 0.0) : (vel > 0.0);
+          const bool left = vel > 0.0;
           fadv(kji) =
               mask * fadv(kji) + (left ? adv_plus(kji - delta) : adv_minus(kji)) * vel;
         });
