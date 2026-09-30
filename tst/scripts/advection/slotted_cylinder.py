@@ -20,7 +20,6 @@ from phdf import phdf
 
 import scripts.utils.riot as riot
 
-
 logger = logging.getLogger("riot" + __name__[7:])
 input_id = "advection/slotted_cylinder"
 advection_modes = ("solid_body", "diagonal")
