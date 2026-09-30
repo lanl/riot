@@ -461,7 +461,7 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
     auto q = RiotLoop::make_var_view(idx_range, adv.Prims(), n);
     ReconVar(q, halo_range, delta, adv_minus, adv_plus, recon_tag);
     halo_range.TeamBarrier();
-    const bool electron = n == electron_energy || n == electron_entropy;
+    const bool electron = (n == electron_energy) || n == (electron_entropy);
     if constexpr (DoTHINC) {
       if (adv_mat[n] >= 0) {
         THINC::ReconstructAdvected(v, idx_range, halo_range, delta, b, adv_mat[n], q,
