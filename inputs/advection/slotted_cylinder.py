@@ -77,7 +77,7 @@ def make_input():
     riot.input(
         "regions",
         nlev_min=0,
-        nlev_max=0, # Required to maintain uniform pressure
+        nlev_max=0,  # Required to maintain uniform pressure
     )
 
     common_state = {
