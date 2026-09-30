@@ -828,8 +828,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
 
   const bool do_viscosity = (do_ionization && do_plasma_viscosity);
 
-  const Real thinc_beta =
-      do_thinc ? pm->packages.Get("thinc")->Param<Real>("beta") : Real(0);
+  const Real thinc_beta = do_thinc ? pm->packages.Get("thinc")->Param<Real>("beta") : 0.0;
 
   // Locate bulk electron energy in the advection pack (same descriptor ordering).
   int electron_energy_descriptor = -1;
