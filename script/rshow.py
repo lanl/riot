@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+#========================================================================================
+# (C) (or copyright) 2026-2026. Triad National Security, LLC. All rights reserved.
+#
+# This program was produced under U.S. Government contract 89233218CNA000001 for Los
+# Alamos National Laboratory (LANL), which is operated by Triad National Security, LLC
+# for the U.S. Department of Energy/National Nuclear Security Administration. All rights
+# in the program are reserved by Triad National Security, LLC, and the U.S. Department
+# of Energy/National Nuclear Security Administration. The Government is granted for
+# itself and others acting on its behalf a nonexclusive, paid-up, irrevocable worldwide
+# license in this material to reproduce, prepare derivative works, distribute copies to
+# the public, perform publicly and display publicly, and to permit others to do so.
+#========================================================================================
+
 """Interactive PHDF viewer for 2-D Matplotlib plots.
 
 Run with
@@ -95,8 +108,11 @@ def coordinate_edges(centers: np.ndarray) -> np.ndarray:
         return np.array([centers[0] - 0.5, centers[0] + 0.5])
     mids = 0.5 * (centers[:-1] + centers[1:])
     return np.concatenate(
-        ([centers[0] - (mids[0] - centers[0])], mids,
-         [centers[-1] + (centers[-1] - mids[-1])])
+        (
+            [centers[0] - (mids[0] - centers[0])],
+            mids,
+            [centers[-1] + (centers[-1] - mids[-1])],
+        )
     )
 
 
@@ -250,7 +266,9 @@ class PhdfPlotGui(tk.Tk):
         )
         row += 1
 
-        ttk.Label(panel, text="Variable").grid(row=row, column=0, sticky="w", pady=(8, 2))
+        ttk.Label(panel, text="Variable").grid(
+            row=row, column=0, sticky="w", pady=(8, 2)
+        )
         row += 1
         self.variable_combo = ttk.Combobox(
             panel, textvariable=self.variable_var, state="readonly", width=33
@@ -291,7 +309,15 @@ class PhdfPlotGui(tk.Tk):
         self.cmap_combo = ttk.Combobox(
             panel,
             textvariable=self.cmap_var,
-            values=("viridis", "plasma", "inferno", "magma", "cividis", "RdBu_r", "coolwarm"),
+            values=(
+                "viridis",
+                "plasma",
+                "inferno",
+                "magma",
+                "cividis",
+                "RdBu_r",
+                "coolwarm",
+            ),
             width=16,
         )
         self.cmap_combo.grid(row=row, column=1, sticky="ew", padx=2, pady=2)
@@ -319,8 +345,12 @@ class PhdfPlotGui(tk.Tk):
             variable=self.log_var,
             command=self._log_toggled,
         ).pack(anchor="w")
-        ttk.Checkbutton(checks, text="Block outlines", variable=self.mesh_var).pack(anchor="w")
-        ttk.Checkbutton(checks, text="Equal aspect", variable=self.equal_aspect_var).pack(anchor="w")
+        ttk.Checkbutton(checks, text="Block outlines", variable=self.mesh_var).pack(
+            anchor="w"
+        )
+        ttk.Checkbutton(
+            checks, text="Equal aspect", variable=self.equal_aspect_var
+        ).pack(anchor="w")
         row += 1
 
         ttk.Separator(panel).grid(row=row, column=0, columnspan=2, sticky="ew", pady=8)
@@ -353,7 +383,9 @@ class PhdfPlotGui(tk.Tk):
         )
 
     @staticmethod
-    def _entry_row(parent: ttk.Frame, row: int, label: str, variable: tk.StringVar) -> None:
+    def _entry_row(
+        parent: ttk.Frame, row: int, label: str, variable: tk.StringVar
+    ) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w")
         ttk.Entry(parent, textvariable=variable, width=17).grid(
             row=row, column=1, sticky="ew", padx=2, pady=2
@@ -375,7 +407,9 @@ class PhdfPlotGui(tk.Tk):
         toolbar = NavigationToolbar2Tk(self.canvas, right, pack_toolbar=False)
         toolbar.update()
         toolbar.pack(fill=tk.X)
-        ttk.Label(right, textvariable=self.status_var, anchor="w").pack(fill=tk.X, padx=5)
+        ttk.Label(right, textvariable=self.status_var, anchor="w").pack(
+            fill=tk.X, padx=5
+        )
 
     def _style_metrics(self) -> tuple[float, float]:
         """Return responsive font and line sizes for the current canvas."""
@@ -387,7 +421,9 @@ class PhdfPlotGui(tk.Tk):
             width = max(self.canvas_widget.winfo_width(), 1)
             height = max(self.canvas_widget.winfo_height(), 1)
             # 700 x 650 is approximately the plotting area in the default window.
-            scale = float(np.clip(np.sqrt((width * height) / (700.0 * 650.0)), 0.85, 1.6))
+            scale = float(
+                np.clip(np.sqrt((width * height) / (700.0 * 650.0)), 0.85, 1.6)
+            )
         font_size = base_font * scale
         line_width = 1.1 * scale
         return font_size, line_width
@@ -551,7 +587,11 @@ class PhdfPlotGui(tk.Tk):
             variables = plottable_variables(self.dump)
             self.variable_combo["values"] = variables
             old_variable = self.variable_var.get()
-            self.variable_var.set(old_variable if old_variable in variables else (variables[0] if variables else ""))
+            self.variable_var.set(
+                old_variable
+                if old_variable in variables
+                else (variables[0] if variables else "")
+            )
             self.field_data = None
             if variables:
                 self.load_variable()
@@ -581,7 +621,8 @@ class PhdfPlotGui(tk.Tk):
         if not variables:
             return
         preferred = next(
-            (name for name in variables if name != self.variable_var.get()), variables[0]
+            (name for name in variables if name != self.variable_var.get()),
+            variables[0],
         )
         dialog = tk.Toplevel(self)
         dialog.title("Add 1-D panel")
@@ -668,7 +709,9 @@ class PhdfPlotGui(tk.Tk):
             return
         self.status_var.set(f"Loading {self.variable_var.get()}…")
         self.update_idletasks()
-        self.field_data = np.asarray(self.dump.Get(self.variable_var.get(), flatten=False))
+        self.field_data = np.asarray(
+            self.dump.Get(self.variable_var.get(), flatten=False)
+        )
         if self.field_data.ndim < 2:
             raise ValueError(
                 f"Expected at least (block,x), got shape {self.field_data.shape}"
@@ -717,7 +760,9 @@ class PhdfPlotGui(tk.Tk):
             blocks.append(array)
         return blocks
 
-    def _finite_range(self, blocks: list[np.ndarray], positive=False) -> tuple[float, float]:
+    def _finite_range(
+        self, blocks: list[np.ndarray], positive=False
+    ) -> tuple[float, float]:
         values = np.concatenate([np.asarray(a).ravel() for a in blocks])
         values = values[np.isfinite(values)]
         if positive:
@@ -834,7 +879,7 @@ class PhdfPlotGui(tk.Tk):
                         f"{spec['variable']}, block {block}: data shape {data.shape} "
                         f"does not match x-coordinate shape {x.shape}"
                     )
-                data_line, = axes_object.plot(
+                (data_line,) = axes_object.plot(
                     x,
                     data,
                     color=COLORS[0],
@@ -907,7 +952,9 @@ class PhdfPlotGui(tk.Tk):
                     floor = float(self.floor_var.get())
                     vmin = max(vmin, floor)
                     if vmin <= 0:
-                        raise ValueError("Log color scaling requires a positive color minimum")
+                        raise ValueError(
+                            "Log color scaling requires a positive color minimum"
+                        )
                     norm = mcolors.LogNorm(vmin=vmin, vmax=vmax)
                 else:
                     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
@@ -947,7 +994,7 @@ class PhdfPlotGui(tk.Tk):
                     rasterized=True,
                 )
                 if self.mesh_var.get():
-                    mesh_line, = ax.plot(
+                    (mesh_line,) = ax.plot(
                         [xedges[0], xedges[-1], xedges[-1], xedges[0], xedges[0]],
                         [yedges[0], yedges[0], yedges[-1], yedges[-1], yedges[0]],
                         color="black",
@@ -963,8 +1010,12 @@ class PhdfPlotGui(tk.Tk):
             ax.set_xlabel("x")
             ax.set_ylabel("y")
             ax.set_aspect("equal" if self.equal_aspect_var.get() else "auto")
-            xmin, xmax = optional_float(self.xmin_var.get()), optional_float(self.xmax_var.get())
-            ymin, ymax = optional_float(self.ymin_var.get()), optional_float(self.ymax_var.get())
+            xmin, xmax = optional_float(self.xmin_var.get()), optional_float(
+                self.xmax_var.get()
+            )
+            ymin, ymax = optional_float(self.ymin_var.get()), optional_float(
+                self.ymax_var.get()
+            )
             if xmin is not None or xmax is not None:
                 ax.set_xlim(left=xmin, right=xmax)
             if ymin is not None or ymax is not None:
@@ -981,7 +1032,9 @@ class PhdfPlotGui(tk.Tk):
     def save_figure(self) -> None:
         if self.dump_path is None:
             return
-        suggested = f"{self.dump_path.stem}_{self.variable_var.get().replace('.', '_')}.pdf"
+        suggested = (
+            f"{self.dump_path.stem}_{self.variable_var.get().replace('.', '_')}.pdf"
+        )
         filename = filedialog.asksaveasfilename(
             title="Save figure",
             initialfile=suggested,
@@ -1105,4 +1158,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
