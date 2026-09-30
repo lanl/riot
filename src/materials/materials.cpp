@@ -160,12 +160,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Custom Metadata flags
   auto BurnFlag = Metadata::GetOrAddFlag(riot::metadata::TNBurn);
+  auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
 
   // Material Density
   // TODO(JCD): how should these thresholds really be set?
   Metadata m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
                          Metadata::Conserved, Metadata::Sparse, Metadata::FillGhost,
-                         Metadata::WithFluxes});
+                         Metadata::WithFluxes, MetadataKinematicAdvected});
   std::string control_field = ccmat::rho::name();
   m.SetSparseThresholds(1.e-30, 1.e-32, 0.0);
   auto ccmat_rho = SparsePool::Make<ccmat::rho>(m, control_field);
