@@ -413,7 +413,7 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
                 Scratch &riemann_vel, HaloScratch &adv_minus, HaloScratch &adv_plus,
                 const MatScratch &mat_minus, const MatScratch &mat_plus, const int b,
                 const int nmat, const RiotReconstruction::Type recon_tag,
-                const THINC::ElectronScalars electrons) {
+                const int electron_energy_descriptor) {
   namespace ccmat = cell_variables::cell_averaged::mat;
 
   const int nadv = adv.Size(b);
@@ -430,13 +430,9 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
   int adv_mat[MAX_ADV]; // -1 => anonymous; else controlling material index
   const auto &prims = adv.Prims();
   const int electron_energy =
-      (electrons.energy < 0)
+      (electron_energy_descriptor < 0)
           ? -1
-          : prims.GetLowerBound(b, parthenon::PackIdx(electrons.energy));
-  const int electron_entropy =
-      (electrons.entropy < 0)
-          ? -1
-          : prims.GetLowerBound(b, parthenon::PackIdx(electrons.entropy));
+          : prims.GetLowerBound(b, parthenon::PackIdx(electron_energy_descriptor));
   for (int n = 0; n < nadv; ++n) {
     const int sid = adv.ConsSparseID(b, n);
     adv_map[n] = -1;
@@ -461,16 +457,15 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
     auto q = RiotLoop::make_var_view(idx_range, adv.Prims(), n);
     ReconVar(q, halo_range, delta, adv_minus, adv_plus, recon_tag);
     halo_range.TeamBarrier();
-    const bool electron = (n == electron_energy) || n == (electron_entropy);
+    const bool electron_energy_var = (n == electron_energy);
     if constexpr (DoTHINC) {
       if (adv_mat[n] >= 0) {
         THINC::ReconstructAdvected(v, idx_range, halo_range, delta, b, adv_mat[n], q,
                                    adv_minus, adv_plus);
         halo_range.TeamBarrier();
-      } else if (electron) {
-        THINC::ReconstructElectrons(v, idx_range, halo_range, delta, b,
-                                    n == electron_energy, mat_minus, mat_plus, q,
-                                    adv_minus, adv_plus);
+      } else if (electron_energy_var) {
+        THINC::ReconstructElectronEnergy(v, idx_range, halo_range, delta, b, mat_minus,
+                                         mat_plus, adv_minus, adv_plus);
         halo_range.TeamBarrier();
       }
     }
@@ -517,7 +512,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                          const RiotReconstruction::Type vfrac_recon_tag,
                          const RiemannSolver rsolver_tag, const bool store_vf,
                          const StrengthArr &mat_strength, const bool do_viscosity,
-                         const Real thinc_beta, const THINC::ElectronScalars electrons) {
+                         const Real thinc_beta, const int electron_energy_descriptor) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -771,9 +766,10 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         idx_range.TeamBarrier();
         auto adv_minus = GetPerPointScratch<Real>(halo_range);
         auto adv_plus = GetPerPointScratch<Real>(halo_range);
-        AdvectionFluxes<DIR, MAX_ADV, DoTHINC>(
-            v, adv, idx_range, halo_range, delta, face_vel, riemann_vel, adv_minus,
-            adv_plus, mat_minus, mat_plus, b, nmat, recon_tag, electrons);
+        AdvectionFluxes<DIR, MAX_ADV, DoTHINC>(v, adv, idx_range, halo_range, delta,
+                                               face_vel, riemann_vel, adv_minus, adv_plus,
+                                               mat_minus, mat_plus, b, nmat, recon_tag,
+                                               electron_energy_descriptor);
       });
 }
 
@@ -835,8 +831,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   const Real thinc_beta =
       do_thinc ? pm->packages.Get("thinc")->Param<Real>("beta") : Real(0);
 
-  // Locate the bulk electron scalars in the advection pack (same descriptor ordering)
-  THINC::ElectronScalars electrons{};
+  // Locate bulk electron energy in the advection pack (same descriptor ordering).
+  int electron_energy_descriptor = -1;
   if (do_thinc && do_ionization) {
     const auto adv_vars =
         RiotUtils::GetAssociatedVars(md, {parthenon::Metadata::Advected}).second;
@@ -844,8 +840,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
       const auto it = std::find(adv_vars.begin(), adv_vars.end(), name);
       return it == adv_vars.end() ? -1 : static_cast<int>(it - adv_vars.begin());
     };
-    electrons.energy = find(ccbulk::electron_internal_energy::name());
-    electrons.entropy = find(ccbulk::electron_entropy::name());
+    electron_energy_descriptor = find(ccbulk::electron_internal_energy::name());
   }
 
   auto adv = MakeAdvectionPack(md);
@@ -855,18 +850,18 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
     constexpr int max_dim = D == 0 ? 3 : D;
     CalculateFluxesImpl<X1DIR, D>(md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                                   rsolver_tag, store_vf, mat_strength, do_viscosity,
-                                  thinc_beta, electrons);
+                                  thinc_beta, electron_energy_descriptor);
     if constexpr (max_dim > 1) {
       if (ndim > 1)
         CalculateFluxesImpl<X2DIR, D>(md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                                       rsolver_tag, store_vf, mat_strength, do_viscosity,
-                                      thinc_beta, electrons);
+                                      thinc_beta, electron_energy_descriptor);
     }
     if constexpr (max_dim > 2) {
       if (ndim > 2)
         CalculateFluxesImpl<X3DIR, D>(md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                                       rsolver_tag, store_vf, mat_strength, do_viscosity,
-                                      thinc_beta, electrons);
+                                      thinc_beta, electron_energy_descriptor);
     }
   };
   if (!do_thinc) {

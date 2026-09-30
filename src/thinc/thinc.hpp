@@ -582,57 +582,38 @@ ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, De
 }
 
 //----------------------------------------------------------------------------------------
-//! \struct  THINC::ElectronScalars
-//! \brief
-struct ElectronScalars {
-  int energy = -1;
-  int entropy = -1;
-};
-
-//----------------------------------------------------------------------------------------
-//! \fn  void THINC::ReconstructElectrons
-//! \brief
+//! \fn  void THINC::ReconstructElectronEnergy
+//! \brief Reconstruct the bulk electron-energy density from its material contributions:
+//!        u_e^face = sum_m (alpha rho)_m^face e_{e,m}^face. Electron entropy has no
+//!        corresponding material decomposition and retains ordinary reconstruction.
 template <typename Pack, typename BaseRange, typename Range, typename Delta, typename Mat,
-          typename Var, typename Scratch>
+          typename Scratch>
 KOKKOS_INLINE_FUNCTION void
-ReconstructElectrons(const Pack &v, const BaseRange &base, const Range &range, Delta dn,
-                     int b, bool per_material, const Mat &mat_minus, const Mat &mat_plus,
-                     const Var &q, Scratch &minus, Scratch &plus) {
+ReconstructElectronEnergy(const Pack &v, const BaseRange &base, const Range &range,
+                          Delta dn, int b, const Mat &mat_minus, const Mat &mat_plus,
+                          Scratch &minus, Scratch &plus) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
   const int count = v.GetSize(b, ccmat::volume_fraction());
   RiotLoop::inner(range, [&](auto idx) {
     int active = 0;
-    Real rho = 0, rho_left = 0, rho_right = 0;
     for (int m = 0; m < count; ++m) {
       auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
       active += pm(ccmat::volume_fraction(), idx) > 0;
-      rho += pm(ccmat::rho(), idx);
-      rho_left += pm(ccmat::rho(), idx - dn);
-      rho_right += pm(ccmat::rho(), idx + dn);
     }
     if (active <= 1) return; // preserve ordinary reconstruction in pure cells
-    Real bulk = 0, dbulk = 0;
-    if (!per_material && rho > 0) {
-      bulk = q(idx) / rho;
-      if (rho_left > 0 && rho_right > 0)
-        dbulk = RiotReconstruction::PiecewiseLinearSlope(
-            q(idx - dn) / rho_left, bulk, q(idx + dn) / rho_right, kMaterialSlopeLimit);
-    }
     Real face_minus = 0, face_plus = 0;
     for (int m = 0; m < count; ++m) {
-      Real e = bulk, de = dbulk;
-      if (per_material) {
-        auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
-        const bool present = pm(ccmat::volume_fraction(), idx) > 0;
-        const bool supported = present && pm(ccmat::volume_fraction(), idx - dn) > 0 &&
-                               pm(ccmat::volume_fraction(), idx + dn) > 0;
-        e = present ? pm(cm::electron_sie(), idx) : 0;
-        de = supported ? RiotReconstruction::PiecewiseLinearSlope(
-                             pm(cm::electron_sie(), idx - dn), e,
-                             pm(cm::electron_sie(), idx + dn), kMaterialSlopeLimit)
-                       : 0;
-      }
+      auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
+      const bool present = pm(ccmat::volume_fraction(), idx) > 0;
+      const bool supported = present && pm(ccmat::volume_fraction(), idx - dn) > 0 &&
+                             pm(ccmat::volume_fraction(), idx + dn) > 0;
+      const Real e = present ? pm(cm::electron_sie(), idx) : 0;
+      const Real de = supported
+                          ? RiotReconstruction::PiecewiseLinearSlope(
+                                pm(cm::electron_sie(), idx - dn), e,
+                                pm(cm::electron_sie(), idx + dn), kMaterialSlopeLimit)
+                          : 0;
       face_minus += mat_minus(cm::rho(), m, idx) * (e - de);
       face_plus += mat_plus(cm::rho(), m, idx) * (e + de);
     }
