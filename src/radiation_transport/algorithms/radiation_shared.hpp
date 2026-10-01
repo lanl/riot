@@ -151,15 +151,28 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
 //! \brief Construct the requested angular mesh (geodesic or latlon), store it and the
 //! "angular_mesh" selector, and return the number of angles.
 inline int AddAngularMesh(ParameterInput *pin, Params &params) {
+  // Angular resolution
+  const int nlevel = pin->GetOrAddInteger(
+      radiation_block, "nlevel", 1,
+      "Angular mesh resolution: geodesic nangles = 10*nlevel^2 + 2; lat-lon ntheta = "
+      "2*nlevel, nphi = 4*nlevel (nphi = 1 in 1D spherical)");
+  params.Add("nlevel", nlevel);
+
+  // Angular mesh
+  const std::string default_amesh =
+      (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+       parthenon::IsCoord<parthenon::UniformSpherical>())
+          ? "latlon"
+          : "geodesic";
   const std::string amesh =
-      pin->GetOrAddString(radiation_block, "angular_mesh", "geodesic",
+      pin->GetOrAddString(radiation_block, "angular_mesh", default_amesh,
                           "Choose which angular mesh to use for SN");
   params.Add("angular_mesh", amesh);
+  const bool fv_fix = pin->GetOrAddBoolean(
+      radiation_block, "fv_fix", true,
+      "Compute solid-angle-averaged (i.e., FV) unit normals on the angular mesh");
   int nangles = 0;
   if (amesh == "geodesic") {
-    const int nlevel = pin->GetOrAddInteger(
-        radiation_block, "nlevel", 1,
-        "For geodesic grid, set nlevel, where nangles=10*nlevel^2 + 2");
     const int rotate =
         pin->GetOrAddInteger(radiation_block, "rotate_geo", 1,
                              "0: do not rotate geodesic grid, 1: automatically rotate "
@@ -173,15 +186,14 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
         pin->GetOrAddReal(radiation_block, "ppole", qnan,
                           "Psi rotation angle for manual geodesic grid rotation");
     std::shared_ptr<GeodesicGrid> prgeo =
-        std::make_unique<GeodesicGrid>(nlevel, rotate, zpole, ppole);
+        std::make_unique<GeodesicGrid>(nlevel, rotate, zpole, ppole, fv_fix);
     params.Add("geodesic_grid", prgeo);
     nangles = prgeo->nangles;
   } else if (amesh == "latlon") {
-    const int ntheta = pin->GetOrAddInteger(radiation_block, "ntheta", 8,
-                                            "For latlon grid, number of latitude bins");
-    const int nphi = pin->GetOrAddInteger(radiation_block, "nphi", 16,
-                                          "For latlon grid, number of longitude bins");
-    std::shared_ptr<LatLonGrid> prlatlon = std::make_unique<LatLonGrid>(ntheta, nphi);
+    const int ntheta = 2 * nlevel;
+    const int nphi = parthenon::IsCoord<parthenon::UniformSpherical>() ? 1 : 4 * nlevel;
+    std::shared_ptr<LatLonGrid> prlatlon =
+        std::make_unique<LatLonGrid>(ntheta, nphi, fv_fix);
     params.Add("latlon_grid", prlatlon);
     nangles = prlatlon->nangles;
   } else {

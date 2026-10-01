@@ -87,6 +87,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("err_thr",
              pin->GetOrAddReal(input_block, "err_thr", 1.0e-8,
                                "Residual error threshold for Jacobi integration"));
+  // Minimum-iterations
+  // NOTE(): Set default to angular-mesh ~graph-diameter
+  const int nlevel = params.Get<int>("nlevel");
+  const std::string amesh = params.Get<std::string>("angular_mesh");
+  int niter_min_default;
+  if (amesh == "geodesic") {
+    niter_min_default = 3 * nlevel;
+  } else if (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+    niter_min_default = 2 * nlevel - 1;
+  } else {
+    niter_min_default = 4 * nlevel - 1;
+  }
+  params.Add("niter_min",
+             pin->GetOrAddInteger(
+                 input_block, "niter_min", do_angular_fluxes * niter_min_default,
+                 "Minimum #iter the Jacobi solver must take before it is permitted to "
+                 "exit on the residual threshold (even if err_thr is already met)."));
   const int nreduce_limit = pin->GetOrAddInteger(
       input_block, "nreduce_limit", 0,
       "Maximum number of timestep reductions permitted when the implicit Jacobi solve "
@@ -246,7 +263,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   if (do_angular_fluxes) {
     // Extraction of angular grid quantities
     const auto agrid = GetAngularGridArrays(jacobi_pkg);
-    const auto &cp = agrid.cart_pos;
+    const auto &cp = agrid.cart_pos_unit;
     const auto &gflx = agrid.gflux;
     const auto &numn = agrid.num_neighbors;
     const auto &indn = agrid.ind_neighbors;
@@ -707,25 +724,32 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
   const Real residual = jacobi_pkg->Param<Real>("current_residual");
   const Real err_thr = jacobi_pkg->Param<Real>("err_thr");
   const int niter_limit = jacobi_pkg->Param<int>("niter_limit");
+  const int niter_min = jacobi_pkg->Param<int>("niter_min");
   const int verbose = jacobi_pkg->Param<int>("verbose");
 
   // Iterate or finalize
+  const int niter_done = iter_counter - 1;
   if (jacobi_pkg->Param<bool>("solve_diverged")) {
-    // Divergence detected: stop iterating, back out, retry at smaller dt
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
-      printf("(Jacobi) Diverged! iter: %d err: %24.16e\n", iter_counter - 1, residual);
+      printf("(Jacobi) Diverged! iter: %d err: %24.16e\n", niter_done, residual);
     return TaskStatus::complete;
-  } else if (residual <= err_thr) {
+  } else if (residual <= err_thr && niter_done >= niter_min) {
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
-      printf("(Jacobi) Converged! iter: %d err: %24.16e\n", iter_counter - 1, residual);
+      printf("(Jacobi) Converged! iter: %d err: %24.16e\n", niter_done, residual);
     return TaskStatus::complete;
-  } else if (iter_counter - 1 >= niter_limit) {
+  } else if (niter_done >= niter_limit) {
     if (i == 0 && Globals::my_rank == 0 && verbose >= 1)
       printf("(Jacobi) Reached niter_limit: %d err: %24.16e\n", niter_limit, residual);
     return TaskStatus::complete;
   } else {
-    if (i == 0 && Globals::my_rank == 0 && verbose == 2)
-      printf("(Jacobi) iter: %d err: %24.16e\n", iter_counter - 1, residual);
+    if (i == 0 && Globals::my_rank == 0 && verbose == 2) {
+      if (residual <= err_thr) {
+        printf("(Jacobi) iter: %d err: %24.16e (residual met, but niter_min: %d)\n",
+               niter_done, residual, niter_min);
+      } else {
+        printf("(Jacobi) iter: %d err: %24.16e\n", niter_done, residual);
+      }
+    }
     auto copy_data = sparse_update::DeepCopyData<parthenon::MetadataFlag, MeshData<Real>>(
         std::vector<MetadataFlag>({Metadata::Independent}), riter, rout);
     return TaskStatus::iterate;
