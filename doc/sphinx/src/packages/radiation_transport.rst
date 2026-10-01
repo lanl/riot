@@ -338,7 +338,7 @@ The radiation field’s initial state is chosen in the ``<radiation_transport/in
 Boundary Conditions
 ~~~~~~~~~~~~~~~~~~~
 
-By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a fixed incoming radiation temperature — by naming it in the ``<radiation_transport/drive>`` block.
+By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — by naming it in the ``<radiation_transport/drive>`` block.
 
 .. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
    :class: wraptable
@@ -353,10 +353,18 @@ By default the radiation intensity inherits the same face boundary conditions as
      - string
      - ``default``
      - Per-face selector; set to ``drive`` to impose the drive condition on that face.
+   * - drive_source
+     - string
+     - ``constant``
+     - Drive source: ``constant`` (uniform ``trad_bc``) or ``table`` (time series from ``drive_filename``).
    * - trad_bc
      - Real
      - ``0.0``
-     - Uniform radiation temperature (K) injected by driven faces.
+     - Uniform radiation temperature (K) injected by driven faces (``constant`` mode).
+   * - drive_filename
+     - string
+     - —
+     - ASCII table for ``table`` mode: column 0 is time (s), columns 1…ngroups are group energy densities :math:`E_g` (erg/cm\ :sup:`3`).
    * - force_upwind_flux_bc
      - bool
      - ``true``
