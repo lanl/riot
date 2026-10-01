@@ -455,7 +455,7 @@ shared-face single-valuedness and edge-EMF agreement across block boundaries in 
 one rank, a missing task dependency can still be masked by serial execution order, and the
 communication path itself is only exercised for on-rank neighbours.
 
-## P01 (complete) — MPI rank invariance, 2026-09-18, commit `5e6c08b`
+## P01 (complete) — MPI rank invariance, 2026-09-18, commit `b98a3d4`
 
 Binary `build/src/riot` (Release, gcc-16, MPI on open-mpi 5.0.10), scratch dir `/tmp/mhdmpi`,
 analysis by `claude_sessions/mhd_runs/analyze_field_loop.py`. Thresholds were frozen in
@@ -1515,7 +1515,7 @@ verifiable rather than a claim.
 
 | Field | Value |
 | --- | --- |
-| Revision | `62903d9` + this change |
+| Revision | `2b11e4b` + this change |
 | Artifacts | `doc/sphinx/src/packages/mhd.rst` (new), `doc/sphinx/index.rst`, `doc/sphinx/src/introduction.rst`, `doc/sphinx/src/packages/hydro.rst`, `src/mhd/mhd.cpp` (startup banner) |
 | Result | **PASS** — docs build clean under CI's own strict flags; banner verified in a live run |
 
@@ -1596,7 +1596,7 @@ was recorded above; read this section before quoting any earlier CT or MPI resul
 
 | Field | Value |
 | --- | --- |
-| Revision | `3eaae22` (present since the CT implementation, `dced139`) |
+| Revision | `909d2ab` (present since the CT implementation, `dced139`) |
 | Reproducer | `claude_sessions/mhd_runs/repro_divb_blocks.py --exe tst/build/src/riot` |
 | Status | **OPEN** — characterized and attributed, root cause not yet found. Concern C14. |
 
@@ -2007,7 +2007,7 @@ kernel that reads the data. Once that was done the diagnostic immediately printe
 blocks needs its block identity verified before its conclusions are trusted -- an aliased
 identity produces confident, wrong "no mismatch" results.
 
-## C1 — the eight never-run regression suites, MHD off. **RUN 2026-09-19 at `a95f001`: 12 of 13 PASS**
+## C1 — the eight never-run regression suites, MHD off. **RUN 2026-09-19 at `724cbf5`: 12 of 13 PASS**
 
 Suites: `advection`, `ionization`, `levelsets`, `mix`, `radiation_diffusion`,
 `radiation_transport`, `strength`, `tn`. They matter because Stage 1 changed *shared*
@@ -2061,7 +2061,7 @@ HDF5 ON, OpenMP OFF, CUDA OFF, unit tests OFF — and the same suite was run.
 
 | Build | `max rel spread` | `hohlraum` | `marshak` |
 | --- | --- | --- | --- |
-| `a95f001` (ported) | 3.504e-02 | PASS | FAIL |
+| `724cbf5` (ported) | 3.504e-02 | PASS | FAIL |
 | `193b3fa` (pre-port) | 3.504e-02 | PASS | FAIL |
 
 The printed metric agrees to all four printed digits, but the metric is a scalar reduction and

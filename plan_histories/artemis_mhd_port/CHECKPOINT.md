@@ -275,7 +275,7 @@ only, so no test propagates a wave obliquely to the grid.
    at `scripts/utils/mhd_analysis.py`, NOT in `scripts/mhd/` — `run_tests.py` collects every
    module in a suite directory as a test and would call `run()`/`analyze()` on a helper.
 10. ~~**Fix D01**~~ — **DONE**, root cause `physics/sparse_physics`; see the D01 section above.
-11. ~~**The eight-suite regression sweep (C1)**~~ — **DONE 2026-09-19 at `a95f001`: 12 of 13
+11. ~~**The eight-suite regression sweep (C1)**~~ — **DONE 2026-09-19 at `724cbf5`: 12 of 13
     pass.** The single failure, `radiation_transport.marshak`, was NOT one of the two benign
     modes below, so it was escalated per the rule rather than judged by inspection — and the
     pre-port `193b3fa` binary reproduces it with **bitwise-identical** output across all nine
