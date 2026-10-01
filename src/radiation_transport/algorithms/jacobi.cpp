@@ -306,7 +306,8 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
             const Real &dn2 = cp(indn(aa, nb), NDIR[X2DIR - 1]);
             const Real &dn3 = cp(indn(aa, nb), NDIR[X3DIR - 1]);
             const Real absna = std::abs(mcw_ix1 * gflx(aa, nb));
-            ldt = std::min(ldt, std::acos(n1 * dn1 + n2 * dn2 + n3 * dn3) / absna);
+            const Real dang = std::acos(n1 * dn1 + n2 * dn2 + n3 * dn3);
+            ldt = (absna > 0.0) ? std::min(ldt, dang / absna) : ldt;
           }
         });
   }

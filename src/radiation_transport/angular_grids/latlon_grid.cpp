@@ -173,7 +173,10 @@ void LatLonGrid::ComputeThetaLevels(ParArrayHost<Real> &theta_v,
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> &phi_f) {
-  const Real dphi = 2.0 * M_PI / nphi_;
+  // In RZ each stored cell represents both signs of the azimuthal direction cosine.
+  const Real extent =
+      parthenon::IsCoord<parthenon::UniformCylindrical>() ? M_PI : 2.0 * M_PI;
+  const Real dphi = extent / nphi_;
   for (int i = 0; i <= nphi_; ++i)
     phi_f(i) = i * dphi;
   for (int i = 0; i < nphi_; ++i)
@@ -210,7 +213,9 @@ void LatLonGrid::ComputeWeights(ParArrayHost<Real> &costheta_f, ParArrayHost<Rea
       const int idx = it * nphi_ + ip;
       const Real omega =
           (costheta_f(it) - costheta_f(it + 1)) * (phi_f(ip + 1) - phi_f(ip));
-      weights_h(idx) = omega / (4.0 * M_PI);
+      const Real multiplicity =
+          parthenon::IsCoord<parthenon::UniformCylindrical>() ? 2.0 : 1.0;
+      weights_h(idx) = multiplicity * omega / (4.0 * M_PI);
     }
   }
 }
@@ -231,12 +236,14 @@ void LatLonGrid::ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
     for (int ip = 0; ip < nphi_; ++ip) {
       const int idx = it * nphi_ + ip;
       int nneigh = 0;
+      constexpr bool folded = parthenon::IsCoord<parthenon::UniformCylindrical>();
+      const int j_left =
+          (folded && (ip == 0)) ? idx : it * nphi_ + ((ip - 1 + nphi_) % nphi_);
+      if (folded || (j_left != idx)) ind_neighbors_h(idx, nneigh++) = j_left;
 
-      const int j_left = it * nphi_ + ((ip - 1 + nphi_) % nphi_);
-      if (j_left != idx) ind_neighbors_h(idx, nneigh++) = j_left;
-
-      const int j_right = it * nphi_ + ((ip + 1) % nphi_);
-      if (j_right != idx) ind_neighbors_h(idx, nneigh++) = j_right;
+      const int j_right =
+          (folded && (ip == nphi_ - 1)) ? idx : it * nphi_ + ((ip + 1) % nphi_);
+      if (folded || (j_right != idx)) ind_neighbors_h(idx, nneigh++) = j_right;
 
       if (it > 0) ind_neighbors_h(idx, nneigh++) = (it - 1) * nphi_ + ip;
       if (it < ntheta_ - 1) ind_neighbors_h(idx, nneigh++) = (it + 1) * nphi_ + ip;
@@ -250,6 +257,10 @@ void LatLonGrid::ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
       const int j = ind_neighbors_h(n, nb);
+      if ((nphi_ > 1 || parthenon::IsCoord<parthenon::UniformCylindrical>()) && nb < 2) {
+        ind_neighbors_edges_h(n, nb) = (j == n) ? nb : 1 - nb;
+        continue;
+      }
       // Find which neighbor index in j's list points back to n
       bool found = false;
       for (int nb_j = 0; nb_j < num_neighbors_h(j); ++nb_j) {
@@ -286,12 +297,12 @@ void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Rea
 
       for (int nb = 0; nb < num_neighbors_h(idx); ++nb) {
         const int j = ind_neighbors_h(idx, nb);
-        const int it_j = j / nphi_, ip_j = j % nphi_;
+        const int it_j = j / nphi_;
 
         Real theta_edge, phi_edge, sintheta, arc_weight;
-        if (it_j == it && ip_j != ip) {
+        if (it_j == it) {
           theta_edge = theta_v(it);
-          phi_edge = ((ip_j + nphi_ - ip) % nphi_ == 1) ? phi_hi : phi_lo;
+          phi_edge = (nb == 1) ? phi_hi : phi_lo;
           sintheta = std::sin(theta_edge);
           arc_weight = (std::cos(theta_lo) - std::cos(theta_hi)) / (4.0 * M_PI);
         } else {
@@ -304,13 +315,18 @@ void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Rea
         cart_pos_mid_h(idx, nb, 0) = sintheta * std::cos(phi_edge);
         cart_pos_mid_h(idx, nb, 1) = sintheta * std::sin(phi_edge);
         cart_pos_mid_h(idx, nb, 2) = std::cos(theta_edge);
-        arc_weights_h(idx, nb) = arc_weight;
+        // Scale face and cell measures together to preserve the angular divergence.
+        const Real multiplicity =
+            parthenon::IsCoord<parthenon::UniformCylindrical>() ? 2.0 : 1.0;
+        arc_weights_h(idx, nb) = multiplicity * arc_weight;
       }
     }
   }
 
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
+      const int j = ind_neighbors_h(n, nb), edge = ind_neighbors_edges_h(n, nb);
+      if (n > j || (n == j && nb > edge)) continue; // one owner per physical edge
       const Real tarc = arc_weights_h(n, nb);
       const Real narc =
           arc_weights_h(ind_neighbors_h(n, nb), ind_neighbors_edges_h(n, nb));
@@ -338,21 +354,22 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
       const int idx = it * nphi_ + ip;
       for (int nb = 0; nb < num_neighbors_h(idx); ++nb) {
         const int j = ind_neighbors_h(idx, nb);
-        const int it_j = j / nphi_, ip_j = j % nphi_;
+        const int it_j = j / nphi_;
         const Real xm = cart_pos_mid_h(idx, nb, 0);
         const Real ym = cart_pos_mid_h(idx, nb, 1);
         const Real zm = cart_pos_mid_h(idx, nb, 2);
 
         Real unit_zeta, unit_psi;
-        if (it_j == it && ip_j != ip) {
+        if (it_j == it) {
           unit_zeta = 0.0;
-          unit_psi = ((ip_j + nphi_ - ip) % nphi_ == 1) ? +1.0 : -1.0;
+          unit_psi = (nb == 1) ? +1.0 : -1.0;
         } else {
           unit_psi = 0.0;
           unit_zeta = (it_j < it) ? -1.0 : +1.0;
         }
 
         if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+          if (j == idx) continue;
           const Real sinth = std::sqrt(SQR(xm) + SQR(ym));
           const Real sin_phi = (sinth > 0.0) ? ym / sinth : 0.0;
           const Real th_lo = theta_f(it), th_hi = theta_f(it + 1);
@@ -370,6 +387,8 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
 
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
+      const int j = ind_neighbors_h(n, nb), edge = ind_neighbors_edges_h(n, nb);
+      if (n > j || (n == j && nb > edge)) continue; // one owner per physical edge
       const Real tgflx = gflux_h(n, nb);
       const Real ngflx = gflux_h(ind_neighbors_h(n, nb), ind_neighbors_edges_h(n, nb));
       const Real gflx_avg = 0.5 * (std::abs(tgflx) + std::abs(ngflx));

@@ -29,6 +29,25 @@ using namespace parthenon;
 
 class LatLonGrid {
  public:
+  struct Resolution {
+    int ntheta;
+    int nphi;
+  };
+
+  static Resolution ResolutionForLevel(int nlevel) {
+    PARTHENON_REQUIRE(nlevel >= 1, "Lat-lon nlevel must be at least 1.");
+    const int ntheta = 2 * nlevel;
+    const int nphi =
+        parthenon::IsCoord<parthenon::UniformSpherical>()
+            ? 1
+            : (parthenon::IsCoord<parthenon::UniformCylindrical>() ? 2 * nlevel
+                                                                   : 4 * nlevel);
+    return {ntheta, nphi};
+  }
+
+  LatLonGrid(int nlevel, bool fv_fix)
+      : LatLonGrid(ResolutionForLevel(nlevel).ntheta, ResolutionForLevel(nlevel).nphi,
+                   fv_fix) {}
   LatLonGrid(int ntheta, int nphi, bool fv_fix);
   ~LatLonGrid();
 
