@@ -499,6 +499,35 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void Hydro::ThincFaceStates
+//! \brief Replace mixed-cell face states with THINC profiles (no-op when THINC_DIM is 0).
+template <parthenon::CoordinateDirection DIR, int THINC_DIM, typename Pack_t,
+          typename IdxRange, typename HaloRange, typename Delta, typename MatScratch,
+          typename SumBulk, typename SetBulk>
+KOKKOS_INLINE_FUNCTION void
+ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_range,
+                const int b, Delta delta, Delta delta1, Delta delta2, Delta delta3,
+                const Real thinc_beta, const int nmat, MatScratch &mat_minus,
+                MatScratch &mat_plus, SumBulk &sum_bulk_minus, SumBulk &sum_bulk_plus,
+                SetBulk &set_bulk_minus, SetBulk &set_bulk_plus) {
+  if constexpr (THINC_DIM > 0) {
+    auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
+    auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
+    THINC::ReconstructFractions<DIR, THINC_DIM>(
+        v, idx_range, halo_range, b, delta1, delta2, delta3, thinc_beta, mat_minus,
+        mat_plus, fallback_minus, fallback_plus);
+    halo_range.TeamBarrier();
+    THINC::SelectFaceProfiles(idx_range, delta, nmat, mat_minus, mat_plus, fallback_minus,
+                              fallback_plus);
+    halo_range.TeamBarrier();
+    THINC::ReconstructMaterialStates(v, idx_range, halo_range, b, delta, mat_minus,
+                                     mat_plus, sum_bulk_minus, sum_bulk_plus,
+                                     set_bulk_minus, set_bulk_plus);
+    halo_range.TeamBarrier();
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void Hydro::CalculateFluxesImpl
 //! \brief Templated single-direction flux calculation. Reconstructs bulk and per-material
 //!        quantities to faces, rescales reconstructed volume fractions to sum to one,
@@ -685,25 +714,10 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
         halo_range.TeamBarrier();
 
-        [[maybe_unused]] const auto d1 = delta1;
-        [[maybe_unused]] const auto d2 = delta2;
-        [[maybe_unused]] const auto d3 = delta3;
-        [[maybe_unused]] const Real beta = thinc_beta;
-        if constexpr (DoTHINC) {
-          auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
-          auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
-          THINC::ReconstructFractions<DIR, THINC_DIM>(v, idx_range, halo_range, b, d1, d2,
-                                                      d3, beta, mat_minus, mat_plus,
-                                                      fallback_minus, fallback_plus);
-          halo_range.TeamBarrier();
-          THINC::SelectFaceProfiles(idx_range, delta, nmat, mat_minus, mat_plus,
-                                    fallback_minus, fallback_plus);
-          halo_range.TeamBarrier();
-          THINC::ReconstructMaterialStates(v, idx_range, halo_range, b, delta, mat_minus,
-                                           mat_plus, sum_bulk_minus, sum_bulk_plus,
-                                           set_bulk_minus, set_bulk_plus);
-          halo_range.TeamBarrier();
-        }
+        ThincFaceStates<DIR, THINC_DIM>(v, idx_range, halo_range, b, delta, delta1,
+                                        delta2, delta3, thinc_beta, nmat, mat_minus,
+                                        mat_plus, sum_bulk_minus, sum_bulk_plus,
+                                        set_bulk_minus, set_bulk_plus);
 
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
         // BulkRiemannFluxes<DIR, FLUX_FN> instantiation. The low-Mach solvers
