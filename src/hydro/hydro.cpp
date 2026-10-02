@@ -108,9 +108,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // TODO(JMM): Move Carbuncle correction into HLLC solver
   std::string solver = pin->GetOrAddString(
       "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll"},
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "mhd_hlle",
+                               "mhd_hlld", "mhd_llf"},
       "Riemann solver to use");
-  if (solver == "hllc") {
+  if (solver == "mhd_hlle") {
+    params.Add("riemann_solver", RiemannSolver::mhd_hlle);
+  } else if (solver == "mhd_hlld") {
+    params.Add("riemann_solver", RiemannSolver::mhd_hlld);
+  } else if (solver == "mhd_llf") {
+    params.Add("riemann_solver", RiemannSolver::mhd_llf);
+  } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
     if (parthenon::Globals::my_rank == 0) {
@@ -130,6 +137,35 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     params.Add("riemann_solver", RiemannSolver::hll);
   } else {
     PARTHENON_THROW("Invalid Riemann solver option");
+  }
+
+  // The MHD and hydro solvers are not interchangeable, and picking the wrong one is
+  // silent rather than fatal: a hydro solver run with MHD on would evolve the gas with no
+  // Lorentz force and leave the induction fluxes unwritten (so the field would simply
+  // stop evolving), while an MHD solver with MHD off would read an unallocated field.
+  // Both are rejected here. `physics/mhd` was already added by riot.cpp before this
+  // package is registered, so this read is just a lookup.
+  const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
+  const bool solver_is_mhd =
+      (solver == "mhd_hlle" || solver == "mhd_hlld" || solver == "mhd_llf");
+  PARTHENON_REQUIRE(do_mhd == solver_is_mhd,
+                    do_mhd ? "MHD requires an MHD Riemann solver; set hydro/riemann to "
+                             "one of: mhd_hlle, mhd_hlld, mhd_llf."
+                           : "hydro/riemann = " + solver +
+                                 " is an MHD solver but <physics>/mhd is off.");
+
+  // HLLD's star-state derivation and its degeneracy tolerances assume an ideal gas, as
+  // the donor's own PARTHENON_REQUIRE does (DONOR_KERNELS.md section 13). HLLE has no
+  // such restriction: it only needs the bulk modulus, which RIOT supplies for any EOS.
+  // Read the flag from the materials PACKAGE, not from the input file. The input option
+  // lives in <materials>, not <multiphysics>, and more importantly materials.cpp:450 sets
+  // it from the eos_type even when the input leaves it false -- so an input-file read
+  // cannot see a non-ideal EOS at all. Materials::Initialize runs before this (riot.cpp),
+  // which is what makes the resolved value available here.
+  if (solver == "mhd_hlld") {
+    PARTHENON_REQUIRE(!mat_pkg->Param<bool>("use_general_pte"),
+                      "hydro/riemann = mhd_hlld requires an ideal gas; use mhd_hlle "
+                      "for a general EOS.");
   }
 
   // Thornber's low-Mach correction
@@ -697,8 +733,20 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
 
   // strength params
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
-  auto v = riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
-                          ccbulk::velocity, ccbulk::max_signal>(md);
+
+  // MHD: the magnetic field stiffens the fastest signal, so it must enter the CFL vote.
+  // The direction-independent bound sqrt(a^2 + vA^2) is used rather than the true
+  // directional fast speed: a bound is what CFL safety requires, and evaluating the
+  // directional fast speed at every face here would cost far more for a strictly
+  // smaller timestep. This follows the donor (artemis/src/gas/gas.cpp:543-643) and reads
+  // the cell-centered field, which MHD::SetDerivedMagneticFields keeps consistent with
+  // the authoritative face state.
+  const bool do_mhd = pm->packages.Get("riot")->Param<bool>("do_mhd");
+  const Real mu0 = do_mhd ? pm->packages.Get("mhd")->template Param<Real>("mu0") : 1.0;
+
+  auto v =
+      riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
+                     ccbulk::velocity, ccbulk::max_signal, ccbulk::magnetic_field>(md);
   const int ndim = pm->ndim;
 
   using rt = RiotUtils::ReductionType<Kokkos::Min<Real>>;
@@ -714,8 +762,16 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           const Real bulk_modulus = pv(ccbulk::bulk_modulus(), idx);
           const Real shear_modulus =
               (do_strength) ? pv(ccbulk::shear_modulus(), idx) : 0.0;
-          const Real cs =
-              std::sqrt(ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho));
+          Real b2 = 0.0;
+          if (do_mhd) {
+            b2 = SQR(pv(ccbulk::magnetic_field(0), idx)) +
+                 SQR(pv(ccbulk::magnetic_field(1), idx)) +
+                 SQR(pv(ccbulk::magnetic_field(2), idx));
+          }
+          // Adding b2/mu0 to the bulk modulus turns c_s into the fast-speed bound
+          // sqrt((K + B^2/mu0)/rho); with b2 = 0 this is bitwise the hydro expression.
+          const Real cs = std::sqrt(
+              ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus + b2 / mu0), rho));
           Real denom = 0.0;
           for (int d = 0; d < ndim; d++) {
             const Real vphys =

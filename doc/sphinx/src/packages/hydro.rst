@@ -183,11 +183,19 @@ the CFL condition with the user-specified Courant number ``cfl``.
       hllc       HLLC (contact-restoring) solver; default
       chllc      Carbuncle-corrected HLLC (Minoshima & Miyoshi 2021)
       lhllc      Low-Mach and carbuncle-corrected HLLC (experimental)
+      mhd_hlld   Five-wave MHD HLLD; requires ``physics/mhd``
+      mhd_hlle   Two-wave MHD HLLE; requires ``physics/mhd``
+      mhd_llf    MHD local Lax–Friedrichs; requires ``physics/mhd``
       ========== ====================================================
 
 When material strength is enabled, a strength-aware Riemann solver
 that accounts for the deviatoric stress contribution is selected
 automatically.
+
+The three MHD solvers are described in Chapter :ref:`chap:mhd`. Exactly
+one of the two families must be selected: an MHD solver is required when
+``physics/mhd`` is true and rejected when it is false, since the
+hydro-only solvers carry no magnetic terms.
 
 Input Parameters
 ----------------
@@ -283,7 +291,7 @@ registered by the materials package (Chapter :ref:`chap:materials`).
    * - ccbulk::total_material_energy
      - :math:`E`
      - 1
-     - Cell, Independent, Intensive, Conserved, WithFluxes; bulk total energy density :math:`E=u+\tfrac{1}{2}\rho|\vec{v}|^2`.
+     - Cell, Independent, Intensive, Conserved, WithFluxes; bulk total energy density :math:`E=u+\tfrac{1}{2}\rho|\vec{v}|^2`. **When MHD is enabled this field also includes the magnetic energy density** :math:`|\vec{B}|^2/2\mu_0` — see Section :ref:`sec:mhd-energy`.
    * - ccbulk::velocity
      - :math:`\vec{v}`
      - 3

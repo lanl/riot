@@ -165,6 +165,23 @@ struct LoopType {
                                    parthenon::TopologicalElement domain_te) {
     return RiotIndexSpace<Cs...>(domain, halo, nblocks, md, domain_te);
   }
+
+  //! Explicit-logical-bounds overload, for an iteration box that is not (domain +/-
+  //! isotropic halo). The (domain, halo) form widens every active direction by the same
+  //! amount, which is the wrong shape for a stencil that reaches only transversely: the
+  //! Gardiner-Stone EMF needs one extra layer of face fluxes in the two directions
+  //! TRANSVERSE to the sweep and none along it, and widening the sweep direction as well
+  //! would deepen the reconstruction stencil's reach into the ghosts and so raise the
+  //! nghost requirement (see MHDFluxBounds in calculate_fluxes.cpp). kb/jb/ib are
+  //! inclusive logical bounds; the memory extent stays fixed by Parthenon.
+  template <class MeshDataOrMeshBlockData>
+  static idx_space_t GetIndexSpace(int nblocks, const parthenon::IndexRange &kb,
+                                   const parthenon::IndexRange &jb,
+                                   const parthenon::IndexRange &ib,
+                                   const MeshDataOrMeshBlockData *md) {
+    return idx_space_t(nblocks, kb, jb, ib, md, parthenon::TopologicalElement::CC,
+                       RiotLoop::NInner(RiotLoop::chunk_shape::ij_slab));
+  }
 };
 
 //----------------------------------------------------------------------------------------

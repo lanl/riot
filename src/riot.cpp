@@ -20,6 +20,7 @@
 #include "laser/laser.hpp"
 #include "levelsets/levelsets.hpp"
 #include "materials/materials.hpp"
+#include "mhd/mhd.hpp"
 #include "mix/mix.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
 #include "plugins.hpp"
@@ -98,6 +99,10 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                            "Enable prescribed sources as a function of time");
   const bool do_tracers =
       pin->GetOrAddBoolean("physics", "tracers", false, "Enable tracer particles");
+  const bool do_mhd = pin->GetOrAddBoolean(
+      "physics", "mhd", false,
+      "Enable ideal MHD with face-centered constrained transport (Cartesian, "
+      "uniform-grid, single-material, ideal-gas only)");
 
   // check for compatibility
   if (do_strength) PARTHENON_REQUIRE(do_hydro, "Strength requires hydro.")
@@ -121,6 +126,121 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
 
+  // -------------------------------------------------------------------------------------
+  // Ideal-MHD supported-configuration gate.
+  //
+  // The certified matrix is Cartesian, uniform-grid, single-material, ideal-gas, one
+  // temperature (plan_histories/artemis_mhd_port/adr/004-support-matrix.md). Everything
+  // outside it is refused here rather than run untested. These are NOT statements that
+  // the coupling is impossible -- each rejected package writes or reads energy, adds a
+  // stress, or adds a signal speed that has not been audited against the magnetic
+  // terms. Removing any one of these lines requires the corresponding validation gate
+  // to pass first, and CAPABILITY_MATRIX.md to be updated with the test IDs that
+  // justify the new claim.
+  if (do_mhd) {
+    PARTHENON_REQUIRE(do_hydro, "MHD requires hydro.");
+
+    // Single material: the common-field/common-velocity model for a volume-additive
+    // material mixture is a physics modeling assumption that requires scientific
+    // review, not just an implementation. Materials are declared as <material0>,
+    // <material1>, ... blocks (see Materials::Initialize).
+    PARTHENON_REQUIRE(!pin->DoesBlockExist("material1"),
+                      "MHD with more than one material is not yet supported: the "
+                      "common magnetic field / common velocity mixture model needs "
+                      "scientific review. Use a single <material0> block.");
+
+    PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(),
+                      "MHD is only supported in Cartesian coordinates. Curvilinear "
+                      "constrained transport needs face/edge metrics and magnetic "
+                      "geometry source terms that are not yet implemented.");
+
+    // AMR: the face field does carry divergence-preserving refinement operators, but
+    // registering an operator is not evidence that refinement works, and the donor's
+    // own MHD tests never exercise AMR, so there is no reference solution for it.
+    const std::string refinement =
+        pin->GetOrAddString("parthenon/mesh", "refinement", "none");
+    PARTHENON_REQUIRE(refinement == "none",
+                      "MHD with mesh refinement is not yet validated. Divergence-"
+                      "preserving prolongation and coarse/fine EMF correction are "
+                      "registered but untested; set parthenon/mesh/refinement = none.");
+
+    // The general-PTE rejection is NOT here. Reading materials/use_general_pte from the
+    // input at this point would miss the case that matters most: materials.cpp:450 turns
+    // the flag on unconditionally when any material's eos_type is not ideal, whatever the
+    // input said. The resolved value only exists once Materials::Initialize has run, so
+    // the check lives immediately after that call below.
+
+    PARTHENON_REQUIRE(!fixed_fluid, "MHD with a frozen fluid background is not "
+                                    "supported: the induction equation transports the "
+                                    "field with the fluid velocity.");
+
+    // Every other physics package. Each would need its own energy/stress/signal-speed
+    // audit against the magnetic terms before it can co-run.
+    PARTHENON_REQUIRE(!do_strength, "MHD with material strength is not yet supported "
+                                    "(combined stresses and signal speeds need review).")
+    PARTHENON_REQUIRE(!do_mix, "MHD with the BHR mix model is not yet supported.")
+    PARTHENON_REQUIRE(!do_tn, "MHD with thermonuclear burn is not yet supported.")
+    PARTHENON_REQUIRE(!do_ionization, "MHD with ionization is not yet supported: the "
+                                      "two-temperature electron energy/entropy "
+                                      "coupling needs separate validation.")
+    PARTHENON_REQUIRE(!do_levelsets, "MHD with levelsets is not yet supported.")
+    PARTHENON_REQUIRE(!do_multigroup_diffusion,
+                      "MHD with multigroup diffusion is not yet supported.")
+    PARTHENON_REQUIRE(!do_radiation_transport,
+                      "MHD with radiation transport is not yet supported.")
+    PARTHENON_REQUIRE(!do_lasers, "MHD with lasers is not yet supported.")
+    PARTHENON_REQUIRE(!do_prescribed_sources,
+                      "MHD with prescribed sources is not yet supported.")
+    PARTHENON_REQUIRE(!do_gravity, "MHD with gravity is not yet supported (the "
+                                   "gravitational work term needs an energy audit).")
+    PARTHENON_REQUIRE(!do_scalars, "MHD with passive scalars is not yet supported.")
+    PARTHENON_REQUIRE(!do_tracers, "MHD with tracer particles is not yet supported.")
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Restarting must not change whether the run is MHD, in EITHER direction. This is
+  // outside the `if (do_mhd)` block above precisely because one of the two failures
+  // happens when MHD is OFF.
+  //
+  // The two directions are not equally obvious, and the second is the dangerous one:
+  //
+  //   hydro checkpoint -> MHD run. The checkpoint has no face field, so it is
+  //   zero-filled.
+  //     The run proceeds as MHD with B = 0. Self-consistent, but the user asked to
+  //     continue a calculation and silently got a different one.
+  //
+  //   MHD checkpoint -> hydro run. ccbulk::total_material_energy in the checkpoint
+  //   INCLUDES
+  //     B^2/(2 mu0) by the ADR-002 contract, and with MHD off nothing ever subtracts it,
+  //     so the entire magnetic energy is reinterpreted as heat. Measured on Brio & Wu at
+  //     cycle 20: max pressure 1.781574 instead of 1.000185, an error of 7.991440e-01
+  //     that is EXACTLY (gamma-1) * max(B^2/2mu0) -- an 80% error, silent, exit code 0
+  //     (TEST_LEDGER G5.6).
+  //
+  // The discriminator is `mhd/mu0`. MHD::Initialize adds it with GetOrAddReal, so it is
+  // present in the input deck that Parthenon embeds in every checkpoint an MHD run
+  // writes, and absent from one written by a hydro run. On restart that embedded deck is
+  // reloaded into `pin` before command-line overrides, so this reads the CHECKPOINT's
+  // answer. It has to be tested before MHD::Initialize runs, or that call would create
+  // the parameter and the test would always pass.
+  //
+  // Guarded on is_restart because on a fresh start an <mhd> block may legitimately sit in
+  // an input file with physics/mhd = false, and rejecting that would be wrong.
+  if (parthenon::Globals::is_restart) {
+    const bool checkpoint_was_mhd = pin->DoesParameterExist("mhd", "mu0");
+    PARTHENON_REQUIRE(
+        do_mhd == checkpoint_was_mhd,
+        do_mhd
+            ? "This is an MHD run restarting from a checkpoint written WITHOUT MHD. "
+              "There is no magnetic field to continue from, so the field would be "
+              "silently zero-filled. Restart from an MHD checkpoint, or set "
+              "<physics>/mhd = false."
+            : "This is a hydro run restarting from a checkpoint written WITH MHD. The "
+              "checkpointed total energy includes B^2/(2*mu0), and with MHD off nothing "
+              "subtracts it, so the magnetic energy would be silently reinterpreted as "
+              "heat. Set <physics>/mhd = true, or restart from a hydro checkpoint.");
+  }
+
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
   riot->AddParam("do_strength", do_strength);
@@ -138,6 +258,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_ionization", do_ionization);
   riot->AddParam("do_prescribed_sources", do_prescribed_sources);
   riot->AddParam("do_tracers", do_tracers);
+  riot->AddParam("do_mhd", do_mhd);
 
   // determine riot verbosity
   const bool verbose = pin->GetOrAddBoolean("riot", "verbose", true);
@@ -153,6 +274,36 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     if (sparse_physics)
       PARTHENON_WARN(
           "sparse_physics being disabled because a global solver is being used.");
+    sparse_physics = false;
+    pin->SetBoolean("physics", "sparse_physics", sparse_physics);
+  }
+  // Constrained transport cannot coexist with block deactivation, and this is a
+  // correctness requirement rather than a performance preference (defect D01).
+  //
+  // Sparse physics deallocates ccbulk::cell_delta on blocks where nothing is changing,
+  // and `riot::GetPack` then drops those blocks from EVERY pack built through it
+  // (variables.hpp, the `include_blocks` branch). For cell-centered physics that is
+  // exactly the intended saving: an unchanging block needs no update. For CT it is fatal.
+  // The skipped block's face field is frozen while its neighbours go on updating the
+  // faces they SHARE with it, so that block's discrete divergence budget stops balancing
+  // -- and because CT preserves whatever divergence exists, the error is then frozen in
+  // for the rest of the run rather than decaying.
+  //
+  // Measured on the 2D field loop with four blocks along x1, where the blocks outside the
+  // loop stop changing and are deactivated: max|div B| = 1.4e-09 with sparse physics on
+  // versus 1.3e-16 with it off. It needs four or more blocks along an axis simply because
+  // that is when a block can lie entirely outside the loop.
+  //
+  // Disabling rather than rejecting follows the global-solver precedent immediately
+  // above: the result is correct physics, and no existing MHD input deck has to change.
+  // Making the MHD packs alone ignore the block-active filter would NOT be sufficient --
+  // the EMF is assembled from the hydro flux registers, and `Hydro::CalculateFluxes`
+  // packs through the same helper, so on a deactivated block those fluxes are never
+  // computed either.
+  if (do_mhd && sparse_physics) {
+    PARTHENON_WARN("sparse_physics being disabled because MHD is enabled: constrained "
+                   "transport requires every block to be updated, or the divergence "
+                   "constraint is violated at deactivated block boundaries.");
     sparse_physics = false;
     pin->SetBoolean("physics", "sparse_physics", sparse_physics);
   }
@@ -175,8 +326,23 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_hydro) {
     auto mat_pkg = Materials::Initialize(pin.get());
     packages.Add(mat_pkg);
+    // Deferred half of the MHD support gate above. This reads the RESOLVED closure flag
+    // rather than the input one, which is the only version that reflects a non-ideal
+    // eos_type having forced general PTE on (materials.cpp:450).
+    if (do_mhd) {
+      PARTHENON_REQUIRE(!mat_pkg->Param<bool>("use_general_pte"),
+                        "MHD with the general PTE closure is not yet supported. The "
+                        "mixed-cell closure and the general-EOS acoustic derivative both "
+                        "need separate validation. Set materials/use_general_pte = false "
+                        "AND use an ideal-gas eos_type -- a non-ideal EOS enables the "
+                        "general closure on its own.");
+    }
     packages.Add(Hydro::Initialize(pin.get(), mat_pkg.get()));
   }
+  // MHD registers immediately after hydro: it needs the hydro/materials fields to
+  // exist, and every other package's compatibility with it has already been refused
+  // above.
+  if (do_mhd) packages.Add(MHD::Initialize(pin.get()));
   if (do_strength)
     packages.Add(Strength::Initialize(pin.get(), packages.Get("materials").get()));
   if (do_mix) packages.Add(Mix::Initialize(pin.get()));

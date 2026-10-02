@@ -22,6 +22,7 @@ add_executable(
   test_table_utils.cpp
   test_riemann.cpp
   test_reconstruction.cpp
+  test_mhd.cpp
 )
 
 target_link_libraries(riot_unit_tests PRIVATE

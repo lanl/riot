@@ -70,6 +70,17 @@ using set_strength_bulk_recon_types =
 using strength_mat_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::material_averaged::deviatoric_stress>;
 
+//! \brief  Cell-centered magnetic field reconstructed to faces on the MHD solver path.
+//!
+//!         All three components are reconstructed, then the component NORMAL to the
+//!         interface is overwritten in both the L and R states with the single
+//!         face-centered value (DONOR_KERNELS.md section 11). Reconstructing it and
+//!         discarding it is numerically identical to the donor's skip-then-overwrite --
+//!         the skipped values were overwritten anyway -- and avoids threading a
+//!         skip_index through all five reconstruction methods.
+using mhd_bulk_recon_types =
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::magnetic_field>;
+
 static constexpr Real THETA = 1.99;
 
 //----------------------------------------------------------------------------------------

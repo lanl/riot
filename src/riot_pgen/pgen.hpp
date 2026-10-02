@@ -45,6 +45,10 @@ using namespace parthenon::package::prelude;
   PROBLEM(gresho)                                                                        \
   PROBLEM(hse)                                                                           \
   PROBLEM(ionized_shocktube_analytic)                                                    \
+  PROBLEM(mhd_cpaw)                                                                      \
+  PROBLEM(mhd_field_loop)                                                                \
+  PROBLEM(mhd_orszag_tang)                                                               \
+  PROBLEM(mhd_shock_tube)                                                                \
   PROBLEM(quirk)                                                                         \
   PROBLEM(region_pgen)                                                                   \
   PROBLEM(rm)                                                                            \
