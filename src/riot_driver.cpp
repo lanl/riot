@@ -84,6 +84,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_mix = riot_pkg->Param<bool>("do_mix");
   do_tn = riot_pkg->Param<bool>("do_tn");
   fixed_fluid = riot_pkg->Param<bool>("fixed_fluid");
+  kinematic_advection = riot_pkg->Param<bool>("kinematic_advection");
   do_multigroup_diffusion = riot_pkg->Param<bool>("do_multigroup_diffusion");
   do_levelsets = riot_pkg->Param<bool>("do_levelsets");
   do_lasers = riot_pkg->Param<bool>("do_lasers");
@@ -305,16 +306,24 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // driver allocated the subsets before this step; they are identical across
       // partitions, so the cached value is valid for this partition i.
       sparse_update::dudt_vec_t dudt_args;
-      for (auto &[label, pkg] : pmesh->packages.AllPackagesWithSubMeshData("dudt")) {
-        auto *smd = pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get();
-        const auto &uids = pkg->GetAllMeshDataSubsets().at("dudt").GetUids();
-        dudt_args.emplace_back(smd, uids);
+      if (!kinematic_advection) {
+        for (auto &[label, pkg] : pmesh->packages.AllPackagesWithSubMeshData("dudt")) {
+          auto *smd = pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get();
+          const auto &uids = pkg->GetAllMeshDataSubsets().at("dudt").GetUids();
+          dudt_args.emplace_back(smd, uids);
+        }
       }
-      auto update = tl.AddTask(hydro_flx | mix_flx | set_flx | geom_source |
-                                   strength_source | gravity_source | plugin_sources |
-                                   mix_source | tn_shared_source | ionization_source,
-                               sparse_update::UpdateToNextStage, mu0.get(), mu1.get(),
-                               gam0, gam1, beta * dt, dudt_args);
+      auto update_deps = hydro_flx | mix_flx | set_flx | geom_source | strength_source |
+                         gravity_source | plugin_sources | mix_source | tn_shared_source |
+                         ionization_source;
+      TaskID update;
+      if (kinematic_advection) {
+        update = tl.AddTask(update_deps, sparse_update::UpdateToNextStage<true>,
+                            mu0.get(), mu1.get(), gam0, gam1, beta * dt, dudt_args);
+      } else {
+        update = tl.AddTask(update_deps, sparse_update::UpdateToNextStage<false>,
+                            mu0.get(), mu1.get(), gam0, gam1, beta * dt, dudt_args);
+      }
 
       // Set maximum signal speeds
       // NOTE(@pdmullen): This task goes away if we permit Metadata::FillGhost for
