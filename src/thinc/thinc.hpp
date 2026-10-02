@@ -146,10 +146,16 @@ KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const IntrinsicState &l
 }
 
 // Four-point Gauss-Legendre rule on the unit cell [-1/2, 1/2].
-constexpr Real kGaussPoint[4] = {-.4305681557970263, -.1699905217924281,
-                                 .1699905217924281, .4305681557970263};
-constexpr Real kGaussWeight[4] = {.1739274225687269, .3260725774312731, .3260725774312731,
-                                  .1739274225687269};
+KOKKOS_INLINE_FUNCTION constexpr Real GaussPoint(int q) {
+  constexpr Real x[4] = {-.4305681557970263, -.1699905217924281, .1699905217924281,
+                         .4305681557970263};
+  return x[q];
+}
+KOKKOS_INLINE_FUNCTION constexpr Real GaussWeight(int q) {
+  constexpr Real w[4] = {.1739274225687269, .3260725774312731, .3260725774312731,
+                         .1739274225687269};
+  return w[q];
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn  void THINC::RadialWeights
@@ -164,9 +170,9 @@ KOKKOS_INLINE_FUNCTION void RadialWeights(const Coords &coords, int i, Real *rad
     const Real r0 = coords.template Xf<parthenon::X1DIR>(i) + .5 * dr;
     Real mean = 0;
     for (int q = 0; q < 4; ++q) {
-      const Real r = std::abs(r0 + kGaussPoint[q] * dr);
+      const Real r = std::abs(r0 + GaussPoint(q) * dr);
       radial[q] = power == 2 ? r * r : r;
-      mean += kGaussWeight[q] * radial[q];
+      mean += GaussWeight(q) * radial[q];
     }
     for (int q = 0; q < 4; ++q)
       radial[q] /= mean;
@@ -190,8 +196,6 @@ template <int N, int D>
 KOKKOS_INLINE_FUNCTION void
 ReconstructProfile(int count, const Real *alpha, const Point *gradient, const int *ids,
                    const Real *radial, int axis, Real beta, Real *minus, Real *plus) {
-  const auto &x = kGaussPoint;
-  const auto &w = kGaussWeight;
   // Tensor Gauss rules with 4^D cell points and 4^(D-1) face points. Base-4 digit d
   // of a cell point index selects its coordinate along direction d; face points
   // enumerate the transverse directions in increasing order.
@@ -204,10 +208,10 @@ ReconstructProfile(int count, const Real *alpha, const Point *gradient, const in
   };
   auto CellPoint = [&](const Point &n, int q, Real &weight) {
     Real projection = 0;
-    weight = w[q % 4] * radial[q % 4];
+    weight = GaussWeight(q % 4) * radial[q % 4];
     for (int d = 0; d < D; ++d, q /= 4) {
-      projection += n[d] * x[q % 4];
-      if (d > 0) weight *= w[q % 4];
+      projection += n[d] * GaussPoint(q % 4);
+      if (d > 0) weight *= GaussWeight(q % 4);
     }
     return projection;
   };
@@ -215,7 +219,7 @@ ReconstructProfile(int count, const Real *alpha, const Point *gradient, const in
     Real projection = 0;
     for (int d = 0; d < D; ++d) {
       if (d == axis) continue;
-      projection += n[d] * x[f % 4];
+      projection += n[d] * GaussPoint(f % 4);
       f /= 4;
     }
     return projection;
@@ -226,7 +230,7 @@ ReconstructProfile(int count, const Real *alpha, const Point *gradient, const in
     face_weight[f] = 1;
     for (int d = 0, r = f; d < D; ++d) {
       if (d == axis) continue;
-      face_weight[f] *= w[r % 4] * (d == 0 ? radial[r % 4] : 1);
+      face_weight[f] *= GaussWeight(r % 4) * (d == 0 ? radial[r % 4] : 1);
       r /= 4;
     }
   }
