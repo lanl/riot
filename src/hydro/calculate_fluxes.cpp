@@ -513,9 +513,9 @@ ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &hal
   if constexpr (THINC_DIM > 0) {
     auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
     auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
-    THINC::ReconstructFractions<DIR, THINC_DIM>(
-        v, idx_range, halo_range, b, delta1, delta2, delta3, thinc_beta, mat_minus,
-        mat_plus, fallback_minus, fallback_plus);
+    THINC::ReconstructFractions<DIR, THINC_DIM>(v, idx_range, halo_range, b, delta1,
+                                                delta2, delta3, thinc_beta, mat_minus,
+                                                mat_plus, fallback_minus, fallback_plus);
     halo_range.TeamBarrier();
     THINC::SelectFaceProfiles(idx_range, delta, nmat, mat_minus, mat_plus, fallback_minus,
                               fallback_plus);
