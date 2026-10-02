@@ -685,12 +685,16 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
         halo_range.TeamBarrier();
 
+        [[maybe_unused]] const auto d1 = delta1;
+        [[maybe_unused]] const auto d2 = delta2;
+        [[maybe_unused]] const auto d3 = delta3;
+        [[maybe_unused]] const Real beta = thinc_beta;
         if constexpr (DoTHINC) {
           auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
           auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
-          THINC::ReconstructFractions<DIR, THINC_DIM>(
-              v, idx_range, halo_range, b, delta1, delta2, delta3, thinc_beta, mat_minus,
-              mat_plus, fallback_minus, fallback_plus);
+          THINC::ReconstructFractions<DIR, THINC_DIM>(v, idx_range, halo_range, b, d1, d2,
+                                                      d3, beta, mat_minus, mat_plus,
+                                                      fallback_minus, fallback_plus);
           halo_range.TeamBarrier();
           THINC::SelectFaceProfiles(idx_range, delta, nmat, mat_minus, mat_plus,
                                     fallback_minus, fallback_plus);
