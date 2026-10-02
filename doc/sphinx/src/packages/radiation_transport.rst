@@ -71,7 +71,7 @@ where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the ang
 Angular Discretization
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The unit sphere of directions is discretized into :math:`N_{\text{ang}}` ordinates, each carrying a solid-angle weight. Two quadratures are available: a nearly uniform *geodesic* grid built by subdividing an icosahedron, for which :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`, and a *latitude–longitude* product grid with :math:`N_{\text{ang}} = n_\theta\,n_\phi`. The geodesic grid may be rotated to avoid alignment with the spatial mesh. The quadrature and its resolution are set by the angular-grid parameters below.
+The unit sphere of directions is discretized into :math:`N_{\text{ang}}` ordinates, each carrying a solid-angle weight. Two quadratures are available, both refined by a single level :math:`n_{\text{level}}` (``nlevel``): a nearly uniform *geodesic* grid built by subdividing an icosahedron, with :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`, and a *latitude–longitude* product grid with :math:`n_\theta = 2\,n_{\text{level}}` polar and :math:`n_\phi = 4\,n_{\text{level}}` azimuthal bins (:math:`N_{\text{ang}} = 8\,n_{\text{level}}^2`). In curvilinear geometries, where latitude–longitude is the default, symmetry reduces the azimuthal grid: 2D cylindrical spans only :math:`\phi\in[0,\pi)` with :math:`n_\phi = 2\,n_{\text{level}}` (:math:`N_{\text{ang}} = 4\,n_{\text{level}}^2`), and 1D spherical uses :math:`n_\phi = 1` (:math:`N_{\text{ang}} = 2\,n_{\text{level}}`). The geodesic grid may be rotated to avoid alignment with the spatial mesh.
 
 .. _`sec:rad-opacity`:
 
@@ -225,12 +225,16 @@ The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are r
      - Description
    * - angular_mesh
      - string
-     - ``geodesic``
-     - Angular quadrature: ``geodesic`` or ``latlon``.
+     - *geom.*
+     - Angular quadrature: ``geodesic`` (Cartesian default) or ``latlon`` (curvilinear default).
    * - nlevel
      - int
      - ``1``
-     - Geodesic refinement level; :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`.
+     - Angular refinement level for either quadrature (see Angular Discretization).
+   * - fv_fix
+     - bool
+     - ``true``
+     - Use solid-angle-averaged (finite-volume) direction cosines.
    * - rotate_geo
      - int
      - ``1``
@@ -239,14 +243,6 @@ The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are r
      - Real
      - *NaN*
      - Manual geodesic rotation angles (used when ``rotate_geo`` ``= 2``).
-   * - ntheta
-     - int
-     - ``8``
-     - Latitude bins (latlon grid).
-   * - nphi
-     - int
-     - ``16``
-     - Longitude bins (latlon grid).
 
 The explicit solver adds sub-cycling controls:
 
@@ -270,7 +266,7 @@ The explicit solver adds sub-cycling controls:
    * - verbose
      - int
      - ``0``
-     - Diagnostic verbosity (0–2).
+     - Diagnostic verbosity (0–3; 3 adds root-find failures).
 
 The Jacobi solver adds iteration and timestep controls:
 
@@ -287,6 +283,10 @@ The Jacobi solver adds iteration and timestep controls:
      - int
      - ``1000``
      - Maximum Jacobi iterations per step.
+   * - niter_min
+     - int
+     - *geom.*
+     - Minimum iterations per step, even if ``err_thr`` is already met (default 0 in Cartesian, :math:`\sim` the angular-mesh diameter in curvilinear geometries).
    * - err_thr
      - Real
      - ``1e-8``

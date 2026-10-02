@@ -154,8 +154,8 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
   // Angular resolution
   const int nlevel = pin->GetOrAddInteger(
       radiation_block, "nlevel", 1,
-      "Angular mesh resolution: geodesic nangles = 10*nlevel^2 + 2; lat-lon ntheta = "
-      "2*nlevel, nphi = 4*nlevel (nphi = 1 in 1D spherical)");
+      "Angular resolution: geodesic nangles = 10*nlevel^2 + 2; lat-lon "
+      "uses nangles = 2*nlevel in 1D spherical, 4*nlevel^2 in RZ, 8*nlevel^2 otherwise");
   params.Add("nlevel", nlevel);
 
   // Angular mesh
@@ -190,10 +190,7 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
     params.Add("geodesic_grid", prgeo);
     nangles = prgeo->nangles;
   } else if (amesh == "latlon") {
-    const int ntheta = 2 * nlevel;
-    const int nphi = parthenon::IsCoord<parthenon::UniformSpherical>() ? 1 : 4 * nlevel;
-    std::shared_ptr<LatLonGrid> prlatlon =
-        std::make_unique<LatLonGrid>(ntheta, nphi, fv_fix);
+    std::shared_ptr<LatLonGrid> prlatlon = std::make_unique<LatLonGrid>(nlevel, fv_fix);
     params.Add("latlon_grid", prlatlon);
     nangles = prlatlon->nangles;
   } else {
