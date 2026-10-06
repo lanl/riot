@@ -264,7 +264,7 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                   (rho_val > 0.0)
                       ? eosm_c.InternalEnergyFromDensityTemperature(rho_val, T, lambda)
                       : 0.0;
-              // NOTE(@pdmullen): ccmat::rho and cm::rho already contains mask
+              // NOTE(@pdmullen): ccmat::rho and cm::rho already contain mask
               pv_n(ccmat::internal_energy(), kji) =
                   pv_n(ccmat::rho(), kji) * pv_n(cm::sie(), kji);
               pv_n(cm::internal_energy(), kji) =
