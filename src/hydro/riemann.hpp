@@ -133,6 +133,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
 
   Real ss = (sl >= 0) * vpl + (sr <= 0) * vpr +
             (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + Pr - Pl) / (rhocsl - rhocsr);
+  ss = std::min(std::max(ss, sl), sr);
   const Real l_flag = 1.0 * (ss >= 0);
   const Real r_flag = 1.0 - l_flag;
   const Real rho = l_flag * rhol + r_flag * rhor;
@@ -208,7 +209,8 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   const Real rhocsl = rhol * (sl - vpl);
   const Real rhocsr = rhor * (sr - vpr);
   const Real irhocslr = 1.0 / (rhocsl - rhocsr);
-  const Real am = irhocslr * (rhocsl * vpl - rhocsr * vpr + th * (Pr - Pl));
+  const Real am = std::min(
+      std::max(irhocslr * (rhocsl * vpl - rhocsr * vpr + th * (Pr - Pl)), sl), sr);
   // JMM: this low-Mach correction causes odd-even decoupling breaks symmetry
   Real phi = 1.0;
   if constexpr (enable_low_mach) {
