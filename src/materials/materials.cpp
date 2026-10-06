@@ -184,9 +184,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   auto ccmat_internal_energy = SparsePool::Make<ccmat::internal_energy>(m, control_field);
 
-  // Material-volume-averaged Density and Specific Internal Energy
+  // Material-volume-averaged Density, Specific and Volumetric Internal Energy
   auto cm_rho = SparsePool::Make<cm::rho>(m, control_field);
   auto cm_sie = SparsePool::Make<cm::sie>(m, control_field);
+  auto cm_internal_energy = SparsePool::Make<cm::internal_energy>(m, control_field);
 
   // Material Temperature, Pressure, Bulk Modulus, and Specific Heat
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::Derived, Metadata::OneCopy});
@@ -395,7 +396,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
     // Add in this matid to sparse pools
     AddMatId(matid, phase_size, ccmat_rho, ccmat_volume_fraction, ccmat_internal_energy,
-             cm_rho, cm_sie, cm_temperature, cm_pressure, cm_bulk_modulus, cm_cv);
+             cm_rho, cm_sie, cm_internal_energy, cm_temperature, cm_pressure,
+             cm_bulk_modulus, cm_cv);
 
     // Phases
     // TODO(JMM): Should we remove phase_rho_sum? It could be scratch var, but it's kind
@@ -739,10 +741,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Add the sparse pools
   AddPools(materials.get(), ccmat_rho, ccmat_volume_fraction, ccmat_internal_energy,
-           cm_rho, cm_sie, cm_temperature, cm_pressure, cm_bulk_modulus, cm_cv,
-           mat_stress, stress, mat_eps, eps, gmod, strength_j2, mat_iso, iso,
-           phase_rho_sum, phase_fraction, ccmat_ionization_zbar, cm_ionization_zbar,
-           cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache);
+           cm_rho, cm_sie, cm_internal_energy, cm_temperature, cm_pressure,
+           cm_bulk_modulus, cm_cv, mat_stress, stress, mat_eps, eps, gmod, strength_j2,
+           mat_iso, iso, phase_rho_sum, phase_fraction, ccmat_ionization_zbar,
+           cm_ionization_zbar, cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache);
 
   // Instantiate device ParArray1D of EOS and Opacity objects, setup PTE list vector
   const int num_eos = eos_host.size();
