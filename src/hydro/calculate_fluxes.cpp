@@ -543,8 +543,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
           // Material density and internal energy use a tighter MC slope limit (1.5);
           // bulk and vfrac use the default THETA (1.99).
-          ReconCells<cm::rho, ccmat::internal_energy>(spv, halo_range, delta, mat_minus,
-                                                      mat_plus, recon_tag, m, 1.5);
+          ReconCells<cm::rho, cm::internal_energy>(spv, halo_range, delta, mat_minus,
+                                                   mat_plus, recon_tag, m, 1.5);
           ReconCells<ccmat::volume_fraction>(spv, halo_range, delta, mat_minus, mat_plus,
                                              vfrac_recon_tag, m);
           RiotLoop::inner(halo_range, [&](auto kji) {
@@ -621,17 +621,22 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                            (slope_minus < 0.0) * scale_neg_minus(kji);
             mat_minus(ccmat::volume_fraction(), m, kji) = vf_c - slope_minus;
 
-            // Transform to ccmat::rho in the cm::rho scratch
+            // Transform to ccmat::rho and ccmat::internal_energy in the cm::rho and
+            // cm::internal_energy scratch
             mat_plus(cm::rho(), m, kji) *= mat_plus(ccmat::volume_fraction(), m, kji);
             mat_minus(cm::rho(), m, kji) *= mat_minus(ccmat::volume_fraction(), m, kji);
+            mat_plus(cm::internal_energy(), m, kji) *=
+                mat_plus(ccmat::volume_fraction(), m, kji);
+            mat_minus(cm::internal_energy(), m, kji) *=
+                mat_minus(ccmat::volume_fraction(), m, kji);
 
             // Accumulate into reconstructed bulk quantities
             sum_bulk_plus(ccbulk::rho(), kji) += mat_plus(cm::rho(), m, kji);
             sum_bulk_minus(ccbulk::rho(), kji) += mat_minus(cm::rho(), m, kji);
             sum_bulk_plus(ccbulk::internal_energy(), kji) +=
-                mat_plus(ccmat::internal_energy(), m, kji);
+                mat_plus(cm::internal_energy(), m, kji);
             sum_bulk_minus(ccbulk::internal_energy(), kji) +=
-                mat_minus(ccmat::internal_energy(), m, kji);
+                mat_minus(cm::internal_energy(), m, kji);
           });
           halo_range.TeamBarrier();
         }
@@ -754,8 +759,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto v = riot::MakePack<ccbulk::velocity, ccbulk::pressure, ccbulk::bulk_modulus,
                           ccbulk::shear_modulus, ccbulk::momentum,
                           ccbulk::total_material_energy, ccbulk::face_signal,
-                          ccbulk::face_velocity, ccmat::volume_fraction,
-                          ccmat::internal_energy, ccmat::rho, cm::rho>(
+                          ccbulk::face_velocity, ccmat::volume_fraction, ccmat::rho,
+                          cm::rho, cm::internal_energy>(
       md, std::vector<int>{}, std::set<parthenon::PDOpt>{parthenon::PDOpt::WithFluxes});
   const int nblocks = v.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
