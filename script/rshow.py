@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+import math
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -173,12 +174,15 @@ class PhdfPlotGui(tk.Tk):
         self.dump_paths: list[Path] = []
         self.field_data: np.ndarray | None = None
         self.colorbar = None
+        self.colorbars = []
         self.main_axes = None
         self.mesh_lines = []
         self.data_lines = []
         self.line_panels: list[dict[str, str]] = []
         self.line_panel_axes = []
+        self.figure_title = None
         self._resize_job = None
+        self._last_panel_grid_shape = None
         self._play_job = None
         self.playing = False
         self.exporting = False
@@ -192,6 +196,7 @@ class PhdfPlotGui(tk.Tk):
         self.auto_style_var = tk.BooleanVar(value=True)
         self.fps_var = tk.StringVar(value="5")
         self.loop_var = tk.BooleanVar(value=True)
+        self.panel_layout_var = tk.StringVar(value="Auto")
         self.log_var = tk.BooleanVar(value=False)
         self.mesh_var = tk.BooleanVar(value=False)
         self.equal_aspect_var = tk.BooleanVar(value=True)
@@ -288,18 +293,34 @@ class PhdfPlotGui(tk.Tk):
         )
         row += 1
 
-        line_panels = ttk.LabelFrame(panel, text="Additional 1-D panels", padding=4)
+        line_panels = ttk.LabelFrame(panel, text="Additional panels", padding=4)
         line_panels.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(6, 2))
-        line_panels.columnconfigure(0, weight=1)
+        line_panels.columnconfigure((0, 1, 2), weight=1)
+        ttk.Label(line_panels, text="Layout").grid(row=0, column=0, sticky="w")
+        panel_layout = ttk.Combobox(
+            line_panels,
+            textvariable=self.panel_layout_var,
+            values=("Auto", "Left–right", "Top–bottom"),
+            state="readonly",
+            width=15,
+        )
+        panel_layout.grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=(5, 0), pady=(0, 3)
+        )
+        panel_layout.bind("<<ComboboxSelected>>", self._panel_layout_changed)
         self.line_panel_list = tk.Listbox(
             line_panels, height=2, exportselection=False, activestyle="dotbox"
         )
-        self.line_panel_list.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self.line_panel_list.grid(row=1, column=0, columnspan=3, sticky="ew")
+        self.line_panel_list.bind("<Double-Button-1>", self.edit_line_panel)
         ttk.Button(line_panels, text="Add…", command=self.add_line_panel).grid(
-            row=1, column=0, sticky="ew", padx=(0, 2), pady=(3, 0)
+            row=2, column=0, sticky="ew", padx=(0, 2), pady=(3, 0)
+        )
+        ttk.Button(line_panels, text="Edit…", command=self.edit_line_panel).grid(
+            row=2, column=1, sticky="ew", padx=2, pady=(3, 0)
         )
         ttk.Button(line_panels, text="Remove", command=self.remove_line_panel).grid(
-            row=1, column=1, sticky="ew", padx=(2, 0), pady=(3, 0)
+            row=2, column=2, sticky="ew", padx=(2, 0), pady=(3, 0)
         )
         row += 1
 
@@ -432,7 +453,20 @@ class PhdfPlotGui(tk.Tk):
         """Debounce resize events so styling follows the window smoothly."""
         if self._resize_job is not None:
             self.after_cancel(self._resize_job)
-        self._resize_job = self.after(120, self._apply_plot_style)
+        self._resize_job = self.after(120, self._finish_canvas_resize)
+
+    def _finish_canvas_resize(self) -> None:
+        self._resize_job = None
+        if (
+            self.panel_layout_var.get() == "Auto"
+            and self.dump is not None
+            and self.line_panels
+        ):
+            new_shape = self._panel_grid_shape(1 + len(self.line_panels))
+            if new_shape != self._last_panel_grid_shape:
+                self.plot()
+                return
+        self._apply_plot_style()
 
     def _apply_plot_style(self, draw=True) -> None:
         """Scale plot text, ticks, spines, and outlines as one visual system."""
@@ -467,9 +501,11 @@ class PhdfPlotGui(tk.Tk):
             axes.yaxis.label.set_fontsize(font_size)
             axes.title.set_fontsize(font_size)
 
-        if self.colorbar is not None:
-            self.colorbar.ax.yaxis.label.set_fontsize(font_size)
-            self.colorbar.outline.set_linewidth(line_width)
+        for colorbar in self.colorbars:
+            colorbar.ax.yaxis.label.set_fontsize(font_size)
+            colorbar.outline.set_linewidth(line_width)
+        if self.figure_title is not None:
+            self.figure_title.set_fontsize(font_size)
         for line in self.mesh_lines:
             line.set_linewidth(max(0.45, 0.45 * line_width))
         for line in self.data_lines:
@@ -609,30 +645,42 @@ class PhdfPlotGui(tk.Tk):
         self.plot()
 
     def add_line_panel(self) -> None:
-        """Choose a variable and selector indices for another 1-D subplot."""
-        if self.dump is None or self._plot_dimension() != 1:
-            self._show_error(
-                "Cannot add line panel",
-                ValueError("Additional panels are available only for 1-D dumps"),
-            )
+        self._open_panel_dialog(None)
+
+    def edit_line_panel(self, _event=None) -> None:
+        selection = self.line_panel_list.curselection()
+        if not selection:
+            return
+        self._open_panel_dialog(selection[0])
+
+    def _open_panel_dialog(self, panel_index: int | None) -> None:
+        """Add a panel or edit an existing panel's variable and selectors."""
+        if self.dump is None:
             return
 
         variables = list(self.variable_combo["values"])
         if not variables:
             return
-        preferred = next(
-            (name for name in variables if name != self.variable_var.get()),
-            variables[0],
-        )
+        editing = panel_index is not None
+        if editing:
+            current = self.line_panels[panel_index]
+            preferred = current["variable"]
+            initial_indices = current["indices"]
+        else:
+            preferred = next(
+                (name for name in variables if name != self.variable_var.get()),
+                variables[0],
+            )
+            initial_indices = ""
         dialog = tk.Toplevel(self)
-        dialog.title("Add 1-D panel")
+        dialog.title("Edit panel" if editing else "Add panel")
         dialog.transient(self)
         dialog.resizable(False, False)
         frame = ttk.Frame(dialog, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
 
         variable = tk.StringVar(value=preferred)
-        indices = tk.StringVar()
+        indices = tk.StringVar(value=initial_indices)
         shape_text = tk.StringVar()
         ttk.Label(frame, text="Variable").grid(row=0, column=0, sticky="w")
         combo = ttk.Combobox(
@@ -647,38 +695,51 @@ class PhdfPlotGui(tk.Tk):
             row=2, column=0, columnspan=2, sticky="w", pady=(2, 6)
         )
 
-        def update_shape(_event=None) -> None:
+        def update_shape(_event=None, reset_indices=True) -> None:
             try:
                 data = np.asarray(self.dump.Get(variable.get(), flatten=False))
-                leading_shape = data.shape[1:-1]
+                spatial_dimension = self._plot_dimension()
+                leading_shape = data.shape[1:-spatial_dimension]
                 shape_text.set(
                     f"Shape: {data.shape}; selectable axes: {leading_shape or 'none'}"
                 )
-                indices.set(",".join("0" for _ in leading_shape))
+                if reset_indices:
+                    indices.set(",".join("0" for _ in leading_shape))
             except Exception as exc:
                 shape_text.set(f"Could not inspect variable: {exc}")
 
         def accept() -> None:
             try:
                 data = np.asarray(self.dump.Get(variable.get(), flatten=False))
-                parse_indices(indices.get(), data.ndim - 2)
-                self.line_panels.append(
-                    {"variable": variable.get(), "indices": indices.get().strip()}
-                )
+                selector_count = data.ndim - 1 - self._plot_dimension()
+                parse_indices(indices.get(), selector_count)
+                updated = {
+                    "variable": variable.get(),
+                    "indices": indices.get().strip(),
+                }
+                if editing:
+                    self.line_panels[panel_index] = updated
+                else:
+                    self.line_panels.append(updated)
                 self._refresh_line_panel_list()
                 dialog.destroy()
                 self.plot()
             except Exception as exc:
-                messagebox.showerror("Could not add panel", str(exc), parent=dialog)
+                action = "edit" if editing else "add"
+                messagebox.showerror(
+                    f"Could not {action} panel", str(exc), parent=dialog
+                )
 
-        combo.bind("<<ComboboxSelected>>", update_shape)
+        combo.bind("<<ComboboxSelected>>", lambda event: update_shape(event, True))
         buttons = ttk.Frame(frame)
         buttons.grid(row=3, column=0, columnspan=2, sticky="e")
         ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(
             side=tk.LEFT, padx=(0, 4)
         )
-        ttk.Button(buttons, text="Add", command=accept).pack(side=tk.LEFT)
-        update_shape()
+        ttk.Button(buttons, text="Save" if editing else "Add", command=accept).pack(
+            side=tk.LEFT
+        )
+        update_shape(reset_indices=not editing)
         dialog.bind("<Return>", lambda _event: accept())
         dialog.bind("<Escape>", lambda _event: dialog.destroy())
         dialog.grab_set()
@@ -698,6 +759,29 @@ class PhdfPlotGui(tk.Tk):
         for panel in self.line_panels:
             suffix = f" [{panel['indices']}]" if panel["indices"] else ""
             self.line_panel_list.insert(tk.END, f"{panel['variable']}{suffix}")
+
+    def _panel_layout_changed(self, _event=None) -> None:
+        if self.dump is not None:
+            self.plot()
+
+    def _panel_grid_shape(self, panel_count: int) -> tuple[int, int]:
+        """Choose rows and columns from the explicit or automatic layout setting."""
+        if panel_count <= 1:
+            return 1, 1
+        layout = self.panel_layout_var.get()
+        if layout == "Left–right":
+            return 1, panel_count
+        if layout == "Top–bottom":
+            return panel_count, 1
+
+        width = max(self.canvas_widget.winfo_width(), 1)
+        height = max(self.canvas_widget.winfo_height(), 1)
+        aspect = width / height
+        if panel_count == 2:
+            return (1, 2) if aspect >= 1.0 else (2, 1)
+        columns = max(1, min(panel_count, math.ceil(math.sqrt(panel_count * aspect))))
+        rows = math.ceil(panel_count / columns)
+        return rows, columns
 
     def _log_toggled(self) -> None:
         """Apply log color scaling in 2-D or a log y axis in 1-D."""
@@ -776,7 +860,10 @@ class PhdfPlotGui(tk.Tk):
             if positive:
                 lo, hi = lo / 1.1, hi * 1.1
             else:
-                delta = max(abs(lo) * 1.0e-6, 1.0e-12)
+                # Give a constant linear field a visible, nonzero color span.
+                # The absolute floor is useful for fields that are identically
+                # zero or very close to it.
+                delta = max(abs(lo) * 1.0e-6, 1.0e-6)
                 lo, hi = lo - delta, hi + delta
         return lo, hi
 
@@ -817,14 +904,8 @@ class PhdfPlotGui(tk.Tk):
         padding = 0.03 * (hi - lo)
         return lo - padding, hi + padding
 
-    def _plot_1d_panels(
-        self,
-        main_blocks: list[np.ndarray],
-        positive: bool,
-        line_width: float,
-        title: str,
-    ) -> None:
-        """Draw the primary field and all requested extra fields as stacked panels."""
+    def _panel_specs(self, main_blocks: list[np.ndarray]) -> list[dict]:
+        """Load the primary and additional variables for the current dump."""
         specs = [
             {
                 "variable": self.variable_var.get(),
@@ -852,23 +933,39 @@ class PhdfPlotGui(tk.Tk):
                     "primary": False,
                 }
             )
+        return specs
 
+    def _plot_1d_panels(
+        self,
+        main_blocks: list[np.ndarray],
+        positive: bool,
+        line_width: float,
+        title: str,
+    ) -> None:
+        """Draw the primary field and all requested extra fields as stacked panels."""
+        specs = self._panel_specs(main_blocks)
+
+        rows, columns = self._panel_grid_shape(len(specs))
+        self._last_panel_grid_shape = (rows, columns)
         grid = self.figure.add_gridspec(
-            len(specs),
-            1,
+            rows,
+            columns,
             left=0.11,
             right=0.96,
             bottom=0.08,
-            top=0.94,
-            hspace=0.10,
+            top=0.91,
+            hspace=0.14,
+            wspace=0.28,
         )
         axes = []
         self.data_lines = []
         self.mesh_lines = []
         self.colorbar = None
+        self.colorbars = []
         for panel_index, spec in enumerate(specs):
+            row, column = divmod(panel_index, columns)
             axes_object = self.figure.add_subplot(
-                grid[panel_index, 0], sharex=axes[0] if axes else None
+                grid[row, column], sharex=axes[0] if axes else None
             )
             axes.append(axes_object)
             panel_blocks = spec["blocks"]
@@ -911,7 +1008,7 @@ class PhdfPlotGui(tk.Tk):
                     f"Log y scaling requires a positive y minimum for {spec['variable']}"
                 )
             axes_object.set_ylim(ymin, ymax)
-            if panel_index < len(specs) - 1:
+            if row < rows - 1:
                 axes_object.tick_params(labelbottom=False)
 
         self.line_panel_axes = axes
@@ -920,8 +1017,11 @@ class PhdfPlotGui(tk.Tk):
         xmax = optional_float(self.xmax_var.get())
         if xmin is not None or xmax is not None:
             axes[0].set_xlim(left=xmin, right=xmax)
-        axes[-1].set_xlabel("x")
-        axes[0].set_title(title)
+        for panel_index, axes_object in enumerate(axes):
+            row, _ = divmod(panel_index, columns)
+            if row == rows - 1:
+                axes_object.set_xlabel("x")
+        self.figure_title = self.figure.suptitle(title, y=0.985)
         self._apply_plot_style(draw=False)
         self.canvas.draw_idle()
         self.status_var.set(
@@ -929,62 +1029,95 @@ class PhdfPlotGui(tk.Tk):
             f"{self.dump_path.name}"
         )
 
-    def plot(self) -> None:
-        try:
-            if self.dump is None:
-                return
-            font_size, line_width = self._style_metrics()
-            if self.field_data is None:
-                self.load_variable()
-            blocks = self._selected_blocks()
-            is_1d = self._plot_dimension() == 1
-            positive = self.log_var.get()
-            auto_lo, auto_hi = self._finite_range(blocks, positive=positive)
-            vmin = optional_float(self.vmin_var.get())
-            vmax = optional_float(self.vmax_var.get())
-            vmin = auto_lo if vmin is None else vmin
-            vmax = auto_hi if vmax is None else vmax
-            norm = None
-            if not is_1d:
-                if not vmin < vmax:
-                    raise ValueError("Color min must be smaller than color max")
-                if positive:
-                    floor = float(self.floor_var.get())
-                    vmin = max(vmin, floor)
-                    if vmin <= 0:
-                        raise ValueError(
-                            "Log color scaling requires a positive color minimum"
-                        )
-                    norm = mcolors.LogNorm(vmin=vmin, vmax=vmax)
-                else:
-                    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    def _color_norm(
+        self,
+        blocks: list[np.ndarray],
+        positive: bool,
+        vmin: float | None = None,
+        vmax: float | None = None,
+    ) -> tuple[mcolors.Normalize, float, float]:
+        auto_lo, auto_hi = self._finite_range(blocks, positive=positive)
+        vmin = auto_lo if vmin is None else vmin
+        vmax = auto_hi if vmax is None else vmax
+        if positive:
+            vmin = max(vmin, float(self.floor_var.get()))
+            if vmin <= 0:
+                raise ValueError("Log color scaling requires a positive color minimum")
+        if vmin == vmax:
+            # Equal explicit limits (or values rounded equal in the GUI) are
+            # harmless: expand them here so Normalize never sees a zero-width
+            # interval. Keep logarithmic limits strictly positive.
+            if positive:
+                vmin, vmax = vmin / 1.1, vmax * 1.1
+            else:
+                delta = max(abs(vmin) * 1.0e-6, 1.0e-6)
+                vmin, vmax = vmin - delta, vmax + delta
+        elif vmin > vmax:
+            raise ValueError("Color min must be smaller than color max")
+        norm = (
+            mcolors.LogNorm(vmin=vmin, vmax=vmax)
+            if positive
+            else mcolors.Normalize(vmin=vmin, vmax=vmax)
+        )
+        return norm, vmin, vmax
 
-            self.figure.clear()
-            time = getattr(self.dump, "Time", None)
-            title = self.dump_path.name if self.dump_path else "PHDF"
-            if time is not None:
-                title += f"    t = {float(time):.3e} s"
-            if is_1d:
-                self._plot_1d_panels(blocks, positive, line_width, title)
-                return
-
-            self.line_panel_axes = []
-            # Reserve a fixed slot for the colorbar so changing tick label
-            # widths cannot shift the data axes during playback.
-            ax = self.figure.add_axes([0.09, 0.09, 0.72, 0.86])
-            self.main_axes = ax
-            self.mesh_lines = []
-            self.data_lines = []
+    def _plot_2d_panels(
+        self,
+        main_blocks: list[np.ndarray],
+        positive: bool,
+        line_width: float,
+        title: str,
+    ) -> None:
+        """Draw primary and additional 2-D fields with independent colorbars."""
+        specs = self._panel_specs(main_blocks)
+        rows, columns = self._panel_grid_shape(len(specs))
+        self._last_panel_grid_shape = (rows, columns)
+        grid = self.figure.add_gridspec(
+            rows,
+            columns,
+            left=0.09,
+            # Leave a fixed outer gutter for the last colorbar's tick labels
+            # and rotated variable label. AxesDivider keeps this stable even
+            # when scientific-notation widths change between frames.
+            right=0.87,
+            bottom=0.07,
+            top=0.91,
+            hspace=0.16,
+            wspace=0.40,
+        )
+        axes = []
+        self.mesh_lines = []
+        self.data_lines = []
+        self.colorbars = []
+        for panel_index, spec in enumerate(specs):
+            row, column = divmod(panel_index, columns)
+            axes_object = self.figure.add_subplot(
+                grid[row, column],
+                sharex=axes[0] if axes else None,
+                sharey=axes[0] if axes else None,
+            )
+            axes.append(axes_object)
+            panel_blocks = spec["blocks"]
+            requested_vmin = (
+                optional_float(self.vmin_var.get()) if spec["primary"] else None
+            )
+            requested_vmax = (
+                optional_float(self.vmax_var.get()) if spec["primary"] else None
+            )
+            norm, _, _ = self._color_norm(
+                panel_blocks, positive, requested_vmin, requested_vmax
+            )
             pcol = None
-            for block, data in enumerate(blocks):
+            for block, data in enumerate(panel_blocks):
                 xedges = coordinate_edges(self.dump.x[block, :])
                 yedges = coordinate_edges(self.dump.y[block, :])
-                if data.shape != (len(yedges) - 1, len(xedges) - 1):
+                expected_shape = (len(yedges) - 1, len(xedges) - 1)
+                if data.shape != expected_shape:
                     raise ValueError(
-                        f"Block {block}: data shape {data.shape} does not match "
-                        f"coordinate shape {(len(yedges)-1, len(xedges)-1)}"
+                        f"{spec['variable']}, block {block}: data shape {data.shape} "
+                        f"does not match coordinate shape {expected_shape}"
                     )
-                pcol = ax.pcolormesh(
+                pcol = axes_object.pcolormesh(
                     xedges,
                     yedges,
                     data,
@@ -994,7 +1127,7 @@ class PhdfPlotGui(tk.Tk):
                     rasterized=True,
                 )
                 if self.mesh_var.get():
-                    (mesh_line,) = ax.plot(
+                    (mesh_line,) = axes_object.plot(
                         [xedges[0], xedges[-1], xedges[-1], xedges[0], xedges[0]],
                         [yedges[0], yedges[0], yedges[-1], yedges[-1], yedges[0]],
                         color="black",
@@ -1003,29 +1136,63 @@ class PhdfPlotGui(tk.Tk):
                     self.mesh_lines.append(mesh_line)
 
             assert pcol is not None
-            divider = make_axes_locatable(ax)
+            divider = make_axes_locatable(axes_object)
             colorbar_axes = divider.append_axes("right", size="4%", pad="3%")
-            self.colorbar = self.figure.colorbar(pcol, cax=colorbar_axes)
-            self.colorbar.set_label(self.variable_var.get())
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
-            ax.set_aspect("equal" if self.equal_aspect_var.get() else "auto")
-            xmin, xmax = optional_float(self.xmin_var.get()), optional_float(
-                self.xmax_var.get()
-            )
-            ymin, ymax = optional_float(self.ymin_var.get()), optional_float(
-                self.ymax_var.get()
-            )
-            if xmin is not None or xmax is not None:
-                ax.set_xlim(left=xmin, right=xmax)
-            if ymin is not None or ymax is not None:
-                ax.set_ylim(bottom=ymin, top=ymax)
-            ax.set_title(title)
-            self._apply_plot_style(draw=False)
-            self.canvas.draw_idle()
-            self.status_var.set(
-                f"{self.variable_var.get()}  |  color range [{vmin:.4g}, {vmax:.4g}]"
-            )
+            colorbar = self.figure.colorbar(pcol, cax=colorbar_axes)
+            colorbar.set_label(spec["variable"])
+            self.colorbars.append(colorbar)
+            if column == 0:
+                axes_object.set_ylabel("y")
+            else:
+                axes_object.tick_params(labelleft=False)
+            axes_object.set_aspect("equal" if self.equal_aspect_var.get() else "auto")
+            if row < rows - 1:
+                axes_object.tick_params(labelbottom=False)
+
+        self.colorbar = self.colorbars[0]
+        self.line_panel_axes = axes
+        self.main_axes = axes[0]
+        xmin = optional_float(self.xmin_var.get())
+        xmax = optional_float(self.xmax_var.get())
+        ymin = optional_float(self.ymin_var.get())
+        ymax = optional_float(self.ymax_var.get())
+        if xmin is not None or xmax is not None:
+            axes[0].set_xlim(left=xmin, right=xmax)
+        if ymin is not None or ymax is not None:
+            axes[0].set_ylim(bottom=ymin, top=ymax)
+        for panel_index, axes_object in enumerate(axes):
+            row, _ = divmod(panel_index, columns)
+            if row == rows - 1:
+                axes_object.set_xlabel("x")
+        self.figure_title = self.figure.suptitle(title, y=0.985)
+        self._apply_plot_style(draw=False)
+        self.canvas.draw_idle()
+        self.status_var.set(
+            f"{len(specs)} 2-D panel{'s' if len(specs) != 1 else ''}  |  "
+            f"{self.dump_path.name}"
+        )
+
+    def plot(self) -> None:
+        try:
+            if self.dump is None:
+                return
+            _, line_width = self._style_metrics()
+            if self.field_data is None:
+                self.load_variable()
+            blocks = self._selected_blocks()
+            is_1d = self._plot_dimension() == 1
+            positive = self.log_var.get()
+
+            self.figure.clear()
+            self.figure_title = None
+            time = getattr(self.dump, "Time", None)
+            title = self.dump_path.name if self.dump_path else "PHDF"
+            if time is not None:
+                title += f"    t = {float(time):.3e} s"
+            if is_1d:
+                self._plot_1d_panels(blocks, positive, line_width, title)
+            else:
+                self._plot_2d_panels(blocks, positive, line_width, title)
         except Exception as exc:
             self._show_error("Could not plot field", exc)
 
