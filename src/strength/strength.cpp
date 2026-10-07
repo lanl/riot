@@ -316,10 +316,11 @@ void FillDerived(MeshData<Real> *md) {
           "d.strength_model_ids");
   auto &strength_map = materials->Param<parthenon::ParArray1D<int>>("d.strength_map");
 
-  auto v = riot::MakePack<ccmat::rho, ccbulk::shear_modulus, ccmat::volume_fraction,
-                          ccmat::deviatoric_stress, ccmat::equivalent_plastic_strain,
-                          cm::deviatoric_stress, cm::equivalent_plastic_strain,
-                          cm::shear_modulus>(md);
+  auto v = riot::MakePack<ccmat::rho, ccbulk::shear_modulus, ccmat::volume_fraction>(md);
+  auto &strength_mats = materials->Param<std::vector<int>>("strength_mats");
+  auto vstr = riot::MakePack<ccmat::deviatoric_stress, ccmat::equivalent_plastic_strain,
+                             cm::deviatoric_stress, cm::equivalent_plastic_strain,
+                             cm::shear_modulus>(md, strength_mats);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
@@ -343,7 +344,7 @@ void FillDerived(MeshData<Real> *md) {
             auto &model = strength_models(str_idx);
 
             auto pv_n = RiotLoop::make_sparse_pack_view(idx_range, v, n);
-            auto pv_nstr = RiotLoop::make_sparse_pack_view(idx_range, v, nstr);
+            auto pv_nstr = RiotLoop::make_sparse_pack_view(idx_range, vstr, nstr);
 
             // Convert between ccmat and cm stress/strain
             RiotLoop::inner(idx_range, [&](const auto kji) {
