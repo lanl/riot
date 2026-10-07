@@ -15,6 +15,9 @@
 // C++ includes
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <string>
+#include <vector>
 
 // Parthenon includes
 #include <bvals/boundary_conditions_generic.hpp>
@@ -29,6 +32,9 @@
 #include "radiation_diffusion/multigroup_diffusion.hpp"
 #include "riot_driver.hpp"
 #include "riot_utils/riot_loops.hpp"
+#ifdef RIOT_ENABLE_PYTHON
+#include "riot_pgen/region_python.hpp"
+#endif
 
 using namespace parthenon::driver::prelude;
 
@@ -54,6 +60,80 @@ constexpr IndexDomain GetDomain(parthenon::CoordinateDirection dir,
   }
   return IndexDomain::inner_x1;
 }
+
+// Boundary temperature that is uniform over the face, evaluated on the host from a
+// time-only functor
+struct UniformBoundaryT {
+  Real T0;
+  KOKKOS_INLINE_FUNCTION Real operator()(int /*k*/, int /*j*/, int /*i*/) const {
+    return T0;
+  }
+};
+
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE,
+          class F>
+UniformBoundaryT GetBoundaryTemperature(const F &temperature_function,
+                                        parthenon::MeshBlock * /*pmb*/, bool /*coarse*/,
+                                        Real time) {
+  return UniformBoundaryT{temperature_function(time)};
+}
+
+#ifdef RIOT_ENABLE_PYTHON
+// Boundary temperature that varies over the ghost zones of a face
+struct ArrayBoundaryT {
+  parthenon::ParArray3D<Real> T;
+  int ks, js, is;
+  KOKKOS_INLINE_FUNCTION Real operator()(int k, int j, int i) const {
+    return T(k - ks, j - js, i - is);
+  }
+};
+
+// Calls a user supplied python method on the host to get the boundary temperature
+// at each ghost zone. The method has the signature
+//   rad_temperature(self, time, face, pos, T)
+// where face is e.g. "inner_x1", pos is an (n, 3) array of sample positions and T is
+// an (n,) array to fill in place. The sample positions are the ghost zone centers.
+struct python_bc_functor {
+  std::shared_ptr<python_region_t> py;
+  std::string face;
+};
+
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+ArrayBoundaryT GetBoundaryTemperature(const python_bc_functor &f,
+                                      parthenon::MeshBlock *pmb, bool coarse, Real time) {
+  using namespace parthenon;
+  using namespace parthenon::BoundaryFunction;
+  // Same index ranges as pmb->par_for_bndry(..., domain, TE::CC, coarse, false, ...)
+  constexpr IndexDomain domain = GetDomain(DIR, SIDE);
+  const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
+  const auto ib = bounds.GetBoundsI(domain, TE::CC);
+  const auto jb = bounds.GetBoundsJ(domain, TE::CC);
+  const auto kb = bounds.GetBoundsK(domain, TE::CC);
+  const auto coords = coarse ? pmb->pmr->GetCoarseCoords() : pmb->coords;
+
+  const int nk = kb.e - kb.s + 1;
+  const int nj = jb.e - jb.s + 1;
+  const int ni = ib.e - ib.s + 1;
+  ArrayBoundaryT out{ParArray3D<Real>("python boundary T", nk, nj, ni), kb.s, jb.s, ib.s};
+  auto T_h = Kokkos::create_mirror_view(out.T);
+  Kokkos::View<Real ****, LayoutWrapper, HostMemSpace> pos_h("python boundary pos", nk,
+                                                             nj, ni, 3);
+  parthenon::seq_for(kb, jb, ib, [&](const int k, const int j, const int i) {
+    pos_h(k - kb.s, j - jb.s, i - ib.s, 0) = coords.Xc<X1DIR>(i);
+    pos_h(k - kb.s, j - jb.s, i - ib.s, 1) = coords.Xc<X2DIR>(j);
+    pos_h(k - kb.s, j - jb.s, i - ib.s, 2) = coords.Xc<X3DIR>(k);
+  });
+
+  // Both host views are contiguous (LayoutRight), so python sees them as flat arrays
+  const std::size_t n = static_cast<std::size_t>(nk) * nj * ni;
+  f.py->py_obj.call_method<void>(
+      "rad_temperature", time, f.face,
+      pcall::ArrayViewND<const Real>{pos_h.data(), {n, 3}, false},
+      pcall::ArrayViewND<Real>{T_h.data(), {n}, true});
+  Kokkos::deep_copy(out.T, T_h);
+  return out;
+}
+#endif
 
 template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE,
           class F>
@@ -86,7 +166,8 @@ void RadiationBoundary(std::shared_ptr<MeshBlockData<Real>> &rc, bool coarse,
   const auto sim_time = pkg->Param<parthenon::SimTime>("sim_time");
   RadiationDiffusion::BlackBodyHelper bb_helper(pmb->pmy_mesh);
   const Real tnp1 = sim_time.time + sim_time.dt;
-  const Real T0 = temperature_function(tnp1);
+  const auto Tbnd =
+      GetBoundaryTemperature<DIR, SIDE>(temperature_function, pmb, coarse, tnp1);
 
   const int offset = (SIDE == BCSide::Inner) ? 1 : -1;
   const int ioff = (DIR == X1DIR) * offset;
@@ -97,6 +178,7 @@ void RadiationBoundary(std::shared_ptr<MeshBlockData<Real>> &rc, bool coarse,
       KOKKOS_LAMBDA(const int & /*l*/, const int &k, const int &j, const int &i) {
         int sg = q.GetLowerBound(b, RadiationDiffusion::MultiGroupVars::Egroup());
         int eg = q.GetUpperBound(b, RadiationDiffusion::MultiGroupVars::Egroup());
+        const Real T0 = Tbnd(k, j, i);
         for (int g = 0; g <= eg - sg; ++g) {
           const auto [B, dBdT] = bb_helper.GetBB(g, T0);
           Real Ebl = q(b, RadiationDiffusion::MultiGroupVars::Egroup(g), k + koff,
@@ -185,7 +267,7 @@ MultiGroup<temperature>::Initialize(ParameterInput *pin, StateDescriptor *materi
 
   std::string boundary_condition =
       pin->GetOrAddString("diffusion", "boundary_condition", "constant_temperature",
-                          {"constant_temperature", "zero_flux", "double_shell"},
+                          {"constant_temperature", "zero_flux", "double_shell", "python"},
                           "Boundary condition for diffusion.");
   if (boundary_condition == "constant_temperature") {
     auto Tbounds = pin->GetOrAddVector<Real>("diffusion", "boundary_T", {1.e5},
@@ -232,6 +314,34 @@ MultiGroup<temperature>::Initialize(ParameterInput *pin, StateDescriptor *materi
         GetRadBC<X3DIR, BCSide::Inner>(doubleshell_boundary_functor()));
     pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
         GetRadBC<X3DIR, BCSide::Outer>(doubleshell_boundary_functor()));
+  } else if (boundary_condition == "python") {
+#ifdef RIOT_ENABLE_PYTHON
+    // The python class is specified by name (and optionally file) in the
+    // <diffusion/python_bc> block. Parameters in <name/params> are set as attributes.
+    PARTHENON_REQUIRE(pin->DoesParameterExist("diffusion/python_bc", "name"),
+                      "boundary_condition=python requires a <diffusion/python_bc> block "
+                      "with name set to the python boundary class.");
+    auto py = std::make_shared<python_region_t>(pin, "diffusion/python_bc");
+    PARTHENON_REQUIRE(py->IsInitialized(),
+                      "Could not construct python class for diffusion boundaries. Set "
+                      "file in <diffusion/python_bc> to the file defining the class.");
+    PARTHENON_REQUIRE(py->py_obj.exists("rad_temperature"),
+                      "Python diffusion boundary class needs a rad_temperature method.");
+    pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
+        GetRadBC<X1DIR, BCSide::Inner>(python_bc_functor{py, "inner_x1"}));
+    pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
+        GetRadBC<X1DIR, BCSide::Outer>(python_bc_functor{py, "outer_x1"}));
+    pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
+        GetRadBC<X2DIR, BCSide::Inner>(python_bc_functor{py, "inner_x2"}));
+    pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
+        GetRadBC<X2DIR, BCSide::Outer>(python_bc_functor{py, "outer_x2"}));
+    pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
+        GetRadBC<X3DIR, BCSide::Inner>(python_bc_functor{py, "inner_x3"}));
+    pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
+        GetRadBC<X3DIR, BCSide::Outer>(python_bc_functor{py, "outer_x3"}));
+#else
+    PARTHENON_FAIL("Python diffusion boundary conditions require RIOT_ENABLE_PYTHON.");
+#endif
   }
   // Set boundary conditions for Poisson variables
 
