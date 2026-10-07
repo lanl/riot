@@ -42,33 +42,36 @@ namespace Hydro {
 //----------------------------------------------------------------------------------------
 //! \brief  Bulk quantities reconstructed directly to faces (set each pass by ReconCells).
 using set_bulk_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::pressure,
-                                 cell_variables::cell_averaged::bulk::bulk_modulus,
-                                 cell_variables::cell_averaged::bulk::velocity>;
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::velocity>;
 
-//! \brief  Bulk quantities accumulated (+=) on faces by summing over materials; these are
-//!         the scratch slots that must be zeroed before the material loop.
-using sum_bulk_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::rho,
-                                 cell_variables::cell_averaged::bulk::internal_energy>;
+//! \brief  Bulk quantities accumulated (+=) on faces by summing vfrac-weighted
+//!         per-material face states; these are the scratch slots that must be zeroed
+//!         before the material loop.
+using sum_bulk_recon_types = RiotLoop::IndexedVarTypeList<
+    cell_variables::cell_averaged::bulk::rho,
+    cell_variables::cell_averaged::bulk::internal_energy,
+    cell_variables::cell_averaged::bulk::pressure,
+    cell_variables::cell_averaged::bulk::bulk_modulus,
+    cell_variables::cell_averaged::bulk::electron_internal_energy>;
 
-//! \brief  Per-material quantities reconstructed to faces.
+//! \brief  Per-material quantities reconstructed to faces and kept for every material.
 using mat_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::mat::volume_fraction,
                                  cell_variables::material_averaged::rho,
                                  cell_variables::material_averaged::internal_energy>;
 
-//! \brief  Strength bulk quantity reconstructed directly to faces (set, like pressure);
-//!         used only on the strength ("strong") solver path. The bulk deviatoric stress
-//!         is NOT here -- it is accumulated (+=) by summing vfrac-weighted per-material
-//!         stresses, so it uses a separate 5-component scratch (see StrengthFluxes),
-//!         mirroring the set/sum split of the pure-hydro bulk quantities.
-using set_strength_bulk_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::shear_modulus>;
+//! \brief  Per-material quantities reconstructed to faces one material at a time and
+//!         accumulated directly into the summed bulk quantities.
+using mat_sum_recon_types = RiotLoop::IndexedVarTypeList<
+    cell_variables::material_averaged::pressure,
+    cell_variables::material_averaged::bulk_modulus,
+    cell_variables::material_averaged::electron_internal_energy>;
 
-//! \brief  Per-(strong-)material quantity reconstructed to faces on the strength path.
+//! \brief  Per-(strong-)material quantities reconstructed to faces on the strength path.
+//!         The same list types the summed (vfrac-weighted) bulk strength face states.
 using strength_mat_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::material_averaged::deviatoric_stress>;
+    RiotLoop::IndexedVarTypeList<cell_variables::material_averaged::deviatoric_stress,
+                                 cell_variables::material_averaged::shear_modulus>;
 
 static constexpr Real THETA = 1.99;
 
