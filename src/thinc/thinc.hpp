@@ -103,14 +103,14 @@ constexpr Real kMaxGeometricEnrichment = 1;
 //! \struct  THINC::IntrinsicState
 //! \brief
 struct IntrinsicState {
-  Real density, internal_energy;
+  Real density, internal_energy, pressure, bulk_modulus, electron_internal_energy;
 };
 
 //----------------------------------------------------------------------------------------
 //! \struct  THINC::PartialState
 //! \brief
 struct PartialState {
-  Real density, internal_energy;
+  Real density, internal_energy, pressure, bulk_modulus, electron_internal_energy;
 };
 
 //----------------------------------------------------------------------------------------
@@ -121,24 +121,43 @@ struct MaterialFaces {
 };
 
 //----------------------------------------------------------------------------------------
+//! \fn  void THINC::ReconstructIntrinsic
+//! \brief Limited linear face values of one intrinsic quantity, weighted by the face
+//!        volume fractions.
+KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(Real left, Real center, Real right,
+                                                 Real alpha_minus, Real alpha_plus,
+                                                 Real &minus, Real &plus) {
+  const Real dq =
+      RiotReconstruction::PiecewiseLinearSlope(left, center, right, kMaterialSlopeLimit);
+  minus = alpha_minus * (center - dq);
+  plus = alpha_plus * (center + dq);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  MaterialFaces THINC::ReconstructMaterial
 //! \brief Pass the center state as both neighbors on unsupported material stencils.
-//!        Material density and volumetric internal energy are limited separately, and
-//!        each face state is weighted by the face volume fraction.
+//!        Each intrinsic quantity is limited separately, and each face state is weighted
+//!        by the face volume fraction.
 KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const IntrinsicState &left,
                                                          const IntrinsicState &center,
                                                          const IntrinsicState &right,
                                                          Real alpha_minus,
                                                          Real alpha_plus) {
-  using RiotReconstruction::PiecewiseLinearSlope;
-  const Real drho = PiecewiseLinearSlope(left.density, center.density, right.density,
-                                         kMaterialSlopeLimit);
-  const Real du = PiecewiseLinearSlope(left.internal_energy, center.internal_energy,
-                                       right.internal_energy, kMaterialSlopeLimit);
-  return {
-      {alpha_minus * (center.density - drho),
-       alpha_minus * (center.internal_energy - du)},
-      {alpha_plus * (center.density + drho), alpha_plus * (center.internal_energy + du)}};
+  MaterialFaces f;
+  ReconstructIntrinsic(left.density, center.density, right.density, alpha_minus,
+                       alpha_plus, f.minus.density, f.plus.density);
+  ReconstructIntrinsic(left.internal_energy, center.internal_energy,
+                       right.internal_energy, alpha_minus, alpha_plus,
+                       f.minus.internal_energy, f.plus.internal_energy);
+  ReconstructIntrinsic(left.pressure, center.pressure, right.pressure, alpha_minus,
+                       alpha_plus, f.minus.pressure, f.plus.pressure);
+  ReconstructIntrinsic(left.bulk_modulus, center.bulk_modulus, right.bulk_modulus,
+                       alpha_minus, alpha_plus, f.minus.bulk_modulus,
+                       f.plus.bulk_modulus);
+  ReconstructIntrinsic(left.electron_internal_energy, center.electron_internal_energy,
+                       right.electron_internal_energy, alpha_minus, alpha_plus,
+                       f.minus.electron_internal_energy, f.plus.electron_internal_energy);
+  return f;
 }
 
 // Four-point Gauss-Legendre rule on the unit cell [-1/2, 1/2].
@@ -488,7 +507,8 @@ template <typename Pack, typename BaseRange, typename Range, typename Delta,
 KOKKOS_INLINE_FUNCTION void
 ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &range, int b,
                           Delta dn, MatScratch &mat_minus, MatScratch &mat_plus,
-                          SumScratch &sum_minus, SumScratch &sum_plus) {
+                          SumScratch &sum_minus, SumScratch &sum_plus,
+                          const bool electrons) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace cm = cell_variables::material_averaged;
@@ -500,19 +520,30 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
       active += pm(ccmat::volume_fraction(), idx) > 0;
     }
     if (active <= 1) return;
-    Real rho_m = 0, rho_p = 0, energy_m = 0, energy_p = 0;
+    PartialState sum_m{0, 0, 0, 0, 0}, sum_p{0, 0, 0, 0, 0};
+    auto accumulate = [](PartialState &sum, const PartialState &face) {
+      sum.density += face.density;
+      sum.internal_energy += face.internal_energy;
+      sum.pressure += face.pressure;
+      sum.bulk_modulus += face.bulk_modulus;
+      sum.electron_internal_energy += face.electron_internal_energy;
+    };
     for (int m = 0; m < count; ++m) {
       auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
+      auto state = [&](auto i) -> IntrinsicState {
+        return {pm(cm::rho(), i), pm(cm::internal_energy(), i), pm(cm::pressure(), i),
+                pm(cm::bulk_modulus(), i),
+                electrons ? pm(cm::electron_internal_energy(), i) : 0.0};
+      };
       const Real alpha = pm(ccmat::volume_fraction(), idx);
       const Real left = pm(ccmat::volume_fraction(), idx - dn);
       const Real right = pm(ccmat::volume_fraction(), idx + dn);
-      const Real rho = pm(cm::rho(), idx);
-      const IntrinsicState center{rho, pm(cm::internal_energy(), idx)};
+      const IntrinsicState center = state(idx);
       IntrinsicState state_left = center, state_right = center;
-      if (alpha > 0 && left > 0 && right > 0 && rho > 0 &&
+      if (alpha > 0 && left > 0 && right > 0 && center.density > 0 &&
           pm(ccmat::rho(), idx - dn) > 0 && pm(ccmat::rho(), idx + dn) > 0) {
-        state_left = {pm(cm::rho(), idx - dn), pm(cm::internal_energy(), idx - dn)};
-        state_right = {pm(cm::rho(), idx + dn), pm(cm::internal_energy(), idx + dn)};
+        state_left = state(idx - dn);
+        state_right = state(idx + dn);
       }
       const auto faces = ReconstructMaterial(state_left, center, state_right,
                                              mat_minus(ccmat::volume_fraction(), m, idx),
@@ -521,15 +552,20 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
       mat_plus(cm::rho(), m, idx) = faces.plus.density;
       mat_minus(cm::internal_energy(), m, idx) = faces.minus.internal_energy;
       mat_plus(cm::internal_energy(), m, idx) = faces.plus.internal_energy;
-      rho_m += faces.minus.density;
-      rho_p += faces.plus.density;
-      energy_m += faces.minus.internal_energy;
-      energy_p += faces.plus.internal_energy;
+      accumulate(sum_m, faces.minus);
+      accumulate(sum_p, faces.plus);
     }
-    sum_minus(ccbulk::rho(), idx) = rho_m;
-    sum_plus(ccbulk::rho(), idx) = rho_p;
-    sum_minus(ccbulk::internal_energy(), idx) = energy_m;
-    sum_plus(ccbulk::internal_energy(), idx) = energy_p;
+    auto store = [&](SumScratch &sum, const PartialState &face) {
+      sum(ccbulk::rho(), idx) = face.density;
+      sum(ccbulk::internal_energy(), idx) = face.internal_energy;
+      sum(ccbulk::pressure(), idx) = face.pressure;
+      sum(ccbulk::bulk_modulus(), idx) = face.bulk_modulus;
+      if (electrons) {
+        sum(ccbulk::electron_internal_energy(), idx) = face.electron_internal_energy;
+      }
+    };
+    store(sum_minus, sum_m);
+    store(sum_plus, sum_p);
   });
 }
 
@@ -594,16 +630,19 @@ ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &ba
     const bool supported = alpha > 0 &&
                            material(ccmat::volume_fraction(), idx - dn) > 0 &&
                            material(ccmat::volume_fraction(), idx + dn) > 0;
+    auto reconstruct = [&](const auto var) {
+      const Real q = alpha > 0 ? strong(var, idx) : 0;
+      const Real dq = supported ? RiotReconstruction::PiecewiseLinearSlope(
+                                      strong(var, idx - dn), q, strong(var, idx + dn),
+                                      kMaterialSlopeLimit)
+                                : 0;
+      stress_minus(var, s, idx) = q - dq;
+      stress_plus(var, s, idx) = q + dq;
+    };
     for (int c = 0; c < 5; ++c) {
-      const Real stress = alpha > 0 ? strong(cm::deviatoric_stress(c), idx) : 0;
-      const Real ds =
-          supported ? RiotReconstruction::PiecewiseLinearSlope(
-                          strong(cm::deviatoric_stress(c), idx - dn), stress,
-                          strong(cm::deviatoric_stress(c), idx + dn), kMaterialSlopeLimit)
-                    : 0;
-      stress_minus(cm::deviatoric_stress(c), s, idx) = stress - ds;
-      stress_plus(cm::deviatoric_stress(c), s, idx) = stress + ds;
+      reconstruct(cm::deviatoric_stress(c));
     }
+    reconstruct(cm::shear_modulus());
   });
 }
 } // namespace THINC
