@@ -13,6 +13,7 @@
 // This file was made in part with generative AI.
 
 // C++ includes
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -249,6 +250,27 @@ inline auto GetConstantFluxRadBC() {
   };
 }
 
+#ifdef RIOT_ENABLE_PYTHON
+using rad_bc_python_t = std::shared_ptr<python_region_t>;
+#else
+using rad_bc_python_t = std::nullptr_t;
+#endif
+
+// Builds the radiation boundary function of the given type for a single face
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+parthenon::BValFunc MakeRadBC(const std::string &type, const std::string &face,
+                              Real Tbound, const rad_bc_python_t &py) {
+  if (type == "constant_temperature")
+    return GetRadBC<DIR, SIDE>(constantT_functor(Tbound));
+  if (type == "zero_flux") return GetConstantFluxRadBC<DIR, SIDE>();
+  if (type == "double_shell") return GetRadBC<DIR, SIDE>(doubleshell_boundary_functor());
+#ifdef RIOT_ENABLE_PYTHON
+  if (type == "python") return GetRadBC<DIR, SIDE>(python_bc_functor{py, face});
+#endif
+  PARTHENON_FAIL("Unknown diffusion boundary condition " + type + " on " + face);
+  return {};
+}
+
 } // unnamed namespace
 
 namespace RadiationDiffusion {
@@ -265,84 +287,66 @@ MultiGroup<temperature>::Initialize(ParameterInput *pin, StateDescriptor *materi
   using namespace parthenon::BoundaryFunction;
   using namespace MultiGroupVars;
 
-  std::string boundary_condition =
-      pin->GetOrAddString("diffusion", "boundary_condition", "constant_temperature",
-                          {"constant_temperature", "zero_flux", "double_shell", "python"},
-                          "Boundary condition for diffusion.");
-  if (boundary_condition == "constant_temperature") {
-    auto Tbounds = pin->GetOrAddVector<Real>("diffusion", "boundary_T", {1.e5},
-                                             "Boundary temperatures.");
+  // Either a single boundary condition type for all faces or one per face, ordered
+  // ix1, ox1, ix2, ox2, ix3, ox3
+  const std::vector<std::string> bc_options{"constant_temperature", "zero_flux",
+                                            "double_shell", "python"};
+  auto bc_types = pin->GetOrAddVector<std::string>(
+      "diffusion", "boundary_condition", {"constant_temperature"},
+      "Boundary condition for diffusion, either one type for all faces or one per face "
+      "(ix1, ox1, ix2, ox2, ix3, ox3). Options are constant_temperature, zero_flux, "
+      "double_shell, and python.");
+  if (bc_types.size() == 1) bc_types = std::vector<std::string>(6, bc_types[0]);
+  if (bc_types.size() != 6)
+    PARTHENON_FAIL("diffusion/boundary_condition needs either one type or one per face.");
+  for (const auto &type : bc_types) {
+    if (std::find(bc_options.begin(), bc_options.end(), type) == bc_options.end())
+      PARTHENON_FAIL("Unknown diffusion boundary condition " + type);
+  }
+  auto uses_bc = [&](const std::string &type) {
+    return std::find(bc_types.begin(), bc_types.end(), type) != bc_types.end();
+  };
+
+  std::vector<Real> Tbounds(6, 0.0);
+  if (uses_bc("constant_temperature")) {
+    Tbounds = pin->GetOrAddVector<Real>("diffusion", "boundary_T", {1.e5},
+                                        "Boundary temperatures.");
     if (Tbounds.size() == 1) Tbounds = std::vector<Real>(6, Tbounds[0]);
     if (Tbounds.size() < 6)
       PARTHENON_FAIL("Need a boundary temperature for each side of each dimension.");
+  }
 
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Inner>(constantT_functor(Tbounds[0])));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Outer>(constantT_functor(Tbounds[1])));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Inner>(constantT_functor(Tbounds[2])));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Outer>(constantT_functor(Tbounds[3])));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Inner>(constantT_functor(Tbounds[4])));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Outer>(constantT_functor(Tbounds[5])));
-  } else if (boundary_condition == "zero_flux") {
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
-        GetConstantFluxRadBC<X1DIR, BCSide::Inner>());
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
-        GetConstantFluxRadBC<X1DIR, BCSide::Outer>());
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
-        GetConstantFluxRadBC<X2DIR, BCSide::Inner>());
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
-        GetConstantFluxRadBC<X2DIR, BCSide::Outer>());
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
-        GetConstantFluxRadBC<X3DIR, BCSide::Inner>());
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
-        GetConstantFluxRadBC<X3DIR, BCSide::Outer>());
-  } else if (boundary_condition == "double_shell") {
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Inner>(doubleshell_boundary_functor()));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Outer>(doubleshell_boundary_functor()));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Inner>(doubleshell_boundary_functor()));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Outer>(doubleshell_boundary_functor()));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Inner>(doubleshell_boundary_functor()));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Outer>(doubleshell_boundary_functor()));
-  } else if (boundary_condition == "python") {
+  rad_bc_python_t py{};
+  if (uses_bc("python")) {
 #ifdef RIOT_ENABLE_PYTHON
     // The python class is specified by name (and optionally file) in the
     // <diffusion/python_bc> block. Parameters in <name/params> are set as attributes.
     PARTHENON_REQUIRE(pin->DoesParameterExist("diffusion/python_bc", "name"),
                       "boundary_condition=python requires a <diffusion/python_bc> block "
                       "with name set to the python boundary class.");
-    auto py = std::make_shared<python_region_t>(pin, "diffusion/python_bc");
+    py = std::make_shared<python_region_t>(pin, "diffusion/python_bc");
     PARTHENON_REQUIRE(py->IsInitialized(),
                       "Could not construct python class for diffusion boundaries. Set "
                       "file in <diffusion/python_bc> to the file defining the class.");
     PARTHENON_REQUIRE(py->py_obj.exists("rad_temperature"),
                       "Python diffusion boundary class needs a rad_temperature method.");
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Inner>(python_bc_functor{py, "inner_x1"}));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
-        GetRadBC<X1DIR, BCSide::Outer>(python_bc_functor{py, "outer_x1"}));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Inner>(python_bc_functor{py, "inner_x2"}));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
-        GetRadBC<X2DIR, BCSide::Outer>(python_bc_functor{py, "outer_x2"}));
-    pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Inner>(python_bc_functor{py, "inner_x3"}));
-    pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
-        GetRadBC<X3DIR, BCSide::Outer>(python_bc_functor{py, "outer_x3"}));
 #else
     PARTHENON_FAIL("Python diffusion boundary conditions require RIOT_ENABLE_PYTHON.");
 #endif
   }
+
+  pkg->UserBoundaryFunctions[BoundaryFace::inner_x1].push_back(
+      MakeRadBC<X1DIR, BCSide::Inner>(bc_types[0], "inner_x1", Tbounds[0], py));
+  pkg->UserBoundaryFunctions[BoundaryFace::outer_x1].push_back(
+      MakeRadBC<X1DIR, BCSide::Outer>(bc_types[1], "outer_x1", Tbounds[1], py));
+  pkg->UserBoundaryFunctions[BoundaryFace::inner_x2].push_back(
+      MakeRadBC<X2DIR, BCSide::Inner>(bc_types[2], "inner_x2", Tbounds[2], py));
+  pkg->UserBoundaryFunctions[BoundaryFace::outer_x2].push_back(
+      MakeRadBC<X2DIR, BCSide::Outer>(bc_types[3], "outer_x2", Tbounds[3], py));
+  pkg->UserBoundaryFunctions[BoundaryFace::inner_x3].push_back(
+      MakeRadBC<X3DIR, BCSide::Inner>(bc_types[4], "inner_x3", Tbounds[4], py));
+  pkg->UserBoundaryFunctions[BoundaryFace::outer_x3].push_back(
+      MakeRadBC<X3DIR, BCSide::Outer>(bc_types[5], "outer_x3", Tbounds[5], py));
   // Set boundary conditions for Poisson variables
 
   bool flux_limit =
