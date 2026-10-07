@@ -22,7 +22,7 @@ riot.input(
 
 riot.input(
     "parthenon/job",
-    problem_id="hohlraum",  # problem ID: basename of output filenames
+    problem_id="hohlraum_rz",  # problem ID: basename of output filenames
 )
 
 riot.input(
@@ -44,27 +44,27 @@ riot.input(
 riot.input(
     "parthenon/mesh",
     refinement="none",  # refinement type
-    nx1=128,  # Number of zones in X1-direction
+    nx1=32,  # Number of zones in X1-direction
     x1min=0.0,  # minimum value of X1
-    x1max=2.0,  # maximum value of X1
+    x1max=1.0,  # maximum value of X1
     ix1_bc="outflow",  # Inner-X1 boundary condition flag
     ox1_bc="outflow",  # Outer-X1 boundary condition flag
-    nx2=128,  # Number of zones in X2-direction
+    nx2=64,  # Number of zones in X2-direction
     x2min=0.0,  # minimum value of X2
-    x2max=2.0,  # maximum value of X2
+    x2max=1.0,  # maximum value of X2
     ix2_bc="outflow",  # Inner-X2 boundary condition flag
     ox2_bc="outflow",  # Outer-X2 boundary condition flag
     nx3=1,  # Number of zones in X3-direction
-    x3min=-0.5,  # minimum value of X3
-    x3max=0.5,  # maximum value of X3
+    x3min=0.0,  # minimum value of X3
+    x3max=6.283185307179586,  # maximum value of X3
     ix3_bc="periodic",  # Inner-X3 boundary condition flag
     ox3_bc="periodic",  # Outer-X3 boundary condition flag
 )
 
 riot.input(
     "parthenon/meshblock",
-    nx1=64,  # meshblock size in X1-direction
-    nx2=64,  # meshblock size in X2-direction
+    nx1=16,  # meshblock size in X1-direction
+    nx2=32,  # meshblock size in X2-direction
     nx3=1,  # meshblock size in X3-direction
 )
 
@@ -113,10 +113,11 @@ riot.input(
 
 riot.input(
     "radiation_transport",
-    do_jacobi=False,  # enable implicit Jacobi solver
-    do_explicit=True,  # enable explicit transport
-    nlevel=2,  # level of geodesic mesh
-    fv_fix=False,  # use centroid unit normals
+    do_jacobi=True,  # enable implicit Jacobi solver
+    do_explicit=False,  # enable explicit transport
+    angular_mesh="latlon",
+    nlevel=4,  # RZ: 8 latitude x 8 longitude cells = 64 evolved angles
+    fv_fix=True,  # exact angular cell averages preserve cylindrical cancellation
     coupling=False,  # flag to enable radiation source term
     affect_fluid=False,  # feedback on the fluid
     fixed_pgen_opac=True,  # do not update opacities set in pgen
@@ -132,14 +133,13 @@ riot.input(
 
 riot.input(
     "radiation_transport/jacobi",
-    dt_ratio_hyperbolic=100.0,  # Multiple of light-crossing time
+    dt_ratio_hyperbolic=2.0,  # Multiple of light-crossing time
     verbose=1,  # Verbosity
 )
 
 riot.input(
     "radiation_transport/drive",
     trad_bc=1.0,  # uniform boundary source
-    ix1_bc="drive",
     ix2_bc="drive",
 )
 

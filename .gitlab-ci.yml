@@ -114,7 +114,7 @@ setup_ccache_rocinante:
     - batch
   variables:
     CLUSTER: rocinante
-    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --qos ci --time=02:00:00"
     CCACHE_TAG: setup
   only:
     - main
@@ -282,7 +282,7 @@ unit_rocinante:
     - batch
   variables:
     CLUSTER: rocinante
-    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --qos ci --time=02:00:00"
     CCACHE_TAG: rocinante
   only:
     - main
@@ -310,7 +310,7 @@ regression_rocinante:
     - batch
   variables:
     CLUSTER: rocinante
-    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --time=02:00:00"
+    SCHEDULER_PARAMETERS: "-N 1 -A asc-ci -p ci --reservation ci --qos ci --time=02:00:00"
     CCACHE_TAG: rocinante
     RIOT_MPI_COMMAND: srun
   only:
