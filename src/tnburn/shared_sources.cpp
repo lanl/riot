@@ -55,14 +55,7 @@ parthenon::TaskStatus SharedSources(MeshData<Real> *sourcein, MeshData<Real> *so
   flags.Exclude(BurnFlag); // to avoid double counting isotopes
   // Only mass-weighted quantities (rho*q, associated with a separate primitive q) pick
   // up a source q*drho; self-associated (per-volume) quantities receive none.
-  auto [flagged_vars, assoc_vars] = RiotUtils::GetAssociatedVars(state, flags);
-  std::vector<std::string> conserved_vars, prims_vars;
-  for (int n = 0; n < flagged_vars.size(); n++) {
-    if (flagged_vars[n] != assoc_vars[n]) {
-      conserved_vars.push_back(flagged_vars[n]);
-      prims_vars.push_back(assoc_vars[n]);
-    }
-  }
+  auto [conserved_vars, prims_vars] = RiotUtils::GetPrimitiveAssociatedVars(state, flags);
   static std::vector<bool> use_regex(conserved_vars.size(), false);
 
   static auto desc_anon_state =
