@@ -194,11 +194,10 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::LocalSolve(
   MaterialHelpers mat_helpers(pmesh, "multigroup_diffusion_package", temperature());
   SourceHelper source_helper(pmesh, dt);
 
-  static const auto desc_base =
-      parthenon::MakePackDescriptor<temperature, ccbulk::internal_energy, ccbulk::rho,
-                                    ccmat::rho, cm::rho, ccmat::volume_fraction, Egroup,
-                                    Fgroup, kappa_cell, kappa_face, dTc, dSdT, face_area,
-                                    volume>(md_base.get());
+  static const auto desc_base = parthenon::MakePackDescriptor<
+      temperature, ccbulk::internal_energy, ccbulk::rho, ccmat::rho, cm::rho,
+      ccmat::volume_fraction, Egroup, Fgroup, kappa_cell, kappa_face, dTc, dSdT,
+      face_area, volume, cm::ionization_zbar, cm::lr_cache, cm::lT_cache>(md_base.get());
   auto pack_base = desc_base.GetPack(md_base.get());
 
   static const auto desc_star =
@@ -329,7 +328,8 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::CorrectTotalEnergy(
   static const auto desc_base =
       parthenon::MakePackDescriptor<kappa_face, Fgroup, Egroup, temperature, ccbulk::rho,
                                     internal_energy, ccbulk::total_material_energy,
-                                    ccmat::rho, cm::rho>(md_base.get());
+                                    ccmat::rho, cm::rho, cm::ionization_zbar,
+                                    cm::lr_cache, cm::lT_cache>(md_base.get());
   auto pack_base = desc_base.GetPack(md_base.get());
 
   MaterialHelpers mat_helpers(md_base->GetMeshPointer(), "multigroup_diffusion_package",

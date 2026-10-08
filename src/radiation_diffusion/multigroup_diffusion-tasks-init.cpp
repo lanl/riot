@@ -75,7 +75,8 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::InitializeRadiationQuantitie
   static const auto desc_base =
       parthenon::MakePackDescriptor<temperature, ccbulk::internal_energy, ccbulk::rho,
                                     ccmat::rho, cm::rho, ccmat::volume_fraction, Egroup,
-                                    Fgroup, kappa_cell, kappa_face, dTc, dSdT>(
+                                    Fgroup, kappa_cell, kappa_face, dTc, dSdT,
+                                    cm::ionization_zbar, cm::lr_cache, cm::lT_cache>(
           md_base.get());
   auto pack_base = desc_base.GetPack(md_base.get());
 

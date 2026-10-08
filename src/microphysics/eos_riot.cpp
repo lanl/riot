@@ -116,14 +116,16 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     if (pin->DoesParameterExist(block_name, "sesame_id")) {
       auto matid = pin->GetInteger(block_name, "sesame_id",
                                    "Sesame material ID. Takes precedence over a name.");
-      RETURN(load, Shift(SpinerEOSDependsRhoT(filename, matid, tsplit, reprod), shift,
-                         reference_sie));
+      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoT(filename, matid, tsplit, reprod),
+                                shift, reference_sie),
+                          zsplit));
     } else if (pin->DoesParameterExist(block_name, "sesame_name")) {
       auto name =
           pin->GetString(block_name, "sesame_name",
                          "Material name in SP5 file. Matid takes precedence if set.");
-      RETURN(load, Shift(SpinerEOSDependsRhoT(filename, name, tsplit, reprod), shift,
-                         reference_sie));
+      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoT(filename, name, tsplit, reprod),
+                                shift, reference_sie),
+                          zsplit));
     } else {
       std::stringstream msg;
       msg << "Neither sesame_id nor sesame_name exists for material " << block_name
@@ -150,14 +152,16 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     if (pin->DoesParameterExist(block_name, "sesame_id")) {
       auto matid = pin->GetInteger(block_name, "sesame_id",
                                    "Sesame material ID. Takes precedence over a name.");
-      RETURN(load, Shift(SpinerEOSDependsRhoSie(filename, matid, tsplit, reprod), shift,
-                         reference_sie));
+      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoSie(filename, matid, tsplit, reprod),
+                                shift, reference_sie),
+                          zsplit));
     } else if (pin->DoesParameterExist(block_name, "sesame_name")) {
       auto name =
           pin->GetString(block_name, "sesame_name",
                          "Material name in SP5 file. Matid takes precedence if set.");
-      RETURN(load, Shift(SpinerEOSDependsRhoSie(filename, name, tsplit, reprod), shift,
-                         reference_sie));
+      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoSie(filename, name, tsplit, reprod),
+                                shift, reference_sie),
+                          zsplit));
     } else {
       std::stringstream msg;
       msg << "Neither sesame_id nor sesame_name exists for material " << block_name
