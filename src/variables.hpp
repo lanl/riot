@@ -122,6 +122,20 @@ VARIABLE_SCALAR(c.c.bulk, rho_bhr_ST, false);
 VARIABLE_SCALAR(c.c.bulk, rho_bhr_SD, false);
 VARIABLE_SCALAR(c.c.bulk, electron_thermal_conductivity_face, false);
 VARIABLE_SCALAR(c.c.bulk, ion_shear_viscosity, false);
+// NOTE(): Ideal-MHD derived state. The AUTHORITATIVE magnetic field lives on faces
+// (face_variables::bulk::magnetic_field); everything here is reconstructed from it by
+// MHD::SetDerivedMagneticFields and must never be advanced independently.
+//
+// These are deliberately not named "B": bulk_modulus / bmod already occupy that letter
+// in RIOT, and both appear together in the fast-magnetosonic-speed kernels.
+//
+// magnetic_field and magnetic_energy are registered Metadata::WithFluxes, but ONLY to
+// borrow their flux registers as stage scratch -- the transverse induction fluxes and
+// the face magnetic pressure, respectively. They are Metadata::Derived, which is what
+// keeps sparse_update::UpdateToNextStage from applying a flux divergence to them.
+VARIABLE_VECTOR(c.c.bulk, magnetic_field, false, 3);
+VARIABLE_SCALAR(c.c.bulk, magnetic_energy, false);
+VARIABLE_SCALAR(c.c.bulk, div_magnetic_field, false);
 VARIABLE_SCALAR(c.c, cell_delta, false);
 VARIABLE_SCALAR(c.c.bulk, laser_deposition, false);
 VARIABLE_SCALAR(c.c.bulk, laser_energy_density, false);
@@ -191,12 +205,27 @@ VARIABLE_SCALAR(c.m, lr_cache, true);
 } // namespace material_averaged
 } // namespace cell_variables
 
-// Face-centered, material-averaged quantities. Presently only the diffusive
-// mass flux register used by the BHR mix model lives here.
+// Face-centered quantities.
 namespace face_variables {
 namespace mat {
 VARIABLE_FACE(f.m, diffusive_fluxes, true);
 } // namespace mat
+namespace bulk {
+// NOTE(): The evolved ideal-MHD magnetic field: the component NORMAL to each face.
+// This is a scalar-per-face variable, so its three components live in the F1/F2/F3
+// slots of one field, addressed as v(b, TE::F1, magnetic_field(), k, j, i).
+//
+// Unlike every other face field in RIOT, this one must NOT carry
+// Metadata::CellMemAligned. It is a genuine face field: it is ghost-exchanged, it is
+// prolongated/restricted with divergence-preserving operators, and its storage needs
+// the extra element per normal direction that CellMemAligned suppresses.
+//
+// Registered Metadata::WithFluxes, which makes Parthenon automatically allocate an
+// EDGE-centered flux register for it (interface/metadata.cpp:189-197). That edge
+// register IS the EMF -- there is no separate EMF variable -- and it is what gets
+// corrected at coarse/fine boundaries by the standard flux-correction tasks.
+VARIABLE_FACE(f.bulk, magnetic_field, false);
+} // namespace bulk
 } // namespace face_variables
 namespace node_variables {
 VARIABLE_SCALAR(n, electron_number_density, false);

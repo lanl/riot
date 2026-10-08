@@ -56,6 +56,11 @@ set (SRC_LIST
   microphysics/pte_closure_ideal.cpp
   microphysics/strength_models.hpp
 
+  mhd/mhd.cpp
+  mhd/mhd.hpp
+  mhd/mhd_helpers.hpp
+  mhd/riemann_mhd.hpp
+
   mix/anon_fluxes.cpp
   mix/mix.cpp
   mix/mix.hpp
@@ -102,6 +107,7 @@ set (SRC_LIST
   riot_pgen/ionized_shocktube_analytic.cpp
   riot_pgen/linear_modes.hpp
   riot_pgen/linear_modes.cpp
+    riot_pgen/mhd_problems.cpp
   riot_pgen/pgen.hpp
   riot_pgen/pgen.cpp
   riot_pgen/pipe.cpp
