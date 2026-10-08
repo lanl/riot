@@ -72,7 +72,7 @@ AI-assisted coding
 generation, a disclaimer must be made in a comment in the relevant
 file. For example, you might add a comment like this one:
 
-..code-block:: c++
+.. code-block:: c++
 
   // This file was made in part with generative AI.
 
