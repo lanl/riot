@@ -56,7 +56,7 @@ using sum_bulk_recon_types =
 using mat_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::mat::volume_fraction,
                                  cell_variables::material_averaged::rho,
-                                 cell_variables::cell_averaged::mat::internal_energy>;
+                                 cell_variables::material_averaged::internal_energy>;
 
 //! \brief  Strength bulk quantity reconstructed directly to faces (set, like pressure);
 //!         used only on the strength ("strong") solver path. The bulk deviatoric stress
