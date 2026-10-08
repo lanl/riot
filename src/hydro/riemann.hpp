@@ -52,6 +52,9 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_fleischmann(
   Real phi = std::sin(std::min(1.0, Ma_local / 0.1) * 0.5 * M_PI);
   Real ss = (sl >= 0) * vpl + (sr <= 0) * vpr +
             (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + (Pr - Pl)) / (rhocsl - rhocsr);
+  // both star states are used below, so keep the contact strictly inside the wave fan
+  const Real ds = (sl * sr < 0) * 1.e-8 * (sr - sl);
+  ss = std::min(std::max(ss, sl + ds), sr - ds);
 
   const Real rhos_rhol = (sl - vpl) / (sl - ss);
   const Real rhos_rhor = (sr - vpr) / (sr - ss);
@@ -334,8 +337,9 @@ lr_to_flux_hll(Real rhol, Real rhor, Real v1l, Real v1r, Real v2l, Real v2r, Rea
   const Real hll_flag = (sl < 0.0 && sr > 0.0);
   const Real isrsl = hll_flag ? 1.0 / (sr - sl) : 0.0;
 
-  const Real ss =
+  Real ss =
       (sl >= 0.0) * vpl + (sr <= 0.0) * vpr + hll_flag * frho_num * isrsl / rho_upwind;
+  ss = std::min(std::max(ss, sl), sr);
 
   const Real l_flag = 1.0 * (ss >= 0.0);
   const Real r_flag = 1.0 - l_flag;
@@ -434,6 +438,7 @@ KOKKOS_INLINE_FUNCTION Real lr_to_flux_strength(
   Real ss =
       (sl >= 0) * vpl + (sr <= 0) * vpr +
       (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + Pr - sddr - Pl + sddl) * irhocslr;
+  ss = std::min(std::max(ss, sl), sr);
 
   // flag to determine if we're inside the longitudinal waves
   const Real is_subsonic = 1.0 * (sl * sr < 0);
