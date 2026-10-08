@@ -116,6 +116,7 @@ riot.input(
     do_jacobi=False,  # enable implicit Jacobi solver
     do_explicit=True,  # enable explicit transport
     nlevel=2,  # level of geodesic mesh
+    fv_fix=False,  # use centroid unit normals
     coupling=False,  # flag to enable radiation source term
     affect_fluid=False,  # feedback on the fluid
     fixed_pgen_opac=True,  # do not update opacities set in pgen
@@ -126,14 +127,13 @@ riot.input(
 riot.input(
     "radiation_transport/explicit",
     dt_ratio_hyperbolic=1000.0,  # Multiple of light-crossing time
-    verbose=2,  # Verbosity
+    verbose=1,  # Verbosity
 )
 
 riot.input(
     "radiation_transport/jacobi",
     dt_ratio_hyperbolic=100.0,  # Multiple of light-crossing time
-    dt_ratio_lag=-1,
-    verbose=2,  # Verbosity
+    verbose=1,  # Verbosity
 )
 
 riot.input(
