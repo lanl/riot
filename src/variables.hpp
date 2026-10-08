@@ -297,6 +297,7 @@ DNAME(u1);
 
 namespace metadata {
 constexpr char OperatorSplit[] = "OperatorSplit";
+constexpr char KinematicAdvected[] = "KinematicAdvected";
 
 // Some variables need to be tagged with the package they are relevant
 // for for the purpose of anonymous advection.

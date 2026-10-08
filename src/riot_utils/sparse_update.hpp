@@ -136,13 +136,19 @@ SumTermsHelper(const IndexRangeType &idx_range, const int b, const PackView_t up
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::UpdateToNextStage
 //! \brief
+template <bool Kinematic>
 inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
                                     const Real gam0, const Real gam1, const Real beta_dt,
                                     const dudt_vec_t &dudt_array) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using parthenon::PDOpt;
   using parthenon::variable_names::any;
-  std::vector<MetadataFlag> flags({Metadata::WithFluxes});
+  auto MetadataUpdate = Metadata::WithFluxes;
+  if constexpr (Kinematic) {
+    auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
+    MetadataUpdate = MetadataKinematicAdvected;
+  }
+  std::vector<MetadataFlag> flags({MetadataUpdate});
 
   auto pm = umd->GetParentPointer();
   const int ndim = pm->ndim;
