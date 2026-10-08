@@ -47,7 +47,7 @@ endif()
 cmake_minimum_required(VERSION 3.26)
 project(riot
   LANGUAGES C CXX
-  VERSION 2026.08.29
+  VERSION 2026.10.08
 )
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS On)
