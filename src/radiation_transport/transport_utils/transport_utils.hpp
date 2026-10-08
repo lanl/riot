@@ -122,7 +122,7 @@ struct FluxUtils {
 };
 
 struct RootUtils {
-  Real tol = 0.0; // coupling tolerance for advanced temperature
+  Real tol = 0.0; // relative temperature tolerance for advanced temperature
   int titer = 0;  // max #iter for advanced temp root find
 };
 
@@ -554,10 +554,25 @@ InternalEnergy(const Real temp, const int nm1, const EOS eos, const EOSMAP map,
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  Real PolyRoot
-//! \brief Constructs polynomial for temperature root find
+//! \struct RootResidual
+//! \brief Energy residual of the advanced temperature root find, with the pieces needed
+//! to judge its convergence
+struct RootResidual {
+  Real res = 0.0;   // absorption - emission + ubulk - u(T)
+  Real emiss = 0.0; // emission term, a lower bound on T |d(res)/dT| (see PolyRoot)
+  Real scale = 0.0; // sum of term magnitudes, setting the roundoff floor of res
+};
+
+//----------------------------------------------------------------------------------------
+//! \fn  RootResidual PolyRoot
+//! \brief Constructs polynomial for temperature root find.  The residual is left
+//! unnormalized: any energy scale built from ubulk and u(T) depends on the arbitrary zero
+//! of the EOS energy (which may also be negative, e.g. in tension).
+//! NOTE: Each band emissivity satisfies T d(eps_g)/dT >= eps_g (the Planck function obeys
+//! T dB_nu/dT = B_nu x e^x / (e^x - 1) >= B_nu), so for cv >= 0 the emission term bounds
+//! T |d(res)/dT| from below.
 template <typename V1, typename EOS, typename EOSMAP, typename V2>
-KOKKOS_FORCEINLINE_FUNCTION static Real
+KOKKOS_FORCEINLINE_FUNCTION static RootResidual
 PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
          // Radiation
          const int ngroups, const parthenon::ParArray1D<Real> fbnd, const V1 vr,
@@ -567,20 +582,24 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
          const int b, const int k, const int j, const int i) {
   namespace ccrad = cell_variables::cell_averaged::rad;
 
-  Real term = 0.0;
+  Real absr = 0.0;
+  Real emis = 0.0;
   for (int gg = 0; gg < ngroups; ++gg) {
     const Real cdtsiga = cdt * vr(b, ccrad::aa(gg), k, j, i);
     const Real &aa1 = vr(b, ccrad::s1(gg), k, j, i);
     const Real &aa2 = vr(b, ccrad::s2(gg), k, j, i);
     const Real &aa3 = vr(b, ccrad::s3(gg), k, j, i);
     const Real &ee = Emissivity(gg, tp1, fbnd, ngroups, uu);
-    term += ee * cdtsiga * (aa1 * aa3 - 1.0) + cdtsiga * aa2 * aa3;
+    absr += cdtsiga * aa2 * aa3;
+    emis += ee * cdtsiga * (1.0 - aa1 * aa3);
   }
-  const Real &aa = term;
-  const Real &bb = ubulk;
-  const Real &cc = InternalEnergy(tp1, nm1, eos, map, vu, b, k, j, i);
-  const Real iwght = 1.0 / std::max(1.0e-12, std::abs(aa) + std::abs(bb) + std::abs(cc));
-  return iwght * (aa + bb - cc);
+  const Real cc = InternalEnergy(tp1, nm1, eos, map, vu, b, k, j, i);
+
+  RootResidual rr;
+  rr.res = absr - emis + ubulk - cc;
+  rr.emiss = std::max(emis, 0.0);
+  rr.scale = std::abs(absr) + std::abs(emis) + std::abs(ubulk) + std::abs(cc);
+  return rr;
 }
 
 //----------------------------------------------------------------------------------------
@@ -610,91 +629,116 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     ubase = InternalEnergy(tbase, nm1, eos, map, vu, b, k, j, i);
   }
 
-  // See if guess itself is within tolerance
-  const Real yg =
-      PolyRoot(temp, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-  if (std::abs(yg) <= ru.tol) return true;
+  // Residual at temperature tt
+  auto residual = [&](const Real tt) -> RootResidual {
+    return PolyRoot(tt, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
+  };
 
-  // Attempt to bound the root
+  // Convergence test.  The tolerance is a relative temperature accuracy: accept tt when
+  // the linearized error |res / (d(res)/dT)| <= tol * tt, which is independent of the
+  // zero (and sign) of the EOS energy.  |d(res)/dT| is bounded from below by emiss / tt
+  // (see PolyRoot), or estimated by a secant slope (zero when unavailable).  The residual
+  // cannot be resolved below roundoff in its largest term, which floors the test.
+  auto converged = [&](const Real tt, const RootResidual &rr, const Real slope) -> bool {
+    constexpr Real eps = std::numeric_limits<Real>::epsilon();
+    const Real dresdt = std::max(rr.emiss / tt, slope);
+    return std::abs(rr.res) <= std::max(ru.tol * tt * dresdt, 64.0 * eps * rr.scale);
+  };
+
+  // Secant slope |d(res)/dT| between two evaluations, trusted only when they are close
+  // (a secant across a wide interval can badly overestimate the local slope)
+  auto secant = [](const Real t1, const Real y1, const Real t2, const Real y2) -> Real {
+    const Real dt = std::abs(t2 - t1);
+    return (dt <= 0.25 * std::min(t1, t2)) ? std::abs(y2 - y1) / dt : 0.0;
+  };
+
+  // See if guess itself is within tolerance
+  const RootResidual rg = residual(temp);
+  if (converged(temp, rg, 0.0)) return true;
+
+  // Accept a converged root if it is physical
+  auto accept = [&](const Real troot) -> bool {
+    if (troot > tflr) {
+      temp = troot;
+      return true;
+    }
+    if (verbose) PARTHENON_WARN("Radiation temperature root unphysical!");
+    return false;
+  };
+
+  // Attempt to bound the root.  The residual is positive as T -> 0 (no emission) and
+  // negative as T -> infinity (emission ~ T^4 dominates), so the sign of the guess
+  // residual identifies a side of the guess that must contain a root.  Search that side
+  // first, carrying the tightest bound forward; fall back to the opposite side in case a
+  // non-monotone EOS admits multiple roots.
   constexpr int NBND = 6;
   constexpr Real tmag[NBND] = {1.1, 2.0, 1e1, 1e2, 1e4, 1e8};
-  int mag = 0;
-  Real ta = Null<Real>(), tb = Null<Real>();
-  Real ya = std::numeric_limits<Real>::max(), yb = std::numeric_limits<Real>::max();
-  while (ya * yb > 0.0) {
-    if (mag == NBND) {
-      if (verbose) PARTHENON_WARN("Cannot bound temperature root!");
-      return false;
+  Real ta = temp, tb = temp;
+  Real ya = rg.res, yb = rg.res;
+  bool bounded = false;
+  for (int side = 0; side < 2 && !bounded; ++side) {
+    const bool up = ((rg.res > 0.0) == (side == 0));
+    ta = temp;
+    ya = rg.res;
+    for (int mag = 0; mag < NBND; ++mag) {
+      tb = (up) ? temp * tmag[mag] : temp / tmag[mag];
+      const RootResidual rb = residual(tb);
+      yb = rb.res;
+
+      // The first step gives a secant slope with which to re-test the guess
+      if (mag == 0 && converged(temp, rg, secant(temp, rg.res, tb, yb))) return true;
+      if (converged(tb, rb, secant(ta, ya, tb, yb))) return accept(tb);
+      if ((ya > 0.0) != (yb > 0.0)) {
+        bounded = true;
+        break;
+      }
+      ta = tb;
+      ya = yb;
     }
-    ta = temp / tmag[mag];
-    tb = temp * tmag[mag];
-    ya = PolyRoot(ta, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-    yb = PolyRoot(tb, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-    mag++;
+  }
+  if (!bounded) {
+    if (verbose) PARTHENON_WARN("Cannot bound temperature root!");
+    return false;
   }
 
-  // Regula falsi
-  int iter_count = 0;
-  int b1 = 0;
-  int b2 = 0;
+  // Regula falsi (Illinois).  ya and yb are halved to prevent a stagnant endpoint, so
+  // they are not true residuals; convergence is judged on the true residual yc at each
+  // new estimate tc, or on the bracket width.
   const Real sign = (ya < 0.0 ? 1.0 : -1.0);
   ya *= sign;
   yb *= sign;
-  // NOTE: ta, tb > 0 (temperatures), so the relative-tolerance test
-  // |tb - ta| / (0.5 (ta + tb)) > tol is rearranged into a multiply.
-  while ((std::abs(tb - ta) > ru.tol * 0.5 * (ta + tb)) &&   // \Delta T is below tol
-         (std::abs(ya) > ru.tol || std::abs(yb) > ru.tol) && // ya and yb below tol
-         (iter_count < ru.titer)) {
-    // Evaluate tc
+  Real tp = tb, yp = yb; // previous evaluation (true residual), for secant slopes
+  int last = 0;          // +1 (-1) if tb (ta) was replaced on the previous iteration
+  for (int iter = 0; iter < ru.titer; ++iter) {
+    // Evaluate tc, bisecting if roundoff places it on (or outside) the bracket
     Real tc = (ta * yb - tb * ya) / (yb - ya);
+    if (!(tc > std::min(ta, tb) && tc < std::max(ta, tb))) tc = 0.5 * (ta + tb);
 
-    // Guard against roundoff
-    if (tc == ta) {
-      tb = ta;
-      iter_count++;
-      continue;
-    } else if (tc == tb) {
-      ta = tb;
-      iter_count++;
-      continue;
-    }
-
-    // Compute internal energy at temp tc
-    Real yc = sign;
-    yc *= PolyRoot(tc, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
+    // Compute residual at temp tc
+    const RootResidual rc = residual(tc);
+    const Real yc = sign * rc.res;
+    if (converged(tc, rc, secant(tp, yp, tc, yc))) return accept(tc);
+    tp = tc;
+    yp = yc;
     if (yc > 0.0) {
       tb = tc;
       yb = yc;
-      b1++;
-      ya *= (b1 > 1 ? 0.5 : 1.0);
-      b2 = 0;
-    } else if (yc < 0.0) {
+      if (last == 1) ya *= 0.5;
+      last = 1;
+    } else {
       ta = tc;
       ya = yc;
-      b2++;
-      yb *= (b2 > 1 ? 0.5 : 1.0);
-      b1 = 0;
-    } else {
-      ta = tc;
-      tb = tc;
+      if (last == -1) yb *= 0.5;
+      last = -1;
     }
-    iter_count++;
+
+    // NOTE: ta, tb > 0 (temperatures), so the relative-tolerance test
+    // |tb - ta| / (0.5 (ta + tb)) <= tol is rearranged into a multiply.
+    if (std::abs(tb - ta) <= ru.tol * 0.5 * (ta + tb)) return accept(0.5 * (ta + tb));
   }
 
-  // Return root or fail
-  if (iter_count >= ru.titer) {
-    if (verbose) PARTHENON_WARN("Radiation temperature root find cannot converge!");
-    return false;
-  } else {
-    ta = 0.5 * (ta + tb);
-    if (ta > tflr) {
-      temp = ta;
-      return true;
-    } else {
-      if (verbose) PARTHENON_WARN("Radiation temperature root unphysical!");
-      return false;
-    }
-  }
+  if (verbose) PARTHENON_WARN("Radiation temperature root find cannot converge!");
+  return false;
 }
 
 //----------------------------------------------------------------------------------------

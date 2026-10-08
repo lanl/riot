@@ -134,8 +134,9 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
                           "Optical depth max used in Rusanov flux");
     PARTHENON_REQUIRE(futils.taumax > 0.0, "Tau max must be > 0!");
     // Root find params
-    rutils.tol = pin->GetOrAddReal(radiation_block, "troot_tol", 1.0e-8,
-                                   "Tolerance for non-linear temperature root find ");
+    rutils.tol = pin->GetOrAddReal(
+        radiation_block, "troot_tol", 1.0e-8,
+        "Relative temperature tolerance for non-linear temperature root find");
     rutils.titer = pin->GetOrAddInteger(
         radiation_block, "troot_max_iter", 25,
         "Maximum #iter permitted for non-linear temperature root find");

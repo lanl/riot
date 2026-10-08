@@ -111,7 +111,7 @@ When coupling is enabled (``coupling``), energy exchanged with the radiation fie
      \frac{\partial E_{\text{mat}}}{\partial t} = -\,\frac{\partial E_{\text{rad}}}{\partial t}, \qquad
      E_{\text{rad}} = \sum_f E_f .
 
-The exchange is treated implicitly: an advanced material temperature :math:`T^{n+1}` is found by a non-linear root solve (tolerance ``troot_tol``, iteration cap ``troot_max_iter``) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with ``affect_fluid`` (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with ``fixed_temp_rhs``.
+The exchange is treated implicitly: an advanced material temperature :math:`T^{n+1}` is found by a non-linear root solve (relative temperature tolerance ``troot_tol``, iteration cap ``troot_max_iter``) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with ``affect_fluid`` (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with ``fixed_temp_rhs``.
 
 Solvers
 -------
@@ -182,7 +182,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
    * - troot_tol
      - Real
      - ``1e-8``
-     - Tolerance for the non-linear temperature root find.
+     - Relative temperature tolerance for the non-linear temperature root find.
    * - troot_max_iter
      - int
      - ``25``
