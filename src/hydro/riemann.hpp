@@ -52,9 +52,13 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_fleischmann(
   Real phi = std::sin(std::min(1.0, Ma_local / 0.1) * 0.5 * M_PI);
   Real ss = (sl >= 0) * vpl + (sr <= 0) * vpr +
             (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + (Pr - Pl)) / (rhocsl - rhocsr);
-  // both star states are used below, so keep the contact strictly inside the wave fan
+  // both star states are used below, so keep the contact strictly inside the wave fan.
+  // If the contact had to be clamped, fall back to HLLC (phi = 1) so the singular star
+  // state terms cancel.
   const Real ds = (sl * sr < 0) * 1.e-8 * (sr - sl);
-  ss = std::min(std::max(ss, sl + ds), sr - ds);
+  const Real ss_clamped = std::min(std::max(ss, sl + ds), sr - ds);
+  if (ss_clamped != ss) phi = 1.0;
+  ss = ss_clamped;
 
   const Real rhos_rhol = (sl - vpl) / (sl - ss);
   const Real rhos_rhor = (sr - vpr) / (sr - ss);
