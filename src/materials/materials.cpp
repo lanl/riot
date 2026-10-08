@@ -270,6 +270,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::Derived, Metadata::OneCopy});
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   auto cm_sie_e = SparsePool::Make<cm::electron_sie>(m, control_field);
+  auto cm_electron_internal_energy =
+      SparsePool::Make<cm::electron_internal_energy>(m, control_field);
 
   // -------------------------------------------------------------------------------------
   // Shared Memory
@@ -412,6 +414,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       AddMatId(matid, phase_size, cm_ionization_zbar);
       AddMatId(matid, phase_size, cm_ue);
       AddMatId(matid, phase_size, cm_sie_e);
+      AddMatId(matid, phase_size, cm_electron_internal_energy);
     }
 
     // Strength
@@ -743,7 +746,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
            cm_rho, cm_sie, cm_internal_energy, cm_temperature, cm_pressure,
            cm_bulk_modulus, cm_cv, mat_stress, stress, mat_eps, eps, gmod, strength_j2,
            mat_iso, iso, phase_rho_sum, phase_fraction, ccmat_ionization_zbar,
-           cm_ionization_zbar, cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache);
+           cm_ionization_zbar, cm_ue, cm_sie_e, cm_electron_internal_energy, cm_lr_cache,
+           cm_lT_cache);
 
   // Instantiate device ParArray1D of EOS and Opacity objects, setup PTE list vector
   const int num_eos = eos_host.size();
