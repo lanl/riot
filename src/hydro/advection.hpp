@@ -54,6 +54,16 @@ class PrimFluxPack {
   auto ConsSparseID(const int b, const int var) const { return cons_(b, var).sparse_id; }
 
   //--------------------------------------------------------------------------------------
+  //! \fn  bool Hydro::PrimFluxPack::HasAssociatedPrimitive
+  //! \brief True if the conserved var (rho*q) is associated with a separate primitive q,
+  //!        false if it is self-associated (the conserved var is reconstructed and
+  //!        advected directly).
+  KOKKOS_FORCEINLINE_FUNCTION
+  bool HasAssociatedPrimitive(const int b, const int var) const {
+    return prims_(b, var).data() != cons_(b, var).data();
+  }
+
+  //--------------------------------------------------------------------------------------
   //! \fn  int Hydro::PrimFluxPack::Size
   //! \brief
   KOKKOS_FORCEINLINE_FUNCTION
