@@ -52,7 +52,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin, Packages_t &pac
   params.Add("swarm_names", swarm_names);
 
   // Set up swarms
-  Metadata swarm_metadata({Metadata::Provides, Metadata::None});
+  Metadata swarm_metadata({Metadata::Provides, Metadata::None, Metadata::Restart});
   for (const auto &swarm_name : swarm_names) {
     // Construct block name for this swarm's configuration
     const std::string block_name = "tracers/" + swarm_name;
