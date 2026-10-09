@@ -143,16 +143,18 @@ struct MaterialHelpers {
       auto rhom = make_var_view(idx_range, pack, cm::rho(m));
       auto rhobarm = make_var_view(idx_range, pack, ccmat::rho(m));
       RiotLoop::inner(idx_range, [&](const idx_t kji) {
+        const auto [k, j, i] = idx_range.GetKJI(kji);
+        RiotEOS::LambdaIndexerSingleCoord lambda(pack, b, m, k, j, i);
         (
             [&] {
               if constexpr (std::is_same_v<typename output_ts::tag, EgasTag>) {
                 outputs.scratch(kji) +=
                     rhobarm(kji) *
-                    eosm.InternalEnergyFromDensityTemperature(rhom(kji), T(kji));
+                    eosm.InternalEnergyFromDensityTemperature(rhom(kji), T(kji), lambda);
               } else if constexpr (std::is_same_v<typename output_ts::tag, CvTag>) {
                 outputs.scratch(kji) +=
                     rhobarm(kji) *
-                    eosm.SpecificHeatFromDensityTemperature(rhom(kji), T(kji));
+                    eosm.SpecificHeatFromDensityTemperature(rhom(kji), T(kji), lambda);
               } else {
                 PARTHENON_FAIL("Unknown type.");
               }
