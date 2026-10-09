@@ -177,7 +177,7 @@ MultiGroup<temperature>::Initialize(ParameterInput *pin, StateDescriptor *materi
   auto pkg = std::make_shared<StateDescriptor>("multigroup_diffusion_package");
 
   pkg->EstimateTimestepMesh = EstimateTimestepMesh;
-  pkg->PostProblemGeneratorMesh = MeshPostProblemGenerator;
+  pkg->PostInitializationMesh = MeshPostInitialization;
 
   using namespace parthenon;
   using namespace parthenon::BoundaryFunction;
@@ -596,9 +596,9 @@ TaskCollection MultiGroup<temperature>::Step(Mesh *pmesh, parthenon::SimTime &tm
 }
 
 template <class temperature>
-void MultiGroup<temperature>::MeshPostProblemGenerator(parthenon::Mesh *mesh,
-                                                       parthenon::ParameterInput *pin,
-                                                       parthenon::MeshData<Real> *md) {
+void MultiGroup<temperature>::MeshPostInitialization(parthenon::Mesh *mesh,
+                                                     parthenon::ParameterInput *pin,
+                                                     parthenon::MeshData<Real> *md) {
   using namespace parthenon;
   using namespace MultiGroupVars;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
