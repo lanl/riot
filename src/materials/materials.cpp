@@ -362,9 +362,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       const int nph = pin->GetOrAddInteger(block_name, "nphase", 1);
       for (const auto &opac_block : get_opac_blocks(block_name, nph)) {
         if (pin->GetOrAddString(opac_block, "opac_a", "none") == "table") {
-          PARTHENON_REQUIRE(spiner_hdf5_enabled,
-                            "opac_a=table requires HDF5 support. "
-                            "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
+          PARTHENON_REQUIRE(spiner_hdf5_enabled, "opac_a=table requires HDF5 support. "
+                                                 "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
 #ifdef SPINER_USE_HDF
           const std::string table = pin->GetString(opac_block, "opac_filename");
           const std::string material = pin->GetString(opac_block, "opac_material");
@@ -373,9 +372,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 #endif
         }
         if (pin->GetOrAddString(opac_block, "opac_s", "none") == "table") {
-          PARTHENON_REQUIRE(spiner_hdf5_enabled,
-                            "opac_s=table requires HDF5 support. "
-                            "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
+          PARTHENON_REQUIRE(spiner_hdf5_enabled, "opac_s=table requires HDF5 support. "
+                                                 "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
 #ifdef SPINER_USE_HDF
           const std::string table = pin->GetString(opac_block, "opac_filename");
           const std::string material = pin->GetString(opac_block, "opac_material");
@@ -514,9 +512,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         const Real nu_ref = pin->GetOrAddReal(opac_block, "kappa_Nuref_a", 1.0);
         opac_a = PowerLaw(coef_kappa_a, rho_exp, temp_exp, nu_exp, nu_ref);
       } else if (opac_a_type == "table") {
-        PARTHENON_REQUIRE(spiner_hdf5_enabled,
-                          "opac_a=table requires HDF5 support. "
-                          "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
+        PARTHENON_REQUIRE(spiner_hdf5_enabled, "opac_a=table requires HDF5 support. "
+                                               "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
         opac_a_table = pin->GetString(opac_block, "opac_filename");
       }
 
@@ -530,9 +527,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         const Real kappa_s = pin->GetOrAddReal(opac_block, "kappa_s", 0.0);
         opac_s = GrayS(kappa_s, 1.0);
       } else if (opac_s_type == "table") {
-        PARTHENON_REQUIRE(spiner_hdf5_enabled,
-                          "opac_s=table requires HDF5 support. "
-                          "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
+        PARTHENON_REQUIRE(spiner_hdf5_enabled, "opac_s=table requires HDF5 support. "
+                                               "Rebuild with -DRIOT_ENABLE_HDF5=ON.");
         opac_s_table = pin->GetString(opac_block, "opac_filename");
       }
 
