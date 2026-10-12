@@ -61,6 +61,9 @@ inputs/bubble_source.dat
 # Spiner files
 *.sp5
 
+# HDF5 files
+*.hdf5
+
 # Prompt-spectrum problem: generated opacity table + its generator and reference data
 inputs/radiation_transport/prompt/make_prompt_opacity_table.py
 inputs/radiation_transport/prompt/prompt_exact.txt

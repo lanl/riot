@@ -503,10 +503,8 @@ KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp
 //! and the gray ngroups==1 result is 4 a_r T^3).  Writing eps_g = a_r T^4 * F_g with F_g
 //! the normalized Planck fraction over the band (x = h nu / kT, dx/dT = -x/T), the
 //! derivative of the band integral reduces to the integrand at the band edges -- no
-//! polylogarithms.  The integral part reuses Emissivity(); the boundary part is
-//! elementary:
-//!   deps_g/dT = 4 eps_g / T - (a_r T^3)(15/pi^4)[ x_hi^4/(e^x_hi-1) - x_lo^4/(e^x_lo-1)
-//!   ].
+//! polylogarithms.  The integral part reuses Emissivity(); boundary is:
+//!   deps_dT = 4 eps_g / T - (a_r T^3)(15/pi^4)[ x_hi^4/(e^x_hi-1) - x_lo^4/(e^x_lo-1) ].
 KOKKOS_FORCEINLINE_FUNCTION static Real
 EmissivityDT(const int gg, const Real temp, const parthenon::ParArray1D<Real> fbnd,
              const int ngroups, const UnitUtils uu) {
@@ -555,8 +553,7 @@ InternalEnergy(const Real temp, const int nm1, const EOS eos, const EOSMAP map,
 
 //----------------------------------------------------------------------------------------
 //! \struct RootResidual
-//! \brief Energy residual of the advanced temperature root find, with the pieces needed
-//! to judge its convergence
+//! \brief Residual of the advanced temperature root find
 struct RootResidual {
   Real res = 0.0;   // absorption - emission + ubulk - u(T)
   Real emiss = 0.0; // emission term, a lower bound on T |d(res)/dT| (see PolyRoot)
@@ -621,7 +618,6 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
 
   // Internal energy at T^m
   Real ubase = Null<Real>();
-
   [[maybe_unused]] auto &vu_ = vu;
   if constexpr (jacobi) {
     ubase = vu_(b, ccbulk::internal_energy(), k, j, i);
@@ -634,19 +630,14 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     return PolyRoot(tt, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
   };
 
-  // Convergence test.  The tolerance is a relative temperature accuracy: accept tt when
-  // the linearized error |res / (d(res)/dT)| <= tol * tt, which is independent of the
-  // zero (and sign) of the EOS energy.  |d(res)/dT| is bounded from below by emiss / tt
-  // (see PolyRoot), or estimated by a secant slope (zero when unavailable).  The residual
-  // cannot be resolved below roundoff in its largest term, which floors the test.
+  // Convergence test
   auto converged = [&](const Real tt, const RootResidual &rr, const Real slope) -> bool {
     constexpr Real eps = std::numeric_limits<Real>::epsilon();
     const Real dresdt = std::max(rr.emiss / tt, slope);
     return std::abs(rr.res) <= std::max(ru.tol * tt * dresdt, 64.0 * eps * rr.scale);
   };
 
-  // Secant slope |d(res)/dT| between two evaluations, trusted only when they are close
-  // (a secant across a wide interval can badly overestimate the local slope)
+  // Slope between two evaluations
   auto secant = [](const Real t1, const Real y1, const Real t2, const Real y2) -> Real {
     const Real dt = std::abs(t2 - t1);
     return (dt <= 0.25 * std::min(t1, t2)) ? std::abs(y2 - y1) / dt : 0.0;
@@ -666,11 +657,7 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     return false;
   };
 
-  // Attempt to bound the root.  The residual is positive as T -> 0 (no emission) and
-  // negative as T -> infinity (emission ~ T^4 dominates), so the sign of the guess
-  // residual identifies a side of the guess that must contain a root.  Search that side
-  // first, carrying the tightest bound forward; fall back to the opposite side in case a
-  // non-monotone EOS admits multiple roots.
+  // Attempt to bound the root
   constexpr int NBND = 6;
   constexpr Real tmag[NBND] = {1.1, 2.0, 1e1, 1e2, 1e4, 1e8};
   Real ta = temp, tb = temp;
@@ -684,8 +671,6 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
       tb = (up) ? temp * tmag[mag] : temp / tmag[mag];
       const RootResidual rb = residual(tb);
       yb = rb.res;
-
-      // The first step gives a secant slope with which to re-test the guess
       if (mag == 0 && converged(temp, rg, secant(temp, rg.res, tb, yb))) return true;
       if (converged(tb, rb, secant(ta, ya, tb, yb))) return accept(tb);
       if ((ya > 0.0) != (yb > 0.0)) {
@@ -701,20 +686,15 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     return false;
   }
 
-  // Regula falsi (Illinois).  ya and yb are halved to prevent a stagnant endpoint, so
-  // they are not true residuals; convergence is judged on the true residual yc at each
-  // new estimate tc, or on the bracket width.
+  // Regula falsi
   const Real sign = (ya < 0.0 ? 1.0 : -1.0);
   ya *= sign;
   yb *= sign;
-  Real tp = tb, yp = yb; // previous evaluation (true residual), for secant slopes
-  int last = 0;          // +1 (-1) if tb (ta) was replaced on the previous iteration
+  Real tp = tb, yp = yb;
+  int last = 0;
   for (int iter = 0; iter < ru.titer; ++iter) {
-    // Evaluate tc, bisecting if roundoff places it on (or outside) the bracket
     Real tc = (ta * yb - tb * ya) / (yb - ya);
     if (!(tc > std::min(ta, tb) && tc < std::max(ta, tb))) tc = 0.5 * (ta + tb);
-
-    // Compute residual at temp tc
     const RootResidual rc = residual(tc);
     const Real yc = sign * rc.res;
     if (converged(tc, rc, secant(tp, yp, tc, yc))) return accept(tc);
@@ -731,12 +711,8 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
       if (last == -1) yb *= 0.5;
       last = -1;
     }
-
-    // NOTE: ta, tb > 0 (temperatures), so the relative-tolerance test
-    // |tb - ta| / (0.5 (ta + tb)) <= tol is rearranged into a multiply.
     if (std::abs(tb - ta) <= ru.tol * 0.5 * (ta + tb)) return accept(0.5 * (ta + tb));
   }
-
   if (verbose) PARTHENON_WARN("Radiation temperature root find cannot converge!");
   return false;
 }

@@ -173,8 +173,8 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
      - Skip the advanced-temperature solve in the source term.
    * - beta
      - Real
-     - *geom.*
-     - Weight on the local optical depth in the Rusanov flux (:math:`1.0` in Cartesian, :math:`0.0` in curvilinear geometries).
+     - ``1.0``
+     - Weight on the local optical depth in the Rusanov flux.
    * - taumax
      - Real
      - *large*

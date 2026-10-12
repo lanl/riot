@@ -749,6 +749,8 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
   const Real mix_frac = jacobi_pkg->Param<Real>("mix_frac");
   const Real opac_rho_min = jacobi_pkg->Param<Real>("opac_rho_min");
   const Real opac_temp_min = jacobi_pkg->Param<Real>("opac_temp_min");
+  const Real opac_rho_max = jacobi_pkg->Param<Real>("opac_rho_max");
+  const Real opac_temp_max = jacobi_pkg->Param<Real>("opac_temp_max");
   ParArray1D<RiotOpacity::MeanOpacA> opac_a;
   ParArray1D<RiotOpacity::MeanOpacS> opac_s;
   ParArray1D<int> opac_from_matid;
@@ -779,8 +781,8 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
         KOKKOS_LAMBDA(const int &b, const int &k, const int &j, const int &i) {
           vr(b, ccr::temperature(), k, j, i) = vu(b, ccbulk::temperature(), k, j, i);
           if (!(fixed_pgen_opac)) {
-            const Real temp =
-                std::max(vu(b, ccbulk::temperature(), k, j, i), opac_temp_min);
+            const Real temp = std::clamp(vu(b, ccbulk::temperature(), k, j, i),
+                                         opac_temp_min, opac_temp_max);
             for (int gg = 0; gg < ngroups; ++gg) {
               Real &aa = vr(b, ccr::aa(gg), k, j, i) = 0.0;
               Real &ss = vr(b, ccr::ss(gg), k, j, i) = 0.0;
@@ -793,8 +795,8 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
                 const int opac_id = opac_from_matid(mat_id) + phase_id;
                 const auto &oam = opac_a(opac_id);
                 const auto &osm = opac_s(opac_id);
-                const Real rm = std::max(rhom, opac_rho_min);
-                const Real rbarm = std::max(rhobarm, opac_rho_min);
+                const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
+                const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
                 aa += (rhobarm > 0.0)
                           ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
                           : 0.0;
