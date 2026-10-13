@@ -51,6 +51,8 @@ void AddPools(StateDescriptor *s, SparsePool &p, Args &&...args) {
 }
 
 int CountMaterials(ParameterInput *pin);
+
+void MaterialsFillDerived(MeshData<Real> *md);
 } // namespace Materials
 
 #endif // MATERIALS_MATERIALS_HPP_
