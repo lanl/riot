@@ -127,7 +127,7 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
   if (coupling) {
     // Flux params
     futils.beta = pin->GetOrAddReal(
-        radiation_block, "beta", 1.0,
+        radiation_block, "beta", 5.0,
         "Coefficient weighting the local optical depth for the Rusanov flux");
     futils.taumax =
         pin->GetOrAddReal(radiation_block, "taumax", std::numeric_limits<Real>::max(),

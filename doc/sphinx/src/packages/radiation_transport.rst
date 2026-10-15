@@ -136,7 +136,7 @@ Input Parameters
 
 Radiation transport requires hydrodynamics and is incompatible with the ionization package, with sparse physics (Chapter :ref:`chap:sparse-physics`), and with the P1 radiation diffusion package (Chapter :ref:`chap:raddiffusion`), which provides an alternative radiation model — at most one of the two may be enabled. Because ``sparse_physics`` defaults to ``true``, a radiation run must set it ``false`` explicitly in the ``<physics>`` block.
 
-Parameters are organized into a shared ``<radiation_transport>`` block and three nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
+Parameters are organized into a shared ``<radiation_transport>`` block and several nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; the per-face boundary conditions are selected in ``<radiation_transport/bc>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
 
 .. list-table:: Solver selection and shared parameters in the ``<radiation_transport>`` block.
    :class: wraptable
@@ -173,7 +173,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
      - Skip the advanced-temperature solve in the source term.
    * - beta
      - Real
-     - ``1.0``
+     - ``5.0``
      - Weight on the local optical depth in the Rusanov flux.
    * - taumax
      - Real
@@ -371,9 +371,9 @@ The radiation field’s initial state is chosen in the ``<radiation_transport/in
 Boundary Conditions
 ~~~~~~~~~~~~~~~~~~~
 
-By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — by naming it in the ``<radiation_transport/drive>`` block.
+By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — or a *reflect* condition by naming it in the ``<radiation_transport/bc>`` block.
 
-.. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+.. list-table:: Parameters in the ``<radiation_transport/bc>`` block.
    :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
@@ -385,7 +385,19 @@ By default the radiation intensity inherits the same face boundary conditions as
    * - ix1_bc …ox3_bc
      - string
      - ``default``
-     - Per-face selector; set to ``drive`` to impose the drive condition on that face.
+     - Per-face selector: ``default`` (inherit the mesh BC), ``drive`` (impose the drive condition configured in ``<radiation_transport/drive>``), or ``reflect`` (specular mirror).
+
+A ``reflect`` face fills each ghost cell from its mirror-image interior cell, remapping the intensities through a reflection map of the angular grid for the direction component normal to the face (the same spatial-to-angle component mapping as the angular fluxes: :math:`R \to n_x` and :math:`Z \to n_z` in 2D RZ, :math:`r \to n_z` in 1D spherical). The map preserves isotropic fields and gives zero net radiation flux through the mirror for any interior field. On grids that are symmetric under the mirror (lat-lon, for every spatial face) it is the exact one-to-one angle reflection; on the geodesic grid it is a conservative first-order remap onto the few cells that each mirrored cell overlaps. A face is ``reflect`` if and only if its mesh BC (``parthenon/mesh``) is ``reflecting``; any other pairing is an error.
+
+.. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 25 12 18 45
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
    * - drive_source
      - string
      - ``constant``
@@ -444,10 +456,6 @@ The package registers the radiation fields in the table below under the ``ccrad:
      - —
      - :math:`N_\nu N_{\text{ang}}`
      - Cell, Derived, OneCopy, OperatorSplit; angular-flux divergence. Explicit solver only, and only in curvilinear geometries.
-   * - ccrad::tauw
-     - —
-     - :math:`N_\nu`
-     - Cell, Derived, OneCopy, OperatorSplit; optical-depth weight (Jacobi solver only).
    * - ccrad::temperature
      - :math:`T^{n+1}`
      - 1
@@ -481,5 +489,6 @@ A grey, geodesic-grid transport run using the implicit Jacobi solver, coupled to
               dt_ratio_hyperbolic=5.0e4)
 
    # A hot radiating wall driving the inner-x1 face:
-   riot.input("radiation_transport/drive", ix1_bc="drive", trad_bc=1.0)
+   riot.input("radiation_transport/bc", ix1_bc="drive")
+   riot.input("radiation_transport/drive", trad_bc=1.0)
    riot.input("radiation_transport/init", initialization="zero")

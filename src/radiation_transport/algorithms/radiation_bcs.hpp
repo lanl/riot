@@ -34,8 +34,7 @@
 
 using namespace parthenon::package::prelude;
 
-namespace Drive {
-using Side = parthenon::BoundaryFunction::BCSide;
+namespace RadiationBC {
 
 //----------------------------------------------------------------------------------------
 //! \fn constexpr IndexDomain BndryDomain
@@ -78,6 +77,11 @@ inline const IndexRange InteriorBounds(const parthenon::IndexShape &bounds) {
   }
 }
 
+} // namespace RadiationBC
+
+namespace Drive {
+using Side = parthenon::BoundaryFunction::BCSide;
+
 //----------------------------------------------------------------------------------------
 //! \fn template <CoordinateDirection DIR, BCSide SIDE> void DriveBCImpl
 //! \brief Unified drive boundary condition for all six faces
@@ -91,9 +95,9 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
   // Indexing for outflow: reference the first (inner) or last (outer) interior cell
   constexpr bool inner = (SIDE == parthenon::BoundaryFunction::BCSide::Inner);
   const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
-  const auto range = InteriorBounds<DIR>(bounds);
+  const auto range = RadiationBC::InteriorBounds<DIR>(bounds);
   const int ref = inner ? range.s : range.e;
-  constexpr IndexDomain domain = BndryDomain<DIR, SIDE>();
+  constexpr IndexDomain domain = RadiationBC::BndryDomain<DIR, SIDE>();
 
   // Radiation package
   const auto rad_pkg = GetRadPackage(pmb->packages);
@@ -123,7 +127,7 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
         "DriveBC-intensity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
           int kr, jr, ir;
-          RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
+          RadiationBC::RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
             const Real ee =
                 from_table ? std::max(eg(gg).interpToReal(std::max(
@@ -151,7 +155,7 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
         "DriveBC-opacity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
           int kr, jr, ir;
-          RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
+          RadiationBC::RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
             vo(0, ccrad::aa(gg), k, j, i) = copy * vo(0, ccrad::aa(gg), kr, jr, ir);
             vo(0, ccrad::ss(gg), k, j, i) = copy * vo(0, ccrad::ss(gg), kr, jr, ir);
@@ -171,12 +175,96 @@ inline auto DriveBC() {
 
 } // namespace Drive
 
+namespace Reflect {
+
 //----------------------------------------------------------------------------------------
-// Shared initialization for the radiation transport BCs (default, drive).
+//! \fn template <CoordinateDirection DIR, BCSide SIDE> void ReflectBCImpl
+//! \brief Specular reflecting boundary condition: each ghost cell takes the opacities of
+//! its mirror-image interior cell and the intensities of that cell remapped through the
+//! angular grid's reflection map for the flipped direction component.
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+inline void ReflectBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
+  using parthenon::MakePackDescriptor;
+  namespace ccrad = cell_variables::cell_averaged::rad;
+  auto pmb = mbd->GetBlockPointer();
+  const auto nb = IndexRange{0, 0};
+
+  // Mirror index: ghost g maps to 2s-1-g (inner) or 2e+1-g (outer)
+  constexpr bool inner = (SIDE == parthenon::BoundaryFunction::BCSide::Inner);
+  const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
+  const auto range = RadiationBC::InteriorBounds<DIR>(bounds);
+  const int msum = inner ? 2 * range.s - 1 : 2 * range.e + 1;
+  constexpr IndexDomain domain = RadiationBC::BndryDomain<DIR, SIDE>();
+
+  // Radiation package
+  const auto rad_pkg = GetRadPackage(pmb->packages);
+  const int ngroups = rad_pkg->Param<int>("ngroups");
+  const int nangles = rad_pkg->Param<int>("nangles");
+  const int comp = AngularFluxDirs()[DIR - 1];
+  const auto agrid = GetAngularGridArrays(rad_pkg);
+  const auto &num = agrid.num_reflect;
+  const auto &ind = agrid.ind_reflect;
+  const auto &wgt = agrid.wgt_reflect;
+
+  // Intensity
+  static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
+  auto vr = descr[coarse].GetPack(mbd.get());
+  if (vr.GetMaxNumberOfVars() > 0) {
+    pmb->par_for_bndry(
+        "ReflectBC-intensity", nb, domain, parthenon::TopologicalElement::CC, coarse,
+        false, KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
+          const int g = (DIR == X1DIR) ? i : ((DIR == X2DIR) ? j : k);
+          int kr, jr, ir;
+          RadiationBC::RefIdx<DIR>(k, j, i, msum - g, kr, jr, ir);
+          for (int gg = 0; gg < ngroups; ++gg) {
+            for (int aa = 0; aa < nangles; ++aa) {
+              Real ii = 0.0;
+              for (int kk = 0; kk < num(comp, aa); ++kk) {
+                ii += wgt(comp, aa, kk) *
+                      vr(0, ccrad::intensity(GAI(nangles, gg, ind(comp, aa, kk))), kr, jr,
+                         ir);
+              }
+              vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ii;
+            }
+          }
+        });
+  }
+
+  // Opacity
+  static auto desco = GetBoundaryPackDescriptorMap<ccrad::aa, ccrad::ss>(mbd);
+  auto vo = desco[coarse].GetPack(mbd.get());
+  if (vo.GetMaxNumberOfVars() > 0) {
+    pmb->par_for_bndry(
+        "ReflectBC-opacity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
+        KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
+          const int g = (DIR == X1DIR) ? i : ((DIR == X2DIR) ? j : k);
+          int kr, jr, ir;
+          RadiationBC::RefIdx<DIR>(k, j, i, msum - g, kr, jr, ir);
+          for (int gg = 0; gg < ngroups; ++gg) {
+            vo(0, ccrad::aa(gg), k, j, i) = vo(0, ccrad::aa(gg), kr, jr, ir);
+            vo(0, ccrad::ss(gg), k, j, i) = vo(0, ccrad::ss(gg), kr, jr, ir);
+          }
+        });
+  }
+}
+
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+inline auto ReflectBC() {
+  return [](std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) -> void {
+    ReflectBCImpl<DIR, SIDE>(mbd, coarse);
+  };
+}
+
+} // namespace Reflect
+
+//----------------------------------------------------------------------------------------
+// Shared initialization for the radiation transport BCs (default, drive, reflect).
 //----------------------------------------------------------------------------------------
 namespace RadiationBC {
 
-// The input blocks from which the shared radiation BCs are read.
+// The input blocks from which the shared radiation BCs are read: per-face BC types live
+// in bc_block, drive-BC parameters in drive_block.
+constexpr char bc_block[] = "radiation_transport/bc";
 constexpr char drive_block[] = "radiation_transport/drive";
 
 // Individual shared BC options.
@@ -279,13 +367,43 @@ inline void EnrollRadiationBC(StateDescriptor *rad_pkg, ParameterInput *pin,
       Drive::DriveBC<X2DIR, Side::Inner>(), Drive::DriveBC<X2DIR, Side::Outer>(),
       Drive::DriveBC<X3DIR, Side::Inner>(), Drive::DriveBC<X3DIR, Side::Outer>()};
 
-  // Enroll custom BC
+  // Reflect BC
+  std::array<bool, 3> reflect_comps = {false, false, false};
+  const std::array<RadBFunc_t, 6> reflect_bcs = {
+      Reflect::ReflectBC<X1DIR, Side::Inner>(), Reflect::ReflectBC<X1DIR, Side::Outer>(),
+      Reflect::ReflectBC<X2DIR, Side::Inner>(), Reflect::ReflectBC<X2DIR, Side::Outer>(),
+      Reflect::ReflectBC<X3DIR, Side::Inner>(), Reflect::ReflectBC<X3DIR, Side::Outer>()};
+
+  // Enroll custom BC on the faces of active dimensions
+  const int ndim = 1 + (pin->GetInteger("parthenon/mesh", "nx2") > 1) +
+                   (pin->GetInteger("parthenon/mesh", "nx3") > 1);
   for (int i = 0; i < bndry_faces.size(); ++i) {
     const auto &[name, face] = bndry_faces[i];
-    if (pin->GetOrAddString(drive_block, name, "default") == "drive") {
+    PARTHENON_REQUIRE(!pin->DoesParameterExist(drive_block, name) ||
+                          pin->GetString(drive_block, name) == "default",
+                      std::string(drive_block) + "/" + name + " has moved to " +
+                          bc_block + "/" + name + ".");
+    if (i / 2 >= ndim) continue;
+    const std::string bc = pin->GetOrAddString(bc_block, name, "default");
+    PARTHENON_REQUIRE(bc == "default" || bc == "drive" || bc == "reflect",
+                      std::string(bc_block) + "/" + name +
+                          " must be \"default\", \"drive\", or \"reflect\".");
+    const bool mesh_reflecting = pin->DoesParameterExist("parthenon/mesh", name) &&
+                                 pin->GetString("parthenon/mesh", name) == "reflecting";
+    PARTHENON_REQUIRE(mesh_reflecting == (bc == "reflect"),
+                      std::string(bc_block) + "/" + name +
+                          " = reflect if and only if parthenon/mesh/" + name +
+                          " = reflecting.");
+    if (bc == "drive") {
       rad_pkg->UserBoundaryFunctions[face].push_back(drive_bcs[i]);
       drive_bc_enrolled = true;
+    } else if (bc == "reflect") {
+      rad_pkg->UserBoundaryFunctions[face].push_back(reflect_bcs[i]);
+      reflect_comps[AngularFluxDirs()[i / 2]] = true;
     }
+  }
+  if (reflect_comps[0] || reflect_comps[1] || reflect_comps[2]) {
+    BuildReflectionMaps(rad_pkg, reflect_comps);
   }
 
   // Enroll custom BC params

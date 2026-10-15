@@ -69,7 +69,6 @@ DNAME(r1);
 DNAME(a0);
 DNAME(ro);
 // Jacobi MeshData Registers
-DNAME(ropac);
 DNAME(rbase);
 DNAME(riter);
 DNAME(rout);

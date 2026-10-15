@@ -64,7 +64,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int nangles = shared.nangles;
   const int ngroups = shared.ngroups;
 
-  // Algorithm-shared Boundary Conditions (default, drive)
+  // Algorithm-shared Boundary Conditions (default, drive, reflect)
   RadiationBC::EnrollRadiationBC(explicit_pkg.get(), pin, params);
 
   // Algorithm-shared Initializations (none, zero, thermal)
@@ -560,7 +560,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
           ii.flux(b, X3DIR, n, k, j, i) =
               SpatialFlux<X3DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
           if (k == kb.e) {
-            const Real &dx3p = coords.CellWidth<X3DIR>(k + 1, j, i);
+            dx = coords.CellWidth<X3DIR>(k + 1, j, i);
             ii.flux(b, X3DIR, n, k + 1, j, i) =
                 SpatialFlux<X3DIR>(ii, cn, b, n, k + 1, j, i, op, gg, beta, dx, tmax);
           }

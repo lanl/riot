@@ -70,7 +70,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int nangles = shared.nangles;
   const int ngroups = shared.ngroups;
 
-  // Algorithm-shared Boundary Conditions (default, drive)
+  // Algorithm-shared Boundary Conditions (default, drive, reflect)
   RadiationBC::EnrollRadiationBC(jacobi_pkg.get(), pin, params);
 
   // Algorithm-shared Initializations (none, zero, thermal)
@@ -212,7 +212,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   jacobi_pkg->AddField<ccrad::s1>(m);
   jacobi_pkg->AddField<ccrad::s2>(m);
   jacobi_pkg->AddField<ccrad::s3>(m);
-  jacobi_pkg->AddField<ccrad::tauw>(m);
 
   // Advanced temperature field
   m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataJacobi,
@@ -341,14 +340,11 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   namespace ccrad = cell_variables::cell_averaged::rad;
   std::vector<std::string> intensity_names = pm->GetVariableNames(
       std::vector<std::string>{ccrad::intensity::name()}, std::vector<int>{});
-  std::vector<std::string> opac_names = pm->GetVariableNames(
-      std::vector<std::string>{ccrad::aa::name(), ccrad::ss::name()}, std::vector<int>{});
   auto &base = pm->mesh_data.Get();
   pm->mesh_data.Add(mdname::riter, base, intensity_names);
   pm->mesh_data.Add(mdname::rout, base, intensity_names);
   pm->mesh_data.AddShallow(mdname::rbase, base, jacobi_names);
   pm->mesh_data.AddShallow(mdname::ubase, base, unsplit_names);
-  pm->mesh_data.AddShallow(mdname::ropac, base, opac_names);
 
   // Subcycle controls
   const int nreduce_limit = jacobi_pkg->Param<int>("nreduce_limit");
@@ -440,34 +436,32 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
     auto &riter = pmesh->mesh_data.GetOrAdd(mdname::riter, i);
     auto &rout = pmesh->mesh_data.GetOrAdd(mdname::rout, i);
     auto &ubase = pmesh->mesh_data.GetOrAdd(mdname::ubase, i);
-    auto &ropac = pmesh->mesh_data.GetOrAdd(mdname::ropac, i);
     auto &tl = tr[i];
 
     // Start receives on MeshData registers
-    auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, ropac);
+    auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, rbase);
     srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, rout);
 
     // Set opacities
     auto set_opac = tl.AddTask(none, SetOpacities, rbase.get(), ubase.get());
-    auto opac_bc =
-        parthenon::AddBoundaryExchangeTasks(set_opac, tl, ropac, pmesh->multilevel);
+
+    // Reset iterator
+    auto reset_iter =
+        tl.AddTask(TaskQualifier::once_per_region | TaskQualifier::local_sync, set_opac,
+                   ResetIterator, rbase.get(), time, dt);
+
+    // Fill ghosts with boundary conditions at the advanced time
+    auto base_bc =
+        parthenon::AddBoundaryExchangeTasks(reset_iter, tl, rbase, pmesh->multilevel);
 
     // Initialize solution in riter
     auto init_iter = tl.AddTask(
-        none, sparse_update::DeepCopyData<parthenon::MetadataFlag, MeshData<Real>>,
+        TaskQualifier::local_sync, base_bc,
+        sparse_update::DeepCopyData<parthenon::MetadataFlag, MeshData<Real>>,
         std::vector<MetadataFlag>({Metadata::Independent}), riter.get(), rbase.get());
 
-    // Reset iterator
-    auto reset_iter = tl.AddTask(TaskQualifier::once_per_region, none, ResetIterator,
-                                 rbase.get(), time, dt);
-
-    // Prepare for Jacobi by setting tau weights
-    auto prep_jacobi =
-        tl.AddTask(TaskQualifier::local_sync, opac_bc | init_iter | reset_iter,
-                   PrepareForIterations, rbase.get());
-
     // Execute Jacobi iterations
-    auto [solver, solver_id] = tl.AddSublist(prep_jacobi, {1, max_iters});
+    auto [solver, solver_id] = tl.AddSublist(init_iter, {1, max_iters});
     CreateJacobiTaskList(none, i, pmesh, solver, solver_id, presidual, rbase, riter, rout,
                          ubase, dt);
   }
@@ -827,63 +821,6 @@ TaskStatus ResetIterator(MeshData<Real> *rbase, const Real time, const Real dt) 
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  void Jacobi::PrepareForIterations
-//! \brief Reset iterators and set matrix coefficients
-TaskStatus PrepareForIterations(MeshData<Real> *rbase) {
-  // Return if no blocks in MeshData
-  if (rbase->NumBlocks() == 0) return TaskStatus::complete;
-
-  // Extract Jacobi package
-  using parthenon::MakePackDescriptor;
-  auto pm = rbase->GetParentPointer();
-  auto jacobi_pkg = pm->packages.Get(pkg_name);
-
-  // Indexing
-  auto &resolved_pkgs = pm->resolved_packages;
-  IndexRange ib = rbase->GetBoundsI(IndexDomain::interior);
-  IndexRange jb = rbase->GetBoundsJ(IndexDomain::interior);
-  IndexRange kb = rbase->GetBoundsK(IndexDomain::interior);
-  const int ndim = pm->ndim;
-  const bool multid = ndim > 1;
-  const bool threed = ndim > 2;
-  const int ngroups = jacobi_pkg->Param<int>("ngroups");
-
-  // Additional Jacobi package params
-  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
-  const Real beta = futils.beta;
-  const Real tmax = futils.taumax;
-
-  // Packing
-  namespace ccr = cell_variables::cell_averaged::rad;
-  static auto desc_g =
-      MakePackDescriptor<ccr::tauw, ccr::aa, ccr::ss>(resolved_pkgs.get());
-  auto vg = desc_g.GetPack(rbase);
-
-  // Optical-depth weights are needed one cell into the ghost layer in each active
-  // direction, so extend the interior bounds by one there.
-  auto idx_space = RiotFlatLoop::GetIndexSpace(
-      vg.GetNBlocks(), ngroups, {kb.s - threed, kb.e + threed},
-      {jb.s - multid, jb.e + multid}, {ib.s - 1, ib.e + 1});
-  RiotFlatLoop::five_d(
-      "OpticalDepthWeights", idx_space,
-      KOKKOS_LAMBDA(const int &b, const int &gg, const int &k, const int &j,
-                    const int &i) {
-        // Extract coordinates
-        auto &coords = vg.GetCoordinates(b);
-        Real dxmin = coords.CellWidth<X1DIR>(k, j, i);
-        if (multid) dxmin = std::min(dxmin, coords.CellWidth<X2DIR>(k, j, i));
-        if (threed) dxmin = std::min(dxmin, coords.CellWidth<X3DIR>(k, j, i));
-
-        // Optical depth coefficients
-        const Real tau =
-            beta * dxmin * (vg(b, ccr::aa(gg), k, j, i) + vg(b, ccr::ss(gg), k, j, i));
-        vg(b, ccr::tauw(gg), k, j, i) = TauWeight(tau, tmax);
-      });
-
-  return TaskStatus::complete;
-}
-
-//----------------------------------------------------------------------------------------
 //! \fn  TaskStatus JacobiUpdate
 //! \brief Compute updated solution in Jacobi iteration
 TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
@@ -915,11 +852,12 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
   // Utilities
   const auto unit_utils = jacobi_pkg->Param<UnitUtils>("unit_utils");
   const Real cdt = unit_utils.c * dt;
+  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Packing
   namespace ccr = cell_variables::cell_averaged::rad;
   using parthenon::MakePackDescriptor;
-  static auto desc_g = MakePackDescriptor<ccr::tauw>(resolved_pkgs.get());
+  static auto desc_g = MakePackDescriptor<ccr::aa, ccr::ss>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
   auto vg = desc_g.GetPack(rbase);
   auto vb = desc_i.GetPack(rbase);
@@ -945,14 +883,15 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
 
         // Compute Jacobi coefficients
         // clang-format off
+        const auto tw = FaceTauWeights(vg, coords, ndim, futils, gg, b, k, j, i);
         Real g1p = 1.0, g1pp = 0.0;
         std::array<Real, 6> gn = {0.0};
-        GCoef<X1DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                     b, k, j, i, g1p, g1pp, gn[0], gn[1]);
-        if (multid) GCoef<X2DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                                 b, k, j, i, g1p, g1pp, gn[2], gn[3]);
-        if (threed) GCoef<X3DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                                 b, k, j, i, g1p, g1pp, gn[4], gn[5]);
+        GCoef<X1DIR>(coords, cp, NDIR, ivol, split_g1,
+                     tw, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
+        if (multid) GCoef<X2DIR>(coords, cp, NDIR, ivol, split_g1,
+                                 tw, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
+        if (threed) GCoef<X3DIR>(coords, cp, NDIR, ivol, split_g1,
+                                 tw, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
         // clang-format on
 
         // Spatial flux divergence operator
@@ -1019,6 +958,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   // Extract Jacobi params
   const bool affect_fluid = jacobi_pkg->Param<bool>("affect_fluid");
   const bool fixed_temp_rhs = jacobi_pkg->Param<bool>("fixed_temp_rhs");
+  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Extract angular grid params
   const auto agrid = GetAngularGridArrays(jacobi_pkg);
@@ -1042,14 +982,12 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
   namespace ccrad = cell_variables::cell_averaged::rad;
-  static auto desc_g = MakePackDescriptor<ccrad::tauw>(resolved_pkgs.get());
   static auto desc_b =
       MakePackDescriptor<ccrad::aa, ccrad::ss, ccrad::s1, ccrad::s2, ccrad::s3,
                          ccrad::temperature>(resolved_pkgs.get());
   static auto desc_u = MakePackDescriptor<ccmat::rho, cm::rho, ccbulk::temperature,
                                           ccbulk::internal_energy>(resolved_pkgs.get());
   static auto desc_o = MakePackDescriptor<ccrad::intensity>(resolved_pkgs.get());
-  auto vg = desc_g.GetPack(rbase);
   auto vb = desc_b.GetPack(rbase);
   auto vu = desc_u.GetPack(ubase);
   auto vo = desc_o.GetPack(rout);
@@ -1064,7 +1002,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
       "ApplyRHS", idx_space,
       KOKKOS_LAMBDA(const int &b, const int &k, const int &j, const int &i) {
         // Extract coordinates
-        auto &coords = vg.GetCoordinates(b);
+        auto &coords = vb.GetCoordinates(b);
         const Real ivol = 0.5 * cdt / coords.CellVolume(k, j, i);
         Real mcw = 0.0;
         if constexpr (do_angular_fluxes) {
@@ -1087,9 +1025,10 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
           Real &aa1 = vb(b, ccrad::s1(gg), k, j, i) = 0.0;
           Real &aa2 = vb(b, ccrad::s2(gg), k, j, i) = 0.0;
           Real &aa3 = vb(b, ccrad::s3(gg), k, j, i) = 0.0;
+          const auto tw = FaceTauWeights(vb, coords, ndim, futils, gg, b, k, j, i);
           for (int aa = 0; aa < nangles; ++aa) {
-            const Real g1 = G1Coef(vg, coords, cp, NDIR, ndim, wght, gflx, arcw, numn,
-                                   ivol, mcw, split_g1, gg, aa, b, k, j, i);
+            const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, ivol,
+                                   mcw, split_g1, tw, aa, k, j, i);
             const Real &ii = vo(b, GAI(nangles, gg, aa), k, j, i);
             const Real tmp = wght(aa) / (g1 + cdtsigt);
             aa1 += tmp;
@@ -1122,9 +1061,10 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
             // Set advanced stage specific intensity
             const Real ee = Emissivity(gg, tadv, fbnd, ngroups, unit_utils);
             const Real jj = (aa1 * ee + aa2) * aa3;
+            const auto tw = FaceTauWeights(vb, coords, ndim, futils, gg, b, k, j, i);
             for (int aa = 0; aa < nangles; ++aa) {
-              const Real g1 = G1Coef(vg, coords, cp, NDIR, ndim, wght, gflx, arcw, numn,
-                                     ivol, mcw, split_g1, gg, aa, b, k, j, i);
+              const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, ivol,
+                                     mcw, split_g1, tw, aa, k, j, i);
               Real &ii = vo(b, GAI(nangles, gg, aa), k, j, i);
               // clang-format off
               ii = std::max(ii + ((cdtsigs * jj +
@@ -1169,12 +1109,13 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   // Utilities
   const auto unit_utils = jacobi_pkg->Param<UnitUtils>("unit_utils");
   const Real cdt = unit_utils.c * dt;
+  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Packing
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccr = cell_variables::cell_averaged::rad;
   auto &resolved_pkgs = pm->resolved_packages;
-  static auto desc_g = MakePackDescriptor<ccr::tauw>(resolved_pkgs.get());
+  static auto desc_g = MakePackDescriptor<ccr::aa, ccr::ss>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
   static auto desc_u = MakePackDescriptor<ccbulk::internal_energy>(resolved_pkgs.get());
   auto vu = desc_u.GetPack(ubase);
@@ -1201,6 +1142,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
         for (int gg = 0; gg < ngroups; ++gg) {
           Real er_old = 0.0;
           Real er_new = 0.0;
+          const auto tw = FaceTauWeights(vg, coords, ndim, futils, gg, b, k, j, i);
           for (int aa = 0; aa < nangles; ++aa) {
             // Collapsed indexing
             const int n = GAI(nangles, gg, aa);
@@ -1209,12 +1151,12 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             // clang-format off
             Real g1p = 1.0, g1pp = 0.0;
             std::array<Real, 6> gn = {0.0};
-            GCoef<X1DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                         b, k, j, i, g1p, g1pp, gn[0], gn[1]);
-            if (multid) GCoef<X2DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                                     b, k, j, i, g1p, g1pp, gn[2], gn[3]);
-            if (threed) GCoef<X3DIR>(vg, coords, cp, NDIR, ivol, split_g1, gg, aa,
-                                     b, k, j, i, g1p, g1pp, gn[4], gn[5]);
+            GCoef<X1DIR>(coords, cp, NDIR, ivol, split_g1,
+                         tw, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
+            if (multid) GCoef<X2DIR>(coords, cp, NDIR, ivol, split_g1,
+                                     tw, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
+            if (threed) GCoef<X3DIR>(coords, cp, NDIR, ivol, split_g1,
+                                     tw, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
             // clang-format on
 
             // Backtrack contributions from g2-g7 and gn
