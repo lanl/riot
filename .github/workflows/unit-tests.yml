@@ -24,9 +24,10 @@ jobs:
   unit-tests:
     runs-on: ubuntu-26.04
     strategy:
-      # Let both compiler results complete even if the other compiler fails.
+      # Let every configuration complete even if another fails.
       fail-fast: false
       matrix:
+        hdf5: ["ON", "OFF"]
         compiler:
           - name: gcc
             cc: gcc
@@ -82,9 +83,9 @@ jobs:
         with:
           # This is github's mechanism for pulling out stashed data via workspaces
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-${{ steps.dependencies.outputs.hash }}
+          key: ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-hdf5-${{ matrix.hdf5 }}-${{ steps.dependencies.outputs.hash }}
           restore-keys: |
-            ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-
+            ccache-v1-${{ runner.os }}-${{ matrix.compiler.name }}-hdf5-${{ matrix.hdf5 }}-
 
       - name: Build, install, and test
         run: |
@@ -94,6 +95,7 @@ jobs:
 
           cmake -S . -B build \
             -DRIOT_ENABLE_UNIT_TESTS=ON \
+            -DRIOT_ENABLE_HDF5=${{ matrix.hdf5 }} \
             -DRIOT_BUILD_CATCH2=OFF \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER="$CC" \

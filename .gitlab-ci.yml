@@ -20,6 +20,9 @@ default:
   hooks:
     pre_get_sources_script:
     - |
+      # PLUGINS_REPO_DIR goes through ${CI_PROJECT_DIR}/.., which doesn't exist yet
+      # on a fresh builds dir (this hook runs before the project clone).
+      mkdir -p "${CI_PROJECT_DIR}"
       rm -rf ${PLUGINS_REPO_DIR}
       # Force the job token into any absolute https://${CI_INTERNAL_HOST}/ URL so
       # that --recursive can also fetch riot_plugins' submodule(s). This is passed
