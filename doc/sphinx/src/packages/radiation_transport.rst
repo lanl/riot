@@ -173,7 +173,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and sever
      - Skip the advanced-temperature solve in the source term.
    * - beta
      - Real
-     - ``5.0``
+     - ``3.0``
      - Weight on the local optical depth in the Rusanov flux.
    * - taumax
      - Real
@@ -323,7 +323,7 @@ Convergence Subcycling
 
 The Jacobi solver performs a single *global* implicit solve over the whole mesh each step, with the opacities lagged from the start of the step. This is a demanding nonlinear problem, and RIOT provides an escape hatch for the rare case in which an individual solve truly goes off the rails — its residual growing or stalling rather than settling. When a solve is judged to be diverging, it is discarded and the operator-split step is retried from the pristine start-of-step state with the timestep divided by ``reduce_factor``, repeating (reducing further as needed) until each subinterval completes and the full step is covered. It is a robustness backstop rather than part of the normal solve, and it is off by default.
 
-Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, or — when the stall detector is enabled — when it fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
+Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors act only while the residual is above the convergence threshold, so a solve that has already converged but is held open by ``niter_min`` is never discarded. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
 .. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
    :class: wraptable
@@ -345,7 +345,15 @@ Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit
    * - ndiverge_limit
      - int
      - ``-1``
-     - Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector, so only a non-finite residual fails a solve.
+     - Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector.
+   * - diverge_rise_frac
+     - Real
+     - ``-1``
+     - Fractional rise of the residual above its best so far that counts as divergence and triggers a reduction (e.g. ``0.1`` flags a residual 10% above its best); :math:`-1` disables the rise detector.
+   * - nrelax_steps
+     - int
+     - ``0``
+     - If :math:`>0`, each step starts with the subcycle count the previous step finished with, and that count is divided by ``reduce_factor`` after ``nrelax_steps`` consecutive steps without divergence; :math:`0` starts every step at the full timestep.
 
 Initialization
 ~~~~~~~~~~~~~~

@@ -14,6 +14,7 @@
 // This file was made in part with generative AI.
 
 // C++ headers
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -133,12 +134,22 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int reduce_factor = pin->GetOrAddInteger(
       input_block, "reduce_factor", 2,
       "Integer factor by which the subcycle timestep is divided each time the implicit "
-      "Jacobi solve diverges (e.g. 2 halves dt). Setting to -1 disables the stall "
-      "detector entirely in which only a NaN/Inf residual can fail a solve)");
+      "Jacobi solve diverges (e.g. 2 halves dt).");
   const int ndiverge_limit = pin->GetOrAddInteger(
       input_block, "ndiverge_limit", -1,
       "Number of consecutive Jacobi iterations without improvement on the best residual "
-      "seen so far that constitutes divergence and triggers a dt reduction/subcycle.");
+      "seen so far that constitutes divergence and triggers a dt reduction/subcycle.  "
+      "Setting to -1 disables this detector.");
+  const Real diverge_rise_frac = pin->GetOrAddReal(
+      input_block, "diverge_rise_frac", -1.0,
+      "Fractional rise of the residual above the best residual seen so far that "
+      "constitutes divergence and triggers a dt reduction/subcycle (e.g. 0.1 flags a "
+      "residual 10% above its best).  Setting to -1 disables this detector.");
+  const int nrelax_steps = pin->GetOrAddInteger(
+      input_block, "nrelax_steps", 0,
+      "If > 0, a step starts with the subcycle count the previous step finished with, "
+      "and that count is divided by reduce_factor after nrelax_steps consecutive steps "
+      "without divergence.  Setting to 0 starts every step at the full dt.");
   PARTHENON_REQUIRE(nreduce_limit >= 0,
                     "radiation_transport/jacobi/nreduce_limit must be >= 0!");
   PARTHENON_REQUIRE(reduce_factor > 1,
@@ -146,9 +157,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   PARTHENON_REQUIRE(
       ndiverge_limit == -1 || ndiverge_limit > 0,
       "radiation_transport/jacobi/ndiverge_limit must be > 0, or -1 to disable");
+  PARTHENON_REQUIRE(
+      diverge_rise_frac == -1.0 || diverge_rise_frac > 0.0,
+      "radiation_transport/jacobi/diverge_rise_frac must be > 0, or -1 to disable");
+  PARTHENON_REQUIRE(nrelax_steps >= 0,
+                    "radiation_transport/jacobi/nrelax_steps must be >= 0!");
   params.Add("nreduce_limit", nreduce_limit);
   params.Add("reduce_factor", reduce_factor);
   params.Add("ndiverge_limit", ndiverge_limit);
+  params.Add("diverge_rise_frac", diverge_rise_frac);
+  params.Add("nrelax_steps", nrelax_steps);
 
   // Timestep controllers
   params.Add("dt_ratio_hyperbolic",
@@ -183,6 +201,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("solve_diverged", false, true);
   params.Add("best_residual", std::numeric_limits<Real>::max(), true);
   params.Add("nstall", 0, true);
+  params.Add("ndiv_start", 1, Params::Mutability::Restart);
+  params.Add("nclean", 0, Params::Mutability::Restart);
   params.Add("time", 0.0, Params::Mutability::Restart);
   params.Add("current_residual_group", std::numeric_limits<Real>::max(), true);
 
@@ -349,11 +369,13 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   // Subcycle controls
   const int nreduce_limit = jacobi_pkg->Param<int>("nreduce_limit");
   const int reduce_factor = jacobi_pkg->Param<int>("reduce_factor");
+  const int nrelax_steps = jacobi_pkg->Param<int>("nrelax_steps");
   const int verbose = jacobi_pkg->Param<int>("verbose");
 
   // Adaptive subcycle loop
-  int ndiv = 1;
-  int nremaining = 1;
+  const int ndiv_start = (nrelax_steps > 0) ? jacobi_pkg->Param<int>("ndiv_start") : 1;
+  int ndiv = ndiv_start;
+  int nremaining = ndiv_start;
   int nreduce = 0;
   int nsub = 0;
   while (nremaining > 0) {
@@ -361,7 +383,7 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     const Real t_local = dt * (ndiv - nremaining) / ndiv;
 
     // Report subcycle progress
-    if (nreduce > 0 && Globals::my_rank == 0 && verbose >= 1) {
+    if (ndiv > 1 && Globals::my_rank == 0 && verbose >= 1) {
       printf(
           "(Jacobi) Subcycle attempt %d | dt_sub: %24.16e | committed: %6.2f%% of dt\n",
           nsub + 1, dt_this, 100.0 * t_local / dt);
@@ -388,13 +410,14 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     } else {
       // Solve diverged: back out and retry the remaining span with a reduced timestep
       ++nreduce;
-      PARTHENON_REQUIRE(
-          nreduce <= nreduce_limit,
-          "Implicit Jacobi radiation solve diverged after " +
-              std::to_string(nreduce_limit) + " timestep reduction(s).  Residual: " +
-              std::to_string(jacobi_pkg->Param<Real>("current_residual")) +
-              ", dt_sub: " + std::to_string(dt_this) +
-              ".  Raise nreduce_limit, loosen ndiverge_limit, or check the setup.");
+      PARTHENON_REQUIRE(nreduce <= nreduce_limit,
+                        "Implicit Jacobi radiation solve diverged after " +
+                            std::to_string(nreduce_limit) +
+                            " timestep reduction(s).  Residual: " +
+                            std::to_string(jacobi_pkg->Param<Real>("current_residual")) +
+                            ", dt_sub: " + std::to_string(dt_this) +
+                            ".  Raise nreduce_limit, loosen "
+                            "ndiverge_limit/diverge_rise_frac, or check the setup.");
       ndiv *= reduce_factor;
       nremaining *= reduce_factor;
       if (Globals::my_rank == 0 && verbose >= 1)
@@ -404,9 +427,24 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
     }
   }
 
-  if (nreduce > 0 && Globals::my_rank == 0 && verbose >= 1) {
+  if (ndiv > 1 && Globals::my_rank == 0 && verbose >= 1) {
     printf("(Jacobi) Completed operator-split step in %d subcycles (%d reduction(s))\n",
            nsub, nreduce);
+  }
+
+  // Carry the subcycle count into the next step, relaxing it after a clean streak
+  if (nrelax_steps > 0) {
+    int ndiv_next = 1;
+    for (int r = 0; r < nreduce_limit && ndiv_next < ndiv; ++r)
+      ndiv_next *= reduce_factor;
+    ndiv_next = std::min(ndiv_next, ndiv);
+    int nclean = (nreduce > 0) ? 0 : jacobi_pkg->Param<int>("nclean") + 1;
+    if (ndiv_next > 1 && nclean >= nrelax_steps) {
+      ndiv_next /= reduce_factor;
+      nclean = 0;
+    }
+    jacobi_pkg->UpdateParam("ndiv_start", std::max(ndiv_next, 1));
+    jacobi_pkg->UpdateParam("nclean", nclean);
   }
 
   return TaskCollection();
@@ -628,6 +666,7 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
   auto &v = *presidual;
   const Real current_residual = v(0) / (std::max(v(1), 1.0e-100) + (v(1) <= 1.0e-100));
   jacobi_pkg->UpdateParam("current_residual", current_residual);
+  bool residual_met = (current_residual <= jacobi_pkg->Param<Real>("err_thr"));
 
   // Optional per-group residual
   if (jacobi_pkg->Param<bool>("per_group_residual")) {
@@ -642,16 +681,23 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
           std::max(residual_group, num_g / (denom_g + (denom_g <= 1.0e-100)));
     }
     jacobi_pkg->UpdateParam("current_residual_group", residual_group);
+    residual_met =
+        residual_met && (residual_group <= jacobi_pkg->Param<Real>("err_thr_group"));
   }
 
   // Divergence detection
   const Real best_residual = jacobi_pkg->Param<Real>("best_residual");
   const int ndiverge_limit = jacobi_pkg->Param<int>("ndiverge_limit");
+  const Real diverge_rise_frac = jacobi_pkg->Param<Real>("diverge_rise_frac");
   int nstall = jacobi_pkg->Param<int>("nstall");
   const bool improved = current_residual < best_residual;
   nstall = improved ? 0 : nstall + 1;
-  const bool stalled = (ndiverge_limit >= 0) && (nstall >= ndiverge_limit);
-  const bool diverged = !std::isfinite(current_residual) || stalled;
+  const bool stalled =
+      !residual_met && (ndiverge_limit >= 0) && (nstall >= ndiverge_limit);
+  const bool rose =
+      !residual_met && (diverge_rise_frac > 0.0) &&
+      (current_residual - best_residual > diverge_rise_frac * best_residual);
+  const bool diverged = !std::isfinite(current_residual) || stalled || rose;
   jacobi_pkg->UpdateParam("nstall", nstall);
   if (improved) jacobi_pkg->UpdateParam("best_residual", current_residual);
   if (diverged) jacobi_pkg->UpdateParam("solve_diverged", true);
