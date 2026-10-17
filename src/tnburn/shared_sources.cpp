@@ -14,6 +14,7 @@
 
 // C++ includes
 #include <string>
+#include <vector>
 
 // Parthenon includes
 #include <parthenon/package.hpp>
@@ -52,14 +53,20 @@ parthenon::TaskStatus SharedSources(MeshData<Real> *sourcein, MeshData<Real> *so
   static const auto BurnFlag = Metadata::GetOrAddFlag(riot::metadata::TNBurn);
   parthenon::Metadata::FlagCollection flags{Metadata::Independent, Metadata::Advected};
   flags.Exclude(BurnFlag); // to avoid double counting isotopes
-  auto [conserved_vars, prims_vars] = RiotUtils::GetAssociatedVars(sourceout, flags);
+  // Only mass-weighted quantities (rho*q, associated with a separate primitive q) pick
+  // up a source q*drho; self-associated quantities receive none.
+  // NOTE: Association is used here as a proxy for mass weighting. An Advected field that
+  // stores rho*q but is self-associated (i.e., not routed through the Associate
+  // machinery) is skipped and receives no q*drho source. Supporting such fields would
+  // require marking them explicitly and recovering q = (rho*q)/rho in the kernel below.
+  auto [conserved_vars, prims_vars] = RiotUtils::GetPrimitiveAssociatedVars(state, flags);
   static std::vector<bool> use_regex(conserved_vars.size(), false);
 
   static auto desc_anon_state =
       parthenon::MakePackDescriptor(resolved_packages.get(), prims_vars, use_regex);
   static auto desc_anon_out =
       parthenon::MakePackDescriptor(resolved_packages.get(), conserved_vars, use_regex);
-  auto v_anon_state = riot::GetPack(desc_anon_state, sourcein);
+  auto v_anon_state = riot::GetPack(desc_anon_state, state);
   auto v_anon_out = riot::GetPack(desc_anon_out, sourceout);
 
   // Pack up the "known" quantities from all of the kinds of data blocks
