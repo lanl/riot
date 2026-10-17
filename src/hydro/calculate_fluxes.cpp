@@ -398,9 +398,11 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
 //! \brief Anonymous/passive advection fluxes. Each variable flagged Metadata::Advected
 //!        is a passive scalar carried in a separate pack (adv), paired with a controlling
 //!        material's mass flux. For a material-associated scalar the advection velocity
-//!        is that material's rho flux (summed over its phases); for a non-associated
-//!        ("anonymous") scalar it is the bulk Riemann velocity. The upwind state is
-//!        selected by the sign of that velocity (strictly > 0), matching the old kernel.
+//!        is that material's rho flux (summed over its phases); for a bulk (non-sparse)
+//!        mass-weighted scalar it is the bulk mass flux (summed over all material rho
+//!        fluxes); for a non-associated ("anonymous") scalar it is the bulk Riemann
+//!        velocity. The upwind state is selected by the sign of that velocity (strictly
+//!        > 0), matching the old kernel.
 //!        Runs after the material-rho flux loop, which has already written
 //!        v.flux(ccmat::rho(...)) that we read back as the velocity.
 //!
@@ -428,8 +430,8 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
   // comes straight off the packed variable's tensor_shape[0] -- no external nphase array
   // needed (phases of one material share a sparse_id and pack contiguously).
   int adv_map[MAX_ADV]; // -1 => anonymous (use riemann_vel); else ccmat::rho pack index
-  int nflux[MAX_ADV];   // number of phase contributions to sum
-  int adv_mat[MAX_ADV]; // -1 => anonymous; else controlling material index
+  int nflux[MAX_ADV];   // number of ccmat::rho flux contributions to sum
+  int adv_mat[MAX_ADV]; // -1 => anonymous/bulk; else controlling material index
   for (int n = 0; n < nadv; ++n) {
     const int sid = adv.ConsSparseID(b, n);
     adv_map[n] = -1;
@@ -444,6 +446,9 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
           break;
         }
       }
+    } else if (adv.HasAssociatedPrimitive(b, n)) {
+      adv_map[n] = v.GetLowerBound(b, ccmat::rho());
+      nflux[n] = v.GetUpperBound(b, ccmat::rho()) - adv_map[n] + 1;
     }
   }
 
