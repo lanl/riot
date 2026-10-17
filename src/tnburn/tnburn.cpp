@@ -319,13 +319,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   parthenon::HstVar_list hst_vars = {};
   for (int mat = 0; mat < nummat; mat++) {
     for (int rxn = 0; rxn < num_reactions_per_mat[mat]; rxn++) {
+      const int reaction = reaction_list_per_mat[mat][rxn];
       hst_vars.emplace_back(
           HstSum,
           [=](MeshData<Real> *mymd) {
-            return TNBurn::IntegratedReactionCount(mymd, mat, rxn);
+            return TNBurn::IntegratedReactionCount(mymd, mat, reaction);
           },
-          "TotalReactions_" + std::to_string(mat) + "_" +
-              reactions_list[reaction_list_per_mat[mat][rxn]]);
+          "TotalReactions_" + std::to_string(mat) + "_" + reactions_list[reaction]);
     }
   }
   params.Add(parthenon::hist_param_key, hst_vars);
@@ -388,6 +388,10 @@ TaskStatus CalculateTNBurnSource(MeshData<Real> *state, MeshData<Real> *src,
   // RHS variables; the inputs.  The reaction rates do not depend on much!
   auto v = riot::MakePack<ccbulk::temperature, ccmat::iso, ccmat::volume_fraction,
                           ccmat::rho, cm::phase_fraction>(state);
+  // All variables in this package's source subset (zeroed before accumulating)
+  static auto desc_src_all = riot::MakePackDescriptor(
+      std::vector<parthenon::MetadataFlag>{Metadata::Independent}, src);
+  auto dv_all = riot::GetPack(desc_src_all, src);
   // Variables for which this package produces source terms
   auto dv = riot::MakePack<ccbulk::total_material_energy, ccmat::iso,
                            ccmat::tn_reaction_density, ccmat::rho>(src);
@@ -404,8 +408,8 @@ TaskStatus CalculateTNBurnSource(MeshData<Real> *state, MeshData<Real> *src,
         const int nmat = v.GetSize(b, ccmat::rho());
 
         // First, zero out everything
-        for (int r = dv.GetLowerBound(b); r <= dv.GetUpperBound(b); r++) {
-          auto var = RiotLoop::make_var_view(idx_range, dv, r);
+        for (int r = dv_all.GetLowerBound(b); r <= dv_all.GetUpperBound(b); r++) {
+          auto var = RiotLoop::make_var_view(idx_range, dv_all, r);
           RiotLoop::inner(idx_range, [&](const auto kji) { var(kji) = 0.0; });
         }
 
@@ -446,10 +450,11 @@ TaskStatus CalculateTNBurnSource(MeshData<Real> *state, MeshData<Real> *src,
             idx_range.TeamBarrier();
 
             // Finally, calculate the rate
+            const Real identical_fac = (r_id_1 == r_id_2) ? 0.5 : 1.0;
             RiotLoop::inner(idx_range, [&](const auto kji) {
-              rate(kji) = (vfrac(kji) > vol_frac_thresh) * reactant_1(kji) *
-                          reactant_2(kji) * sigvbar(kji) * phase_frac(kji) *
-                          phase_frac(kji) / (vfrac(kji) + 1.0e-100);
+              rate(kji) = identical_fac * (vfrac(kji) > vol_frac_thresh) *
+                          reactant_1(kji) * reactant_2(kji) * sigvbar(kji) *
+                          phase_frac(kji) * phase_frac(kji) / (vfrac(kji) + 1.0e-100);
             });
             idx_range.TeamBarrier();
 
@@ -637,10 +642,7 @@ Real IntegratedReactionCount(MeshData<Real> *md, const int mat, const int reacti
   using parthenon::ParArray1D;
   auto pm = md->GetParentPointer();
   auto &resolved_pkgs = pm->resolved_packages;
-  auto const &tnburn = pm->packages.Get("TNBurn");
-  auto num_reactions_per_mat = tnburn->Param<ParArray1D<int>>("num_reactions_per_mat");
-  static auto desc =
-      MakePackDescriptor<ccmat::tn_reaction_density, ccmat::rho>(resolved_pkgs.get());
+  static auto desc = MakePackDescriptor<ccmat::tn_reaction_density>(resolved_pkgs.get());
   auto vmesh = desc.GetPack(md);
 
   using TE = parthenon::TopologicalElement;
@@ -650,21 +652,17 @@ Real IntegratedReactionCount(MeshData<Real> *md, const int mat, const int reacti
   return RiotLoop::outer_reduce(
       idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
         auto coords = vmesh.GetCoordinates(b);
-        // Hoist the material search and reaction-offset accumulation out of the inner
-        // reduction: find the matching material's reaction-component offset i_tn once.
-        // sparse_id is unique per material, so at most one material matches.
-        int i_tn = 0;
-        bool found = false;
-        for (int n = 0; n < vmesh.GetSize(b, ccmat::rho()); n++) {
-          if (vmesh(b, ccmat::rho(n)).sparse_id == mat) {
-            found = true;
+        // Each TN material carries one tn_reaction_density component per reaction in
+        // the problem, so locate this material's first component and offset by the
+        // (global) reaction index.
+        int i_tn = -1;
+        for (int n = 0; n < vmesh.GetSize(b, ccmat::tn_reaction_density()); n++) {
+          if (vmesh(b, ccmat::tn_reaction_density(n)).sparse_id == mat) {
+            i_tn = n;
             break;
           }
-          i_tn += num_reactions_per_mat(vmesh(b, ccmat::rho(n)).sparse_id);
         }
-        if (!found) return;
-        // tn_reaction_density is indexed by reaction component (i_tn + reaction), not by
-        // material, so use a single-variable view at that resolved component index.
+        if (i_tn < 0) return;
         auto rxn = RiotLoop::make_var_view(idx_range, vmesh,
                                            ccmat::tn_reaction_density(i_tn + reaction));
         RiotLoop::inner_reduce(idx_range, [&](const auto idx, Real &lsum) {
