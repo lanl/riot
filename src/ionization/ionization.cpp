@@ -213,8 +213,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // note that electron specific internal energy is
   // ue / rho_bulk,
   // implying the specific energy is specific to ION density!
+  // Its hydro flux is the vfrac-weighted sum of per-material face states (see
+  // Hydro::CalculateFluxes), so it is not flagged Metadata::Advected.
   Metadata m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
-                         Metadata::FillGhost, Metadata::Advected, Metadata::WithFluxes});
+                         Metadata::FillGhost, Metadata::WithFluxes});
   physics->AddField<ccbulk::electron_internal_energy>(m);
 
   // electron entropy density s_e is advected with the bulk
