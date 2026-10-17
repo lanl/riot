@@ -430,8 +430,8 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
   // comes straight off the packed variable's tensor_shape[0] -- no external nphase array
   // needed (phases of one material share a sparse_id and pack contiguously).
   int adv_map[MAX_ADV]; // -1 => anonymous (use riemann_vel); else ccmat::rho pack index
-  int adv_mat[MAX_ADV]; // -1 => anonymous; else controlling material index
   int nflux[MAX_ADV];   // number of ccmat::rho flux contributions to sum
+  int adv_mat[MAX_ADV]; // -1 => anonymous/bulk; else controlling material index
   for (int n = 0; n < nadv; ++n) {
     const int sid = adv.ConsSparseID(b, n);
     adv_map[n] = -1;
