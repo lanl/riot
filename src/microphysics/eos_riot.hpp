@@ -18,7 +18,11 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <tuple>
+#include <type_traits>
+#include <vector>
 // parthenon infrastructure includes
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
@@ -224,9 +228,18 @@ class LambdaIndexerMulti {
   parthenon::ScratchPad2D<int> pte2slice_;
 };
 
+// The unmodified base type of an EOS, e.g., ZSplitE<ScaledEOS<T>> -> T
+template <typename T>
+using unmodified_t = std::decay_t<decltype(std::declval<T &>().GetUnmodifiedObject())>;
+
+//----------------------------------------------------------------------------------------
+//! \fn  Container_t RiotEOS::GetEOSNames
+//! \brief Names of the base EOS's in the variant, i.e., valid values of eos_type.
+//! Modifiers are applied via other input parameters, so are stripped here.
 template <typename Container_t = std::vector<std::string>, typename... Ts>
-Container_t GetEOSNames(const singularity::Variant<Ts...> &eos) {
-  return Container_t{Ts::EosType()...};
+Container_t GetEOSNames(const singularity::Variant<Ts...> &) {
+  const std::set<std::string> names{unmodified_t<Ts>::EosType()...};
+  return Container_t(names.begin(), names.end());
 }
 
 template <typename Lambda_t = Real *>
