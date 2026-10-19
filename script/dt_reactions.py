@@ -204,8 +204,8 @@ def write_isotope_data(filename, temperatures_mev):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("t_min", type=float, help="minimum k_B*T in MeV")
-    parser.add_argument("t_max", type=float, help="maximum k_B*T in MeV")
+    parser.add_argument("t_min", type=float, help="minimum k_B*T in keV")
+    parser.add_argument("t_max", type=float, help="maximum k_B*T in keV")
     parser.add_argument("-n", "--num-points", type=int, default=181,
                         help="number of temperatures, evenly spaced in ln(T); default: 181")
     parser.add_argument("-o", "--output", default="dt_isotope_data.hdf5",
@@ -216,7 +216,7 @@ def main():
     if args.num_points < 2:
         parser.error("--num-points must be at least 2")
     write_isotope_data(args.output,
-                       np.geomspace(args.t_min, args.t_max, args.num_points))
+                       1e-3 * np.geomspace(args.t_min, args.t_max, args.num_points))
 
 
 if __name__ == "__main__":
