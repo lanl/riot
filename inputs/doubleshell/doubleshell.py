@@ -852,21 +852,13 @@ def make_input(args):
                 Cv=info["cv"],
             )
         else:
-            if scale != 1:
-                riot.input(
-                    eos_name,
-                    eos_type="SpinerEOSDependsRhoT",
-                    sesame_id=info["sesame_id"],
-                    filename=str(ifile_dir / "eos" / "materials.sp5"),
-                    eos_scale = scale,
-                )
-            else:
-                riot.input(
-                    eos_name,
-                    eos_type="SpinerEOSDependsRhoT",
-                    sesame_id=info["sesame_id"],
-                    filename=str(ifile_dir / "eos" / "materials.sp5"),
-                )
+            riot.input(
+                eos_name,
+                eos_type="SpinerEOSDependsRhoT",
+                sesame_id=info["sesame_id"],
+                filename=str(ifile_dir / "eos" / "materials.sp5"),
+                eos_scale = scale,
+            )
         return rho
 
     add_material(MATID["background"], "Helium")

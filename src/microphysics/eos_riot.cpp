@@ -59,12 +59,13 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     }
   }
 
-  const bool do_scale = pin->DoesParameterExist(block_name, "eos_scale");
+  bool do_scale = pin->DoesParameterExist(block_name, "eos_scale");
   const Real scale =
       do_scale ? pin->GetReal(block_name, "eos_scale",
                               "Density scale for tabulated EOS. The table is evaluated "
                               "at rho*eos_scale and sie/eos_scale.")
                : 1.0;
+  if (std::abs(scale - 1) < 1e-12) do_scale = false;
   if (do_scale) {
     bool is_tabulated = false;
 #ifdef SPINER_USE_HDF
