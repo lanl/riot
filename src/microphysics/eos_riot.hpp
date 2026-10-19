@@ -49,13 +49,19 @@ using singularity::variadic_utils::concat;
 using singularity::variadic_utils::transform_variadic_list;
 
 // The EOS's that can be zsplit
-static constexpr const auto zsplitable =
-    tl<singularity::IdealGas, singularity::Gruneisen
 #ifdef SPINER_USE_HDF
-       ,
-       singularity::SpinerEOSDependsRhoT, singularity::SpinerEOSDependsRhoSie
+// Tabulated EOS's, which may also be scaled. Scaled is innermost, i.e.,
+// ZSplitE<ScaledEOS<eos>>.
+static constexpr const auto spiner =
+    tl<singularity::SpinerEOSDependsRhoT, singularity::SpinerEOSDependsRhoSie>{};
+static constexpr const auto scaled_spiner =
+    transform_variadic_list(spiner, al<singularity::ScaledEOS>{});
+static constexpr const auto zsplitable =
+    concat(tl<singularity::IdealGas, singularity::Gruneisen>{}, spiner, scaled_spiner);
+#else
+static constexpr const auto zsplitable =
+    tl<singularity::IdealGas, singularity::Gruneisen>{};
 #endif
-       >{};
 // EOS's that should not be zsplit
 static constexpr const auto not_splitable =
     tl<singularity::JWL, singularity::DavisProducts, singularity::DavisReactants,
@@ -69,6 +75,20 @@ static constexpr const auto zspliti =
 // Unmodified, ZSPlitE<eos>, ZSPlitI<eos>, IdealElectrons
 static constexpr const auto all_eoses =
     concat(zsplitable, zsplite, zspliti, not_splitable);
+
+template <typename T, typename... Ts>
+constexpr bool in_list(tl<Ts...>) {
+  return singularity::variadic_utils::contains_v<T, Ts...>();
+}
+#ifdef SPINER_USE_HDF
+// Variant::Modify silently returns the unmodified EOS if the modified
+// type is not in the variant, so make sure scaled tables can be zsplit.
+using ScaledRhoT = singularity::ScaledEOS<singularity::SpinerEOSDependsRhoT>;
+using ScaledRhoSie = singularity::ScaledEOS<singularity::SpinerEOSDependsRhoSie>;
+static_assert(in_list<singularity::ZSplitE<ScaledRhoT>>(all_eoses) &&
+                  in_list<singularity::ZSplitI<ScaledRhoSie>>(all_eoses),
+              "Scaled tables must be zsplitable");
+#endif
 } // namespace impl
 
 using EOS = typename decltype(singularity::tl_to_Variant(impl::all_eoses))::vt;
@@ -376,6 +396,18 @@ inline EOS ZSplit(const EOS &eos, const ZSplitting s) {
   } else {
     return eos;
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  EOS RiotEOS::MaybeScale
+//! \brief Wraps eos in a ScaledEOS if requested. Scaling must be applied to the
+//! concrete type, as the variant's Modify won't fail if ScaledEOS<T> is missing.
+template <typename T>
+EOS MaybeScale(T eos, const bool do_scale, const Real scale) {
+  if (do_scale) {
+    return singularity::ScaledEOS<T>(std::move(eos), scale);
+  }
+  return eos;
 }
 
 //----------------------------------------------------------------------------------------
