@@ -169,8 +169,10 @@ namespace material_averaged {
 VARIABLE_SCALAR(c.m, rho, true);
 VARIABLE_SCALAR(c.m, phase_fraction, true);
 VARIABLE_SCALAR(c.m, sie, true);
-VARIABLE_SCALAR(c.m., specific_heat, true); // TODO(JMM): Electrons?
+VARIABLE_SCALAR(c.m, internal_energy, true);
+VARIABLE_SCALAR(c.m, specific_heat, true); // TODO(JMM): Electrons?
 VARIABLE_SCALAR(c.m, electron_sie, true);
+VARIABLE_SCALAR(c.m, electron_internal_energy, true);
 VARIABLE_SCALAR(c.m, temperature, true);
 VARIABLE_SCALAR(c.m, pressure, true);
 VARIABLE_SCALAR(c.m, bulk_modulus, true);
@@ -295,6 +297,7 @@ DNAME(u1);
 
 namespace metadata {
 constexpr char OperatorSplit[] = "OperatorSplit";
+constexpr char KinematicAdvected[] = "KinematicAdvected";
 
 // Some variables need to be tagged with the package they are relevant
 // for for the purpose of anonymous advection.
