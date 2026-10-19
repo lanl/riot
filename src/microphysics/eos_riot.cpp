@@ -170,6 +170,8 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     }
 #endif
   } else if (eos_type.compare(singularity::IdealElectrons::EosType()) == 0) {
+    PARTHENON_REQUIRE_THROWS(zsplit == ZSplitting::None,
+                             "Z split not supported for IdealElectrons");
     RETURN(load, Shift(IdealElectrons(AZbar), shift, reference_sie));
   } else {
     std::stringstream error_mesg;
