@@ -374,6 +374,11 @@ def build_parser():
         help="Inner shell material",
     )
     geom.add_argument(
+        "--scale_chromium",
+        action="store_true",
+        help="Rescale the Chromium EOS to behave more like Tungsten"
+    )
+    geom.add_argument(
         "--idealDT",
         action="store_true",
         help="Uses ideal gas for DT gas, even if sesame EOSs are used.",
@@ -790,6 +795,16 @@ def make_input(args):
     def add_material(idx, catalog_name, density=None, isotopes=None):
         info = MATERIALS[catalog_name]
         rho = info["density"] if density is None else density
+
+        # Special treatment for Chromium if necessary
+        scale = 1
+        if args.scale_chromium and catalog_name == "Chromium":
+            if args.eos_model == "ideal":
+                raise ValueError("Cannot scale chromium in ideal gas mode.")
+            info["z"] = MATERIALS["Tungsten"]["z"]
+            rho = MATERIALS["Tungsten"]["density"] if density is None else rho
+            scale = MATERIALS["Tungsten"]["density"] / info["density"]
+
         # Refinement level comes from the REFINE_LEVELS table (keyed by matid), which is
         # the single place to tune resolution vs. memory for a suite of runs.
         max_level = refine_level(idx, args.dim)
@@ -837,12 +852,21 @@ def make_input(args):
                 Cv=info["cv"],
             )
         else:
-            riot.input(
-                eos_name,
-                eos_type="SpinerEOSDependsRhoT",
-                sesame_id=info["sesame_id"],
-                filename=str(ifile_dir / "eos" / "materials.sp5"),
-            )
+            if scale != 1:
+                riot.input(
+                    eos_name,
+                    eos_type="SpinerEOSDependsRhoT",
+                    sesame_id=info["sesame_id"],
+                    filename=str(ifile_dir / "eos" / "materials.sp5"),
+                    eos_scale = scale,
+                )
+            else:
+                riot.input(
+                    eos_name,
+                    eos_type="SpinerEOSDependsRhoT",
+                    sesame_id=info["sesame_id"],
+                    filename=str(ifile_dir / "eos" / "materials.sp5"),
+                )
         return rho
 
     add_material(MATID["background"], "Helium")
