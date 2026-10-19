@@ -816,7 +816,7 @@ def make_input(args):
         )
         # Helium is always an IdealGas; other materials use the tabular SESAME data unless
         # --eos_model ideal swaps in their IdealGas surrogate (Cv/gamma from MATERIALS).
-        if info["eos"] == "IdealGas" or args.eos_model == "ideal" or (args.idealDT and eos_name == "DT"):
+        if info["eos"] == "IdealGas" or args.eos_model == "ideal" or (args.idealDT and eos_name == "DTEOS"):
             riot.input(
                 eos_name,
                 eos_type="IdealGas",
