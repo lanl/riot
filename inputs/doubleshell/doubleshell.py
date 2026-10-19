@@ -154,6 +154,14 @@ MATERIALS = {
         "cv": 5.70e7,
         "gamma": 1.45,
     },
+    "Chromium": {
+        "sesame_id": 3070,
+        "density": 7.19,
+        "z": 24,
+        "eos": "SpinerEOSDependsRhoT",
+        "cv": 4.4e6,
+        "gamma": 1.667,
+    },
     "DT": {
         "sesame_id": 1018,
         "density": 0.20,
@@ -362,7 +370,7 @@ def build_parser():
     geom.add_argument(
         "--inner_shell_material",
         default="Tungsten",
-        choices=["Tungsten", "Molybdenum", "Aluminum"],
+        choices=["Tungsten", "Molybdenum", "Chromium"],
         help="Inner shell material",
     )
     geom.add_argument(
