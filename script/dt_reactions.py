@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+#========================================================================================
+# (C) (or copyright) 2026-2026. Triad National Security, LLC. All rights reserved.
+#
+# This program was produced under U.S. Government contract 89233218CNA000001 for Los
+# Alamos National Laboratory (LANL), which is operated by Triad National Security, LLC
+# for the U.S. Department of Energy/National Nuclear Security Administration. All rights
+# in the program are reserved by Triad National Security, LLC, and the U.S. Department
+# of Energy/National Nuclear Security Administration. The Government is granted for
+# itself and others acting on its behalf a nonexclusive, paid-up, irrevocable worldwide
+# license in this material to reproduce, prepare derivative works, distribute copies to
+# the public, perform publicly and display publicly, and to permit others to do so.
+#========================================================================================
+
 """D + T -> n + alpha: equal-temperature Maxwellian averages.
 
 This file was written with the assistance of generative AI.
@@ -66,8 +79,9 @@ T_MIN_MEV = 0.001
 def sigma_cm2(energy_mev):
     """Bosch-Hale total cross section at CENTER-OF-MASS energy (MeV)."""
     energy_mev = np.asarray(energy_mev, dtype=float)
-    if not np.all(np.isfinite(energy_mev)
-                  & (energy_mev >= E_MIN_MEV) & (energy_mev <= E_MAX_MEV)):
+    if not np.all(
+        np.isfinite(energy_mev) & (energy_mev >= E_MIN_MEV) & (energy_mev <= E_MAX_MEV)
+    ):
         raise ValueError("Cross-section energy must be in [0.0005, 0.550] MeV")
     e = 1000.0 * energy_mev  # Original fit coefficients require keV internally.
     numerator = 6.927e4 + e * (7.454e8 + e * (2.050e6 + e * 5.2002e4))
@@ -160,7 +174,8 @@ def _write_databox(parent, name, data, log_t_range=None):
     if log_t_range is not None:
         lo, hi = log_t_range
         grid = grids.create_dataset(
-            "grid_[1]", data=np.array([lo, hi, (hi - lo) / (len(data) - 1)]))
+            "grid_[1]", data=np.array([lo, hi, (hi - lo) / (len(data) - 1)])
+        )
         _int_attr(grid, "npoints", len(data))
         _string_attr(grid, "range columns", "[0]:min [1]:max [2]:dx")
     _int_attr(box, "dims", len(data))
@@ -189,7 +204,9 @@ def write_isotope_data(filename, temperatures_mev):
         _int_attr(reaction, "product_multiplicities", [1, 1, 0])
         _write_databox(reaction, "Temperatures", t_k)
         _write_databox(reaction, "InputEnergy", collision * ERG_PER_MEV, log_t_range)
-        _write_databox(reaction, "SigmaVBar", reactivity / reactant_masses_g2, log_t_range)
+        _write_databox(
+            reaction, "SigmaVBar", reactivity / reactant_masses_g2, log_t_range
+        )
         _write_databox(reaction, "EnergyOut0", neutron * ERG_PER_MEV, log_t_range)
         _write_databox(reaction, "EnergyOut1", alpha * ERG_PER_MEV, log_t_range)
 
@@ -202,21 +219,32 @@ def write_isotope_data(filename, temperatures_mev):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("t_min", type=float, help="minimum k_B*T in keV")
     parser.add_argument("t_max", type=float, help="maximum k_B*T in keV")
-    parser.add_argument("-n", "--num-points", type=int, default=181,
-                        help="number of temperatures, evenly spaced in ln(T); default: 181")
-    parser.add_argument("-o", "--output", default="dt_isotope_data.hdf5",
-                        help="output HDF5 file; default: dt_isotope_data.hdf5")
+    parser.add_argument(
+        "-n",
+        "--num-points",
+        type=int,
+        default=181,
+        help="number of temperatures, evenly spaced in ln(T); default: 181",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="dt_isotope_data.hdf5",
+        help="output HDF5 file; default: dt_isotope_data.hdf5",
+    )
     args = parser.parse_args()
     if not 0.0 < args.t_min < args.t_max:
         parser.error("Temperatures must satisfy 0 < t_min < t_max")
     if args.num_points < 2:
         parser.error("--num-points must be at least 2")
-    write_isotope_data(args.output,
-                       1e-3 * np.geomspace(args.t_min, args.t_max, args.num_points))
+    write_isotope_data(
+        args.output, 1e-3 * np.geomspace(args.t_min, args.t_max, args.num_points)
+    )
 
 
 if __name__ == "__main__":
