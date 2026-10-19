@@ -131,10 +131,9 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
       auto name =
           pin->GetString(block_name, "sesame_name",
                          "Material name in SP5 file. Matid takes precedence if set.");
-      RETURN(load,
-             ZSplit(MaybeScale(SpinerEOSDependsRhoT(filename, name, tsplit, reprod),
-                               do_scale, scale),
-                    zsplit));
+      RETURN(load, ZSplit(MaybeScale(SpinerEOSDependsRhoT(filename, name, tsplit, reprod),
+                                     do_scale, scale),
+                          zsplit));
     } else {
       std::stringstream msg;
       msg << "Neither sesame_id nor sesame_name exists for material " << block_name
