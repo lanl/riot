@@ -362,9 +362,13 @@ def build_parser():
     geom.add_argument(
         "--inner_shell_material",
         default="Tungsten",
-        choices=["Tungsten", "Molybdenum"],
+        choices=["Tungsten", "Molybdenum", "Aluminum"],
         help="Inner shell material",
     )
+    geom.add_argument(
+        "--idealDT",
+        action="store_true",
+        help="Uses ideal gas for DT gas, even if sesame EOSs are used.")
 
     gap = parser.add_argument_group("ablator gap (2-D / 3-D)")
     gap.add_argument(
@@ -812,7 +816,7 @@ def make_input(args):
         )
         # Helium is always an IdealGas; other materials use the tabular SESAME data unless
         # --eos_model ideal swaps in their IdealGas surrogate (Cv/gamma from MATERIALS).
-        if info["eos"] == "IdealGas" or args.eos_model == "ideal":
+        if info["eos"] == "IdealGas" or args.eos_model == "ideal" or (args.idealDT and eos_name == "DT"):
             riot.input(
                 eos_name,
                 eos_type="IdealGas",
