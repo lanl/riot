@@ -16,7 +16,8 @@
 
 This file was written with the assistance of generative AI.
 
-All public energies and temperatures are in MeV; temperature means k_B*T.
+All public energies and temperatures are in keV, the units of the original
+fit; temperature means k_B*T.
 Reactivity is in cm^3/s, cross section in cm^2. Both species have zero bulk
 velocity in the lab and the same temperature. Product energies use the
 approximate 2:3:1:4 mass ratios and nonrelativistic kinematics discussed in
@@ -32,13 +33,13 @@ implemented here
 https://github.com/llnl/pyPICfusion/blob/master/_BoschHale_library.py
 
 Integration is restricted to the fit's collision-energy interval,
-0.0005 <= E_cm <= 0.550 MeV; tails outside it are omitted, not
-extrapolated.  Below k_B*T = 0.001 MeV all outputs are set to
-zero. Above roughly 0.030 MeV the omitted tail above 0.550 MeV is no
+0.5 <= E_cm <= 550 keV; tails outside it are omitted, not
+extrapolated.  Below k_B*T = 1 keV all outputs are set to
+zero. Above roughly 30 keV the omitted tail above 550 keV is no
 longer negligible, so the results are increasingly truncated as T
 rises. Reaction rate density = n_D*n_T*reactivity, with densities in
 cm^-3, giving reactions/(cm^3 s). Nuclear power density is that rate
-times Q, in MeV/(cm^3 s). Incoming thermal energy is not generated
+times Q, in keV/(cm^3 s). Incoming thermal energy is not generated
 energy.
 
 The command line writes a reduced isotope_data.hdf5 containing only the
@@ -54,7 +55,7 @@ import h5py
 import numpy as np
 
 # Match parthenon's CGS PhysicalConstants (CODATA 2010), which the code uses.
-ERG_PER_MEV = 1.602176565e-6
+ERG_PER_KEV = 1.602176565e-9
 K_B_ERG_PER_K = 1.3806488e-16
 AMU_G = 1.660538921e-24
 
@@ -69,21 +70,18 @@ ISOTOPES = {
     2004: (4.0026032366859754, 2),
 }
 
-Q_MEV = 17.589
+Q_KEV = 17589.0
 C_CM_S = 2.99792458e10
-MU_C2_MEV = 1124.656  # D-T reduced mass times c^2
-E_MIN_MEV, E_MAX_MEV = 0.0005, 0.550
-T_MIN_MEV = 0.001
+MU_C2_KEV = 1124656.0  # D-T reduced mass times c^2
+E_MIN_KEV, E_MAX_KEV = 0.5, 550.0
+T_MIN_KEV = 1.0
 
 
-def sigma_cm2(energy_mev):
-    """Bosch-Hale total cross section at CENTER-OF-MASS energy (MeV)."""
-    energy_mev = np.asarray(energy_mev, dtype=float)
-    if not np.all(
-        np.isfinite(energy_mev) & (energy_mev >= E_MIN_MEV) & (energy_mev <= E_MAX_MEV)
-    ):
-        raise ValueError("Cross-section energy must be in [0.0005, 0.550] MeV")
-    e = 1000.0 * energy_mev  # Original fit coefficients require keV internally.
+def sigma_cm2(energy_kev):
+    """Bosch-Hale total cross section at CENTER-OF-MASS energy (keV)."""
+    e = np.asarray(energy_kev, dtype=float)
+    if not np.all(np.isfinite(e) & (e >= E_MIN_KEV) & (e <= E_MAX_KEV)):
+        raise ValueError("Cross-section energy must be in [0.5, 550] keV")
     numerator = 6.927e4 + e * (7.454e8 + e * (2.050e6 + e * 5.2002e4))
     denominator = 1.0 + e * (63.8 + e * (-0.995 + e * (6.981e-5 + e * 1.728e-4)))
     sigma_millibarn = numerator / denominator / e * np.exp(-34.3827 / np.sqrt(e))
@@ -91,9 +89,9 @@ def sigma_cm2(energy_mev):
 
 
 def _quadrature_nodes(panels=64, order=16):
-    """Composite Gauss-Legendre nodes (MeV) and weights in u = ln(E)."""
+    """Composite Gauss-Legendre nodes (keV) and weights in u = ln(E)."""
     x, w = np.polynomial.legendre.leggauss(order)
-    edges = np.linspace(np.log(E_MIN_MEV), np.log(E_MAX_MEV), panels + 1)
+    edges = np.linspace(np.log(E_MIN_KEV), np.log(E_MAX_KEV), panels + 1)
     half = 0.5 * np.diff(edges)
     mid = 0.5 * (edges[1:] + edges[:-1])
     u = (mid[:, None] + half[:, None] * x).ravel()
@@ -101,17 +99,17 @@ def _quadrature_nodes(panels=64, order=16):
 
 
 # The cross section does not depend on temperature, so tabulate it once.
-_E_NODES_MEV, _U_WEIGHTS = _quadrature_nodes()
-_SIGMA_BARN = sigma_cm2(_E_NODES_MEV) / 1e-24
+_E_NODES_KEV, _U_WEIGHTS = _quadrature_nodes()
+_SIGMA_BARN = sigma_cm2(_E_NODES_KEV) / 1e-24
 
 
-def evaluate(temperatures_mev):
-    """Evaluate an array of temperatures (MeV); averages are per fusion event.
+def evaluate(temperatures_kev):
+    """Evaluate an array of temperatures (keV); averages are per fusion event.
 
-    Returns (reactivity_cm3_s, mean_collision_energy_mev,
-    mean_neutron_energy_mev, mean_alpha_energy_mev), each a numpy array
-    with the same shape as temperatures_mev. Entries whose temperature is
-    below T_MIN_MEV (or not finite) are set to zero.
+    Returns (reactivity_cm3_s, mean_collision_energy_kev,
+    mean_neutron_energy_kev, mean_alpha_energy_kev), each a numpy array
+    with the same shape as temperatures_kev. Entries whose temperature is
+    below T_MIN_KEV (or not finite) are set to zero.
 
     Use x = E/T and sigma in barns to keep quadrature integrands well scaled:
         J1 = integral sigma(T*x) * x   * exp(-x) dx
@@ -127,20 +125,20 @@ def evaluate(temperatures_mev):
     collision energy alone, matching the InputEnergy convention of
     isotope_data.hdf5.
     """
-    t_all = np.asarray(temperatures_mev, dtype=float)
-    valid = np.isfinite(t_all) & (t_all >= T_MIN_MEV)
+    t_all = np.asarray(temperatures_kev, dtype=float)
+    valid = np.isfinite(t_all) & (t_all >= T_MIN_KEV)
     t = t_all[valid]
 
-    x = _E_NODES_MEV / t[:, None]
+    x = _E_NODES_KEV / t[:, None]
     weighted = _SIGMA_BARN * _U_WEIGHTS * x**2 * np.exp(-x)  # sigma * x * e^-x dx
     j1 = weighted.sum(axis=-1)
     j2 = (weighted * x).sum(axis=-1)
 
-    reactivity = 1e-24 * C_CM_S * np.sqrt(8.0 * t / (np.pi * MU_C2_MEV)) * j1
+    reactivity = 1e-24 * C_CM_S * np.sqrt(8.0 * t / (np.pi * MU_C2_KEV)) * j1
     collision = t * j2 / j1
     pair_cm = 1.5 * t
-    neutron = 0.8 * (Q_MEV + collision) + 0.2 * pair_cm
-    alpha = 0.2 * (Q_MEV + collision) + 0.8 * pair_cm
+    neutron = 0.8 * (Q_KEV + collision) + 0.2 * pair_cm
+    alpha = 0.2 * (Q_KEV + collision) + 0.8 * pair_cm
 
     outputs = []
     for values in (reactivity, collision, neutron, alpha):
@@ -184,11 +182,11 @@ def _write_databox(parent, name, data, log_t_range=None):
     _string_attr(box, "index_types_info", "Interpolated:0\nNamed:1\nIndexed:2")
 
 
-def write_isotope_data(filename, temperatures_mev):
-    """Write a d+t->n+a-only isotope_data.hdf5 tabulated at temperatures_mev."""
-    t_mev = np.asarray(temperatures_mev, dtype=float)
-    reactivity, collision, neutron, alpha = evaluate(t_mev)
-    t_k = t_mev * ERG_PER_MEV / K_B_ERG_PER_K
+def write_isotope_data(filename, temperatures_kev):
+    """Write a d+t->n+a-only isotope_data.hdf5 tabulated at temperatures_kev."""
+    t_kev = np.asarray(temperatures_kev, dtype=float)
+    reactivity, collision, neutron, alpha = evaluate(t_kev)
+    t_k = t_kev * ERG_PER_KEV / K_B_ERG_PER_K
     log_t_range = (np.log(t_k[0]), np.log(t_k[-1]))
     reactant_masses_g2 = np.prod([ISOTOPES[z][0] * AMU_G for z in REACTANTS])
 
@@ -197,18 +195,18 @@ def write_isotope_data(filename, temperatures_mev):
         _int_attr(reaction, "num_reactants", len(REACTANTS))
         _int_attr(reaction, "num_products", len(PRODUCTS))
         _int_attr(reaction, "num_temp", len(t_k))
-        reaction.attrs.create("Qval", np.array([Q_MEV * ERG_PER_MEV]))
+        reaction.attrs.create("Qval", np.array([Q_KEV * ERG_PER_KEV]))
         # The reader expects length-3 arrays, zero padded.
         _int_attr(reaction, "reactants", [*REACTANTS, 0])
         _int_attr(reaction, "products", [*PRODUCTS, 0])
         _int_attr(reaction, "product_multiplicities", [1, 1, 0])
         _write_databox(reaction, "Temperatures", t_k)
-        _write_databox(reaction, "InputEnergy", collision * ERG_PER_MEV, log_t_range)
+        _write_databox(reaction, "InputEnergy", collision * ERG_PER_KEV, log_t_range)
         _write_databox(
             reaction, "SigmaVBar", reactivity / reactant_masses_g2, log_t_range
         )
-        _write_databox(reaction, "EnergyOut0", neutron * ERG_PER_MEV, log_t_range)
-        _write_databox(reaction, "EnergyOut1", alpha * ERG_PER_MEV, log_t_range)
+        _write_databox(reaction, "EnergyOut0", neutron * ERG_PER_KEV, log_t_range)
+        _write_databox(reaction, "EnergyOut1", alpha * ERG_PER_KEV, log_t_range)
 
         masses = f.create_group("Masses")
         zaids = sorted(ISOTOPES)
@@ -243,7 +241,7 @@ def main():
     if args.num_points < 2:
         parser.error("--num-points must be at least 2")
     write_isotope_data(
-        args.output, 1e-3 * np.geomspace(args.t_min, args.t_max, args.num_points)
+        args.output, np.geomspace(args.t_min, args.t_max, args.num_points)
     )
 
 
