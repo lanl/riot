@@ -37,7 +37,6 @@ namespace RiotEOS {
 
 // The magic to automatically make zsplit of all EOS's available.
 // TODO(JMM): Thread this through the cmake.
-// TODO(JMM): Add shift and scale eventually when we need them
 namespace impl {
 // Type list of EOS types
 template <typename... Ts>
@@ -365,29 +364,11 @@ auto density_zbar_from_P_Ti_Te(const EOS &ion_eos, const EOS &electron_eos,
   return std::make_tuple(density, zbar);
 }
 
-//----------------------------------------------------------------------------------------
-//! \fn  EOS RiotEOS::Shift
-//! \brief
-template <typename T>
-EOS Shift(T &&eos, bool shift, const Real reference_energy) {
-  // if (shift) {
-  // const Real std_temp = 273.15;
-  // const Real std_pres = 1.013e6;
-  // const Real rho0 = rho_from_P_T(eos, std_pres, std_temp, 10.0);
-  // const Real sie0 = eos.InternalEnergyFromDensityTemperature(rho0, std_temp);
-  // printf("sie0 = %g\n", sie0);
-  // const Real sie_shift = reference_energy - sie0;
-  // return singularity::ShiftedEOS<T>(std::forward<T>(eos), sie_shift);
-  //}
-  return eos;
-}
-
 enum class ZSplitting { None, Electrons, Ions };
 //----------------------------------------------------------------------------------------
-//! \fn  auto RiotEOS::ZSplit
+//! \fn  EOS RiotEOS::ZSplit
 //! \brief
-template <typename T>
-auto ZSplit(T eos, const ZSplitting s) {
+inline EOS ZSplit(const EOS &eos, const ZSplitting s) {
   if (s == ZSplitting::Electrons) {
     return singularity::EOSBuilder::Modify<singularity::ZSplitE>(eos);
   } else if (s == ZSplitting::Ions) {
