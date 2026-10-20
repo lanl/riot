@@ -243,8 +243,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   }
 
   // setup regions for initialization
-  riot->AddParam("BlockInitData",
-                 std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  //riot->AddParam("BlockInitData",
+  //               std::make_shared<region_pgen::BlockInitData>(pin.get()));
 
   // add any diagnostic packages
   diagnostics::AddDiagnostics(pin.get(), packages);

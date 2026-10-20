@@ -37,6 +37,9 @@ namespace rt = particles::ray_tracer;
 // kFaceEps.
 constexpr Real kFaceEps = 10 * std::numeric_limits<Real>::epsilon();
 constexpr Real kFaceNudge = 20 * kFaceEps;
+//   kStepOvershoot - relative amount (times min cell size) a step is extended
+//                    past a face so the crossing is unambiguous.
+constexpr Real kStepOvershoot = 1.e-8;
 
 KOKKOS_FORCEINLINE_FUNCTION
 Real sign(const Real val) { return (val > 0) - (val < 0); };
@@ -98,12 +101,13 @@ class IntegratorBase : public CellInfo {
   using CellInfo::xlo;
   template <typename SwarmPack_t>
   KOKKOS_FUNCTION IntegratorBase(VarPack_t &vp, SwarmPack_t &ps, const int b,
-                                 const int pidx, const int ndim)
+                                 const int pidx, const int ndim,
+                                 const parthenon::SwarmDeviceContext &context)
       : CellInfo(vp.GetCoordinates(b), b, ndim), vp(vp), pidx(pidx),
         xc{ps(b, swarm_position::x(), pidx), ps(b, swarm_position::y(), pidx),
            ps(b, swarm_position::z(), pidx)},
         v{ps(b, rt::vx(), pidx), ps(b, rt::vy(), pidx), ps(b, rt::vz(), pidx)},
-        context(ps.GetContext(b)) {
+        context(context) {
     init_cell(xc[0], xc[1], xc[2]);
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       x[0] = xc[0];
@@ -196,10 +200,45 @@ class IntegratorBase : public CellInfo {
   }
 
   KOKKOS_INLINE_FUNCTION
+  void push_to_block_boundary() {
+    bool use_x = std::abs(v[0]) > 0.0;
+    bool use_y = std::abs(v[1]) > 0.0;
+    bool use_z = std::abs(v[2]) > 0.0;
+    Real h1 = use_x ? (context.x_min_ + (v[0] > 0) * (context.x_max_ - context.x_min_) - xc[0]) / v[0]
+                    : std::numeric_limits<Real>::max();
+    Real h2 = use_y ? (context.y_min_ + (v[1] > 0) * (context.y_max_ - context.y_min_) - xc[1]) / v[1]
+                    : std::numeric_limits<Real>::max();
+    Real h3 = use_z ? (context.z_min_ + (v[2] > 0) * (context.z_max_ - context.z_min_) - xc[2]) / v[2]
+                    : std::numeric_limits<Real>::max();
+    if (h1 > h2) std::swap(h1, h2);
+    if (h2 > h3) std::swap(h2, h3);
+    if (h1 > h2) std::swap(h1, h2);
+
+    h3 = h1 + kStepOvershoot * min_size();
+    h1 = (h2 == std::numeric_limits<Real>::max() ? h3
+                                                 : std::min(h3, 0.5 * (h1 + h2)));
+    if (h1 <= 0.0) {
+      printf("h1 = %g  %g %g %g  %g %g %g    %g %g   %g %g    %g %g\n", h1, xc[0], xc[1], xc[2], v[0], v[1], v[2],
+        context.x_min_, context.x_max_, context.y_min_, context.y_max_, context.z_min_, context.z_max_);
+    }
+    loop_3d([&]<int d>() {
+      xc[d - 1] += h1 * v[d - 1];
+    });
+    init_cell(xc[0], xc[1], xc[2]);
+    snap_to_face();
+    skipped = true;
+  }
+
+  KOKKOS_INLINE_FUNCTION
   bool is_active() const { return context.IsActive(pidx); }
 
   KOKKOS_INLINE_FUNCTION
   bool on_block() const {
+    return on_block(xc);
+  }
+
+  KOKKOS_INLINE_FUNCTION
+  bool on_block(const std::array<Real, 3> &xc) const {
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       if (xc[0] < context.x_min_ || xc[0] > context.x_max_) return false;
       if (xc[1] < context.y_min_ || xc[1] > context.y_max_) return false;
@@ -230,6 +269,7 @@ class IntegratorBase : public CellInfo {
 
   KOKKOS_INLINE_FUNCTION
   bool stop() const {
+    if (skipped) return true;
     if (!is_active()) return true;
     if (!on_block()) return true;
     return false;
@@ -315,7 +355,8 @@ class IntegratorBase : public CellInfo {
   VarPack_t &vp;
   const int pidx;
   std::array<Real, 3> xc, x, v;
-  parthenon::SwarmDeviceContext context;
+  const parthenon::SwarmDeviceContext &context;
+  bool skipped = false;
 
  private:
   template <int current, int max, typename F>
@@ -328,10 +369,11 @@ class IntegratorBase : public CellInfo {
   }
 };
 
-template <template <typename> class Integrator_t, bool RemoveComplete, bool MarkRemoval,
+template <template <typename> class Integrator_t,
           typename SwarmPack_t, typename VarPack_t, typename... Args>
 TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
   namespace rt = particles::ray_tracer;
+  using Integrator = Integrator_t<const VarPack_t>;
 
   const int ndim = pm->ndim;
 
@@ -344,13 +386,20 @@ TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
       ps.GetMaxFlatIndex(),
       KOKKOS_LAMBDA(const int idx, int &num_unfinished) {
         auto [b, n] = ps.GetBlockParticleIndices(idx);
-        Integrator_t integrator(v, ps, b, n, ndim, args...);
-        while (!integrator.stop()) {
-          integrator.set_cell();
-          integrator.advance();
+        auto &context = ps.GetContext(b);
+        if (context.IsActive(n)) {
+          Integrator integrator(v, ps, b, n, ndim, context, args...);
+          if (integrator.is_active()) {
+            while (!integrator.stop()) {
+              integrator.set_cell();
+              integrator.advance();
+            }
+          }
+          integrator.commit(ps, b);
+          if (integrator.is_active()) {
+            num_unfinished++;
+          }
         }
-        integrator.commit(ps, b);
-        if (integrator.is_active()) num_unfinished++;
       },
       Kokkos::Sum<int>(num_not_done));
 

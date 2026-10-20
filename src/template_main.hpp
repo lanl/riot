@@ -38,9 +38,9 @@ int main(parthenon::ParthenonManager &pman) {
   Python::Init(pman.pinput.get());
 #endif
 
+  // Register pgens
+  RegisterPgens();
   if constexpr (std::is_same_v<T, RiotDriver>) {
-    // Register pgens
-    RegisterPgens();
     // Handle ProblemGenerator user-defined modifiers
     ProblemModifier(&pman);
   }

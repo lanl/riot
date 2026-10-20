@@ -23,6 +23,13 @@ mask_func_t background(ParameterInput *pin, const std::string &block_name) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  mask_func_t plane
+//! \brief
+mask_func_t plane(ParameterInput *pin, const std::string &block_name) {
+  return base_region_loop(plane_lambda(pin, block_name));
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  mask_func_t inside_sphere
 //! \brief
 mask_func_t inside_sphere(ParameterInput *pin, const std::string &block_name) {

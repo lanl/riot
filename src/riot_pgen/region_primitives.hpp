@@ -87,6 +87,53 @@ inline auto background_lambda(ParameterInput *pin, const std::string &block_name
   return background_mask{invert};
 }
 
+struct plane_mask {
+  static constexpr int max_planes = 5;
+  Kokkos::Array<Real, 4 * max_planes> pdata;
+  int nplanes;
+  bool invert;
+  KOKKOS_INLINE_FUNCTION
+  bool operator()(const Real x, const Real y, const Real z) const {
+    bool include = true;
+    for (int i = 0; i < nplanes; i++) {
+      const Real nx = pdata[4 * i];
+      const Real ny = pdata[4 * i + 1];
+      const Real nz = pdata[4 * i + 2];
+      const Real offset = pdata[4 * i + 3];
+      const Real dot = nx * x + ny * y + nz * z + offset;
+      include &= dot >= 0.0;
+    }
+    return include^invert;
+  }
+};
+inline auto plane_lambda(ParameterInput *pin, const std::string &block_name) {
+  auto xp = pin->GetVector<Real>(block_name, "x");
+  auto yp = pin->GetVector<Real>(block_name, "y");
+  auto zp = pin->GetVector<Real>(block_name, "z");
+  auto nx = pin->GetVector<Real>(block_name, "nx");
+  auto ny = pin->GetVector<Real>(block_name, "ny");
+  auto nz = pin->GetVector<Real>(block_name, "nz");
+  bool invert = pin->GetOrAddBoolean(block_name, "invert", false);
+  const auto nplanes = xp.size();
+  PARTHENON_REQUIRE(nplanes < plane_mask::max_planes, "Too many planes in plane_mask");
+  PARTHENON_REQUIRE(yp.size() == nplanes, "size mismatch");
+  PARTHENON_REQUIRE(zp.size() == nplanes, "size mismatch");
+  PARTHENON_REQUIRE(nx.size() == nplanes, "size mismatch");
+  PARTHENON_REQUIRE(ny.size() == nplanes, "size mismatch");
+  PARTHENON_REQUIRE(nz.size() == nplanes, "size mismatch");
+
+  plane_mask mask;
+  mask.nplanes = nplanes;
+  mask.invert = invert;
+  for (int i = 0; i < nplanes; i++) {
+    mask.pdata[4 * i + 0] = nx[i];
+    mask.pdata[4 * i + 1] = ny[i];
+    mask.pdata[4 * i + 2] = nz[i];
+    mask.pdata[4 * i + 3] = -(nx[i] * xp[i] + ny[i] * yp[i] + nz[i] * zp[i]);
+  }
+  return mask;
+}
+
 struct sphere_mask {
   Real x0, y0, z0, rsq;
   bool invert;
@@ -359,6 +406,7 @@ inline auto inside_rectangle_lambda(ParameterInput *pin, const std::string &bloc
 
 #define FOREACH_REGION                                                                   \
   REG(background)                                                                        \
+  REG(plane)                                                                             \
   REG(inside_sphere)                                                                     \
   REG(inside_spherical_shell)                                                            \
   REG(inside_cylinder)                                                                   \

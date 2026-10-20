@@ -32,6 +32,11 @@ using namespace parthenon::driver::prelude;
 
 namespace riot_viz {
 
+KOKKOS_INLINE_FUNCTION
+uint64_t real_to_uint8_t(const Real val) {
+  return static_cast<std::uint8_t>(std::clamp(val, 0.0, 1.0) * 255.0 + 0.5);
+}
+
 namespace sample {
 enum RenderSample { x, y, z, nx, ny, nz, nvalues };
 }
@@ -86,8 +91,6 @@ using DataBox = Spiner::DataBox<Real>;
 //   kMarchTiny     - tiny absolute guard against degenerate denominators and
 //                    zero-length steps (also the alpha off-mesh sentinel and
 //                    the dump-time comparison tolerance).
-//   kStepOvershoot - relative amount (times min cell size) a step is extended
-//                    past a face so the crossing is unambiguous.
 //   kAxisStepFrac  - largest step permitted near a coordinate axis, as a
 //                    fraction of the cylindrical/spherical radius.
 //   kGeomTol       - relative tolerance for placing/testing points on the
@@ -95,7 +98,6 @@ using DataBox = Spiner::DataBox<Real>;
 //   kBoundaryBand  - relative band for detecting that a host point coincides
 //                    with a block's outer radius.
 constexpr Real kMarchTiny = 1.e-14;
-constexpr Real kStepOvershoot = 1.e-8;
 constexpr Real kAxisStepFrac = 0.1;
 constexpr Real kGeomTol = 1.e-12;
 constexpr Real kBoundaryBand = 1.e-6;
@@ -149,6 +151,7 @@ struct RenderingParamsVec {
   vec2d_t<DataBox> r, g, b, a;
   vec3d_t<Real> contours, rc, gc, bc, ac;
   vec3d_t<Real> slice_x, slice_n;
+  vec3d_t<bool> slice_transparent_outside;
   std::vector<Real> xl, yl, zl, ambient, diffuse;
   vec3d_t<mask_tuple_t> masks;
   vec3d_t<int> mask_id;
@@ -266,6 +269,7 @@ struct RenderingParams {
                   vec2d_t<DataBox> &b, vec2d_t<DataBox> &a, vec3d_t<Real> &contours,
                   vec3d_t<Real> &rc, vec3d_t<Real> &gc, vec3d_t<Real> &bc,
                   vec3d_t<Real> &ac, vec3d_t<Real> &slice_x, vec3d_t<Real> &slice_n,
+                  vec3d_t<bool> &slice_transparent_outside,
                   std::vector<Real> &xl, std::vector<Real> &yl, std::vector<Real> &zl,
                   std::vector<Real> &ambient, std::vector<Real> &diffuse,
                   vec3d_t<mask_tuple_t> &mask, vec3d_t<int> &mask_id)
@@ -274,7 +278,8 @@ struct RenderingParams {
         alpha_range_min(alpha_range_min), alpha_range_max(alpha_range_max),
         use_grad(use_grad), alpha_use_grad(alpha_use_grad), alpha_tol(alpha_tol), r(r),
         g(g), b(b), a(a), contours(contours), rc(rc), gc(gc), bc(bc), ac(ac),
-        slice_x(slice_x), slice_n(slice_n), xl(xl), yl(yl), zl(zl), ambient(ambient),
+        slice_x(slice_x), slice_n(slice_n), slice_transparent_outside(slice_transparent_outside),
+        xl(xl), yl(yl), zl(zl), ambient(ambient),
         diffuse(diffuse), mask(mask), mask_id(mask_id) {
     nlayers = parthenon::ParArray1D<int>("nlayers", t.size());
     auto host_nlayers = nlayers.GetHostMirror();
@@ -308,7 +313,8 @@ struct RenderingParams {
                         rv.range_min, rv.range_max, rv.alpha_range_min,
                         rv.alpha_range_max, rv.use_grad, rv.alpha_use_grad, rv.alpha_tol,
                         rv.r, rv.g, rv.b, rv.a, rv.contours, rv.rc, rv.gc, rv.bc, rv.ac,
-                        rv.slice_x, rv.slice_n, rv.xl, rv.yl, rv.zl, rv.ambient,
+                        rv.slice_x, rv.slice_n, rv.slice_transparent_outside,
+                        rv.xl, rv.yl, rv.zl, rv.ambient,
                         rv.diffuse, rv.masks, rv.mask_id) {}
 
   KOKKOS_INLINE_FUNCTION
@@ -349,6 +355,7 @@ struct RenderingParams {
   VectorView2D<DataBox> r, g, b, a;
   VectorView3D<Real> contours, rc, gc, bc, ac;
   VectorView3D<Real> slice_x, slice_n;
+  VectorView3D<bool> slice_transparent_outside;
   VectorView1D<Real> xl, yl, zl, ambient, diffuse;
   VectorView3D<mask_tuple_t> mask;
   VectorView3D<int> mask_id;
@@ -374,23 +381,27 @@ class VizData {
       if (idx >= 0) {
         auto val = [&](const int kk, const int jj, const int ii) {
           return composer->vp(
-              composer->cell_b, vidx, composer->cell_k + composer->dk * kk,
+              composer->cell_b, idx, composer->cell_k + composer->dk * kk,
               composer->cell_j + composer->dj * jj, composer->cell_i + ii);
         };
         set_coeffs(val, A);
+        set_grad_coeffs(val);
+        set_bounds(val);
       }
-      vidx = composer->idx_map(r.pack_idx(composer->cam_id, ilay));
-      idx = composer->vp.GetLowerBound(composer->cell_b, vidx);
       if (r.alpha_pack_idx(composer->cam_id, ilay) ==
           r.pack_idx(composer->cam_id, ilay)) {
         A_opac = A;
-      } else if (idx >= 0) {
-        auto val = [&](const int kk, const int jj, const int ii) {
-          return composer->vp(
-              composer->cell_b, vidx, composer->cell_k + composer->dk * kk,
-              composer->cell_j + composer->dj * jj, composer->cell_i + ii);
-        };
-        set_coeffs(val, A_opac);
+      } else {
+        vidx = composer->idx_map(r.alpha_pack_idx(composer->cam_id, ilay));
+        idx = composer->vp.GetLowerBound(composer->cell_b, vidx);
+        if (idx >= 0) {
+          auto val = [&](const int kk, const int jj, const int ii) {
+            return composer->vp(
+                composer->cell_b, idx, composer->cell_k + composer->dk * kk,
+                composer->cell_j + composer->dj * jj, composer->cell_i + ii);
+          };
+          set_coeffs(val, A_opac);
+        }
       }
     }
   }
@@ -407,19 +418,21 @@ class VizData {
   }
   KOKKOS_INLINE_FUNCTION
   auto grad_val(const Real xt, const Real yt, const Real zt) const {
-    return gradient_(xt, yt, zt, A);
+    return gradient_(xt, yt, zt);
   }
 
+  Real min, max;
  private:
   std::array<Real, 8> A{
       0.0, 0.0, 0.0, 0.0,
       0.0, 0.0, 0.0, 0.0}; // 0 A0, 1 Ax, 2 Ay, 3 Az, 4 Axy, 5 Axz, 6 Ayz, 7 Axyz;
+  std::array<std::array<Real, 8>, 3> Agrad;
   std::array<Real, 8> A_opac{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
   KOKKOS_INLINE_FUNCTION
   Real sample_(const GradType g, const Real xt, const Real yt, const Real zt,
                const std::array<Real, 8> &c) const {
     if (g == GradType::mag) {
-      auto [gx, gy, gz] = gradient_(xt, yt, zt, c);
+      auto [gx, gy, gz] = gradient_(xt, yt, zt);
       return std::sqrt(gx * gx + gy * gy + gz * gz);
     } else if (g == GradType::log_mag) {
       return log_grad_mag_(xt, yt, zt, c);
@@ -439,6 +452,68 @@ class VizData {
     c[7] = val(1, 1, 1) - val(0, 1, 1) - val(1, 0, 1) - val(1, 1, 0) + val(0, 0, 1) +
            val(0, 1, 0) + val(1, 0, 0) - c[0];
   }
+  template <typename F>
+  KOKKOS_INLINE_FUNCTION void set_grad_coeffs(const F &val) {
+    // d/dx
+    Real v000 = 0.5 * (val(0, 0, 1) - val(0, 0, -1));
+    Real v001 = 0.5 * (val(0, 0, 2) - val(0, 0, 0));
+    Real v010 = 0.5 * (val(0, 1, 1) - val(0, 1, -1));
+    Real v100 = 0.5 * (val(1, 0, 1) - val(1, 0, -1));
+    Real v011 = 0.5 * (val(0, 1, 2) - val(0, 1, 0));
+    Real v101 = 0.5 * (val(1, 0, 2) - val(1, 0, 0));
+    Real v110 = 0.5 * (val(1, 1, 1) - val(1, 1, -1));
+    Real v111 = 0.5 * (val(1, 1, 2) - val(1, 1, 0));
+    Agrad[0][0] = v000;
+    Agrad[0][1] = v001 - v000;
+    Agrad[0][2] = v010 - v000;
+    Agrad[0][3] = v100 - v000;
+    Agrad[0][4] = v011 - v001 - v010 + v000;
+    Agrad[0][5] = v101 - v001 - v100 + v000;
+    Agrad[0][6] = v110 - v010 - v100 + v000;
+    Agrad[0][7] = v111 - v011 - v101 - v110 + v001 + v010 + v100 - v000;
+    // d/dy
+    v000 = 0.5 * (val(0, 1, 0) - val(0, -1, 0));
+    v001 = 0.5 * (val(0, 1, 1) - val(0, -1, 1));
+    v010 = 0.5 * (val(0, 2, 0) - val(0, 0, 0));
+    v100 = 0.5 * (val(1, 1, 0) - val(1, -1, 0));
+    v011 = 0.5 * (val(0, 2, 1) - val(0, 0, 1));
+    v101 = 0.5 * (val(1, 1, 1) - val(1, -1, 1));
+    v110 = 0.5 * (val(1, 2, 0) - val(1, 0, 0));
+    v111 = 0.5 * (val(1, 2, 1) - val(1, 0, 1));
+    Agrad[1][0] = v000;
+    Agrad[1][1] = v001 - v000;
+    Agrad[1][2] = v010 - v000;
+    Agrad[1][3] = v100 - v000;
+    Agrad[1][4] = v011 - v001 - v010 + v000;
+    Agrad[1][5] = v101 - v001 - v100 + v000;
+    Agrad[1][6] = v110 - v010 - v100 + v000;
+    Agrad[1][7] = v111 - v011 - v101 - v110 + v001 + v010 + v100 - v000;
+    // d/dz
+    v000 = 0.5 * (val(1, 0, 0) - val(-1, 0, 0));
+    v001 = 0.5 * (val(1, 0, 1) - val(-1, 0, 1));
+    v010 = 0.5 * (val(1, 1, 0) - val(-1, 1, 0));
+    v100 = 0.5 * (val(2, 0, 0) - val(0, 0, 0));
+    v011 = 0.5 * (val(1, 1, 1) - val(-1, 1, 1));
+    v101 = 0.5 * (val(2, 0, 1) - val(0, 0, 1));
+    v110 = 0.5 * (val(2, 1, 0) - val(0, 1, 0));
+    v111 = 0.5 * (val(2, 1, 1) - val(0, 1, 1));
+    Agrad[2][0] = v000;
+    Agrad[2][1] = v001 - v000;
+    Agrad[2][2] = v010 - v000;
+    Agrad[2][3] = v100 - v000;
+    Agrad[2][4] = v011 - v001 - v010 + v000;
+    Agrad[2][5] = v101 - v001 - v100 + v000;
+    Agrad[2][6] = v110 - v010 - v100 + v000;
+    Agrad[2][7] = v111 - v011 - v101 - v110 + v001 + v010 + v100 - v000;
+  }
+  template <typename F>
+  KOKKOS_INLINE_FUNCTION
+  void set_bounds(F &val) {
+    max = std::max(std::max(std::max(val(0,0,0),val(0,0,1)), std::max(val(0,1,0),val(0,1,1))),
+                   std::max(std::max(val(1,0,0),val(1,0,1)), std::max(val(1,1,0),val(1,1,1))));
+    min = std::min(std::min(std::min(val(0,0,0),val(0,0,1)), std::min(val(0,1,0),val(0,1,1))),
+                   std::min(std::min(val(1,0,0),val(1,0,1)), std::min(val(1,1,0),val(1,1,1))));
+  }
   KOKKOS_INLINE_FUNCTION
   Real interp_(const Real xt, const Real yt, const Real zt,
                const std::array<Real, 8> &c) const {
@@ -449,14 +524,16 @@ class VizData {
            wz * (c[3] + wx * c[5] + wy * (c[6] + wx * c[7]));
   };
   KOKKOS_INLINE_FUNCTION
-  std::array<Real, 3> gradient_(const Real xt, const Real yt, const Real zt,
-                                const std::array<Real, 8> &c) const {
-    const Real wx = (xt - xlo) * inv_dx;
-    const Real wy = (yt - ylo) * inv_dy;
-    const Real wz = (zt - zlo) * inv_dz;
-    return {(c[1] + wy * c[4] + wz * (c[5] + wy * c[7])) * inv_dx,
-            (c[2] + wx * c[4] + wz * (c[6] + wx * c[7])) * inv_dy,
-            (c[3] + wx * c[5] + wy * (c[6] + wx * c[7])) * inv_dz};
+  std::array<Real, 3> gradient_(const Real xt, const Real yt, const Real zt) const {
+    return {interp_(xt, yt, zt, Agrad[0]) * inv_dx,
+            interp_(xt, yt, zt, Agrad[1]) * inv_dy,
+            interp_(xt, yt, zt, Agrad[2]) * inv_dz};
+    //return {(c[1] + wy * c[4] + wz * c[5]) * inv_dx,
+            //(c[2] + wx * c[4] + wz * c[6]) * inv_dy,
+            //(c[3] + wx * c[5] + wy * c[6]) * inv_dz};
+    //return {(c[1] + wy * c[4] + wz * (c[5] + wy * c[7])) * inv_dx,
+            //(c[2] + wx * c[4] + wz * (c[6] + wx * c[7])) * inv_dy,
+            //(c[3] + wx * c[5] + wy * (c[6] + wx * c[7])) * inv_dz};
   };
   KOKKOS_INLINE_FUNCTION
   Real log_grad_mag_(const Real xt, const Real yt, const Real zt,
@@ -478,10 +555,10 @@ class VizData {
   }
 };
 
+inline constexpr int max_layers = 20;
 template <typename VarPack_t>
 class Composer : public RayTrace::IntegratorBase<VarPack_t> {
  public:
-  static constexpr int max_layers = 5;
   using RayTrace::IntegratorBase<VarPack_t>::loop_3d;
   using RayTrace::IntegratorBase<VarPack_t>::loop_2d;
   using RayTrace::IntegratorBase<VarPack_t>::xlo;
@@ -498,18 +575,120 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   using RayTrace::IntegratorBase<VarPack_t>::transform_coord_to_cart;
   using RayTrace::IntegratorBase<VarPack_t>::context;
   using RayTrace::IntegratorBase<VarPack_t>::pidx;
+  using RayTrace::IntegratorBase<VarPack_t>::push_to_block_boundary;
+
   template <typename SwarmPack_t, typename SwarmPackInt_t>
-  KOKKOS_FUNCTION Composer(VarPack_t &vp, SwarmPack_t &ps, const int b, const int pidx,
-                           const int ndim, SwarmPackInt_t &ps_int,
+  KOKKOS_INLINE_FUNCTION static bool
+  Filter(SwarmPack_t &ps, const int b, const int pidx,
+                           SwarmPackInt_t &ps_int,
                            const RenderingParams &rp,
-                           const parthenon::ParArray1D<parthenon::PackIdx> &idx_map)
-      : RayTrace::IntegratorBase<VarPack_t>(vp, ps, b, pidx, ndim), rp(rp),
-        cam_id(ps_int(b, vr::camera_id(), pidx)), r(ps(b, vr::r(), pidx)),
-        g(ps(b, vr::g(), pidx)), b(ps(b, vr::b(), pidx)), a(ps(b, vr::a(), pidx)),
-        idx_map(idx_map) {
-    PARTHENON_REQUIRE(rp.nlayers(cam_id) < max_layers,
+                           const parthenon::ParArray1D<parthenon::PackIdx> &idx_map,
+                           const parthenon::ParArray2D<Real> &max_value,
+                           const parthenon::ParArray2D<Real> &min_value) {
+    const Real a = ps(b, vr::a(), pidx);
+    if (a < 0.0) return false;
+    int camera_id = ps_int(b, vr::camera_id(), pidx);
+    if ((1 - a) < rp.alpha_tol(camera_id)) return false; 
+    return true;
+  }
+
+  template <typename SwarmPack_t, typename SwarmPackInt_t>
+  KOKKOS_FUNCTION Composer(VarPack_t &vp, SwarmPack_t &ps, const int blk, const int pidx,
+                           const int ndim, const parthenon::SwarmDeviceContext &context,
+                           SwarmPackInt_t &ps_int,
+                           const RenderingParams &rp,
+                           const parthenon::ParArray1D<parthenon::PackIdx> &idx_map,
+                           const parthenon::ParArray2D<Real> &max_value,
+                           const parthenon::ParArray2D<Real> &min_value,
+                           const parthenon::ParArrayND<uint8_t> &images)
+      : RayTrace::IntegratorBase<VarPack_t>(vp, ps, blk, pidx, ndim, context), rp(rp),
+        cam_id(ps_int(blk, vr::camera_id(), pidx)), pix_id(ps_int(blk, vr::pixel_id(), pidx)),
+        r(ps(blk, vr::r(), pidx)), g(ps(blk, vr::g(), pidx)), b(ps(blk, vr::b(), pidx)),
+        a(ps(blk, vr::a(), pidx)), idx_map(idx_map), images(images) {
+    PARTHENON_REQUIRE(rp.nlayers(cam_id) <= max_layers,
                       "Too many viz layers requested. Must recompile after setting "
                       "max_layers large enough");
+    //if (!is_active()) return;
+    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+      // check which layers could possibly interact with this block
+      //if (!on_block()) {
+        //printf("Not on block in setup: %g %g %g  %g %g %g    %g %g   %g %g    %g %g\n", xc[0], xc[1], xc[2], v[0], v[1], v[2],
+        //context.x_min_, context.x_max_, context.y_min_, context.y_max_, context.z_min_, context.z_max_);
+      //}
+      int ninteract = 0;
+      for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
+        const Real min_v = min_value(blk, rp.pack_idx(cam_id, ilay));
+        const Real max_v = max_value(blk, rp.pack_idx(cam_id, ilay));
+        const Real min_av = min_value(blk, rp.alpha_pack_idx(cam_id, ilay));
+        const Real max_av = max_value(blk, rp.alpha_pack_idx(cam_id, ilay));
+        if ( std::isnan(min_v)
+          || std::isnan(min_av)) {
+          interact[ilay] = false;
+          continue;
+        }
+        if (rp.type(cam_id, ilay) == VizType::slice) {
+          if (rp.slice_transparent_outside(cam_id, ilay, 0)
+              && max_av < rp.alpha_range_min(cam_id, ilay)) {
+            interact[ilay] = false;
+            continue;
+          }
+          // check if intersection of ray with plane is inside block
+          Real n_dot_v = rp.slice_n(cam_id, ilay, 0) * v[0] +
+                        rp.slice_n(cam_id, ilay, 1) * v[1] +
+                        rp.slice_n(cam_id, ilay, 2) * v[2];
+          if (std::abs(n_dot_v) > kMarchTiny) {
+            Real xp = rp.slice_x(cam_id, ilay, 0) - x[0];
+            Real yp = rp.slice_x(cam_id, ilay, 1) - x[1];
+            Real zp = rp.slice_x(cam_id, ilay, 2) - x[2];
+            Real n_dot_p = rp.slice_n(cam_id, ilay, 0) * xp +
+                          rp.slice_n(cam_id, ilay, 1) * yp +
+                          rp.slice_n(cam_id, ilay, 2) * zp;
+            Real ht = n_dot_p / n_dot_v;
+            if (ht > -kMarchTiny && a < rp.ac(cam_id, ilay, 0)) {
+              std::array<Real, 3> temp;
+              for (int d = 0; d < 3; d++)
+                temp[d] = x[d] + ht * v[d];
+              interact[ilay] = on_block_fuzzy(temp);
+              ninteract += interact[ilay];
+            } else {
+              interact[ilay] = false;
+            }
+          } else {
+            interact[ilay] = false;
+          }
+        } else if (rp.type(cam_id, ilay) == VizType::contour || rp.type(cam_id, ilay) == VizType::contour_slice) {
+          // check if min/max values bound and of the contour values
+          for (int i = 0; i < rp.ncontours(cam_id, ilay); i++) {
+            const Real val = rp.contours(cam_id, ilay, i);
+            interact[ilay] = ((val - min_v) * (max_v - val) >= 0);
+            ninteract += interact[ilay];
+            if (interact[ilay]) break;
+          }
+        } else if (rp.type(cam_id, ilay) == VizType::volume) {
+          // check if max value is above min alpha (otherwise it's transparent)
+          interact[ilay] = (max_av > rp.alpha_range_min(cam_id, ilay));
+          ninteract += interact[ilay];
+        } else {
+          PARTHENON_FAIL("Unsupported VizType\n");
+        }
+      }
+      if (ninteract == 0) { 
+        push_to_block_boundary();
+        check_and_flag_off_mesh();
+        //commit(ps, blk);
+        //printf("skipped!\n");
+      }
+    }
+  }
+
+  KOKKOS_INLINE_FUNCTION
+  bool on_block_fuzzy(std::array<Real, 3> &xc) const {
+    PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(), "on_block_fuzzy only for Cartesian");
+    constexpr Real tol = RayTrace::kFaceEps;
+    if (xc[0] < context.x_min_ - tol || xc[0] > context.x_max_ + tol) return false;
+    if (xc[1] < context.y_min_ - tol || xc[1] > context.y_max_ + tol) return false;
+    if (xc[2] < context.z_min_ - tol || xc[2] > context.z_max_ + tol) return false;
+    return true;
   }
 
   KOKKOS_FORCEINLINE_FUNCTION
@@ -528,6 +707,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     return false;
   }
 
+  KOKKOS_FORCEINLINE_FUNCTION
   void check_and_flag_off_mesh() {
     if (!on_mesh()) {
       // this step pushed me off the mesh
@@ -540,29 +720,41 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     }
   }
 
+  KOKKOS_FORCEINLINE_FUNCTION
   bool all_mask(std::array<Real, 3> &x, std::array<bool, max_layers> &mask) {
     bool ret = false;
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
+      if (!interact[ilay]) continue;
       mask[ilay] = rp.masks(cam_id, ilay, x[0], x[1], x[2]);
       ret |= mask[ilay];
     }
     return ret;
   }
 
+  KOKKOS_FORCEINLINE_FUNCTION
   bool all_mask(std::array<Real, 3> &x) {
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
+      if (!interact[ilay]) continue;
       if (rp.masks(cam_id, ilay, x[0], x[1], x[2])) return true;
     }
     return false;
   }
 
+  KOKKOS_FORCEINLINE_FUNCTION
   Real get_value(const int ilay, const Real x1, const Real x2, const Real x3) const {
     return data[ilay].value(rp.use_grad(cam_id, ilay), x1, x2, x3);
   }
+  KOKKOS_FORCEINLINE_FUNCTION
   Real get_value(const int ilay) const { return get_value(ilay, xc[0], xc[1], xc[2]); }
-  Real get_alpha(const int ilay) const {
-    return data[ilay].alpha(rp.alpha_use_grad(cam_id, ilay), xc[0], xc[1], xc[2]);
+
+  KOKKOS_FORCEINLINE_FUNCTION
+  Real get_alpha(const int ilay, const Real x1, const Real x2, const Real x3) const {
+    return data[ilay].alpha(rp.alpha_use_grad(cam_id, ilay), x1, x2, x3);
   }
+  KOKKOS_FORCEINLINE_FUNCTION
+  Real get_alpha(const int ilay) const { return get_alpha(ilay, xc[0], xc[1], xc[2]); }
+
+  KOKKOS_FORCEINLINE_FUNCTION
   Real distance_to_face() const {
     Real h = std::numeric_limits<Real>::max();
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
@@ -602,6 +794,27 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     return h;
   }
 
+  template <typename SwarmPack_t>
+  KOKKOS_FORCEINLINE_FUNCTION
+  void commit(SwarmPack_t &ps, const int blk) {
+    RayTrace::IntegratorBase<VarPack_t>::commit(ps, blk);
+    if (!is_active()) {
+      Real alpha = std::abs(a);
+      // replace this if check with rp.flatten
+      if (true) alpha = 1.0;
+      Real red = (alpha > 0.0) ? r / alpha : 0.0;
+      Real green = (alpha > 0.0) ? g / alpha : 0.0;
+      Real blue = (alpha > 0.0) ? b / alpha : 0.0;
+
+      images(cam_id, 4 * pix_id + 0) = real_to_uint8_t(red);
+      images(cam_id, 4 * pix_id + 1) = real_to_uint8_t(green);
+      images(cam_id, 4 * pix_id + 2) = real_to_uint8_t(blue);
+      images(cam_id, 4 * pix_id + 3) = real_to_uint8_t(alpha);
+      context.MarkParticleForRemoval(pidx);
+    }
+  }
+
+
   void advance() {
     bool initial_mask = all_mask(x, mask);
     // step size til next cell face
@@ -618,6 +831,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         for (int d = 0; d < 3; d++)
           x[d] = temp[d];
         sync_cart_to_coord();
+        RayTrace::IntegratorBase<VarPack_t>::snap_to_face();
         check_and_flag_off_mesh();
         return;
       }
@@ -629,6 +843,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     int contour_id = -1;
     int slice_id = -1;
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
+      if (!interact[ilay]) continue;
       // first distance to slices OR construct the cell interpolant
       if (rp.type(cam_id, ilay) == VizType::slice) {
         Real n_dot_v = rp.slice_n(cam_id, ilay, 0) * v[0] +
@@ -642,10 +857,22 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
                          rp.slice_n(cam_id, ilay, 1) * yp +
                          rp.slice_n(cam_id, ilay, 2) * zp;
           Real ht = n_dot_p / n_dot_v;
-          if (ht > 0.0 && ht <= h + kMarchTiny) {
-            h = ht;
-            slice_id = ilay;
-            contour_id = -1;
+          //if (ht > 0.0 && ht <= h + kMarchTiny) {
+          if (ht <= h + kMarchTiny && ht > -kMarchTiny && a < rp.ac(cam_id, ilay, 0)) {
+            data[ilay] = VizData(rp, ilay, this);
+            std::array<Real, 3> temp;
+            for (int d = 0; d < 3; d++)
+              temp[d] = x[d] + ht * v[d];
+            Real alpha = 1.0;//rp.ac(cam_id, ilay, 0);
+            if (rp.slice_transparent_outside(cam_id, ilay, 0)) {
+              Real val = get_alpha(ilay, temp[0], temp[1], temp[2]);
+              if (val < rp.alpha_range_min(cam_id, ilay)) alpha = 0.0;
+            }
+            if (alpha > 0.0 && (mask[ilay] || rp.masks(cam_id, ilay, temp[0], temp[1], temp[2]))) {
+              h = ht;
+              slice_id = ilay;
+              contour_id = -1;
+            }
           }
         }
       }
@@ -653,27 +880,34 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       else if (rp.type(cam_id, ilay) == VizType::contour ||
                rp.type(cam_id, ilay) == VizType::contour_slice) {
         std::array<Real, 3> final_x{x[0] + h * v[0], x[1] + h * v[1], x[2] + h * v[2]};
-        if (!mask[ilay]) {
-          if (!rp.masks(cam_id, ilay, final_x[0], final_x[1], final_x[2])) continue;
-        }
+        //if (!mask[ilay]) {
+        //  if (!rp.masks(cam_id, ilay, final_x[0], final_x[1], final_x[2])) continue;
+        //}
         data[ilay] = VizData(rp, ilay, this);
         Real initial = get_value(ilay);
         auto final_coords = cart_to_coord(final_x);
         Real final = get_value(ilay, final_coords[0], final_coords[1], final_coords[2]);
         Real ht_min = 1.0;
+        Real h0 = h;
         for (int i = 0; i < rp.ncontours(cam_id, ilay); i++) {
           Real ht = (rp.contours(cam_id, ilay, i) - initial) / (final - initial);
           if (ht > 0.0 && ht < ht_min) {
-            h *= ht;
-            ht_min = ht;
-            layer_id = ilay;
-            contour_id = i;
-            slice_id = -1;
+            final_x[0] = x[0] + ht * h0 * v[0];
+            final_x[1] = x[1] + ht * h0 * v[1];
+            final_x[2] = x[2] + ht * h0 * v[2];
+            if (rp.masks(cam_id, ilay, final_x[0], final_x[1], final_x[2])) {
+              h = h0 * ht;
+              ht_min = ht;
+              layer_id = ilay;
+              contour_id = i;
+              slice_id = -1;
+            }
           }
         }
       }
     }
-    h += kStepOvershoot * min_size();
+    h = std::max(h, RayTrace::kStepOvershoot * min_size());
+    //h += RayTrace::kStepOvershoot * min_size();
 
     // half step
     for (int d = 0; d < 3; d++)
@@ -688,6 +922,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     Real gsum = 0.0;
     Real bsum = 0.0;
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
+      if (!interact[ilay]) continue;
       if (rp.type(cam_id, ilay) == VizType::volume) {
         if (rp.masks(cam_id, ilay, x[0], x[1], x[2])) {
           data[ilay] = VizData(rp, ilay, this);
@@ -719,8 +954,58 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     sync_cart_to_coord();
 
     if (slice_id >= 0) {
-      if (rp.masks(cam_id, slice_id, x[0], x[1], x[2])) {
-        data[slice_id] = VizData(rp, slice_id, this);
+      Real dlx = rp.xl(cam_id) - x[0];
+      Real dly = rp.yl(cam_id) - x[1];
+      Real dlz = rp.zl(cam_id) - x[2];
+      Real dist = std::sqrt(dlx * dlx + dly * dly + dlz * dlz);
+      dlx /= dist;
+      dly /= dist;
+      dlz /= dist;
+      Real ndotl = rp.slice_n(cam_id, slice_id, 0) * dlx +
+                   rp.slice_n(cam_id, slice_id, 1) * dly +
+                   rp.slice_n(cam_id, slice_id, 2) * dlz;
+      Real lum = rp.ambient(cam_id) +
+                  rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, std::abs(ndotl));
+      auto val = get_value(slice_id);
+      auto alpha_val = get_alpha(slice_id);
+      auto p = rp.val_to_rgba(cam_id, slice_id, val, alpha_val);
+      alpha = rp.ac(cam_id, slice_id, 0);
+      if (alpha_val < rp.alpha_range_min(cam_id, slice_id) && rp.slice_transparent_outside(cam_id, slice_id, 0)) alpha = 0.0;
+      if (alpha_val > rp.alpha_range_max(cam_id, slice_id) && rp.slice_transparent_outside(cam_id, slice_id, 1)) alpha = 0.0;
+      Real max_lum = std::min(std::min(1.0 / p.r, 1.0 / p.g), 1.0 / p.b);
+      lum = std::min(lum, max_lum);
+      r += (1 - a) * alpha * p.r * lum;
+      g += (1 - a) * alpha * p.g * lum;
+      b += (1 - a) * alpha * p.b * lum;
+      a += (1 - a) * alpha;
+    } else if (contour_id >= 0) {
+      if (rp.type(cam_id, layer_id) == VizType::contour) {
+        alpha = rp.ac(cam_id, layer_id, contour_id);
+        Real dlx = rp.xl(cam_id) - x[0];
+        Real dly = rp.yl(cam_id) - x[1];
+        Real dlz = rp.zl(cam_id) - x[2];
+        Real inv_dist = 1.0 / std::sqrt(dlx * dlx + dly * dly + dlz * dlz);
+        dlx *= inv_dist;
+        dly *= inv_dist;
+        dlz *= inv_dist;
+        auto [dfdx1, dfdx2, dfdx3] = data[layer_id].grad_val(xc[0], xc[1], xc[2]);
+        auto [dfdx, dfdy, dfdz] = transform_coord_to_cart(dfdx1, dfdx2, dfdx3);
+        auto inv_grad_mag = 1.0 / std::sqrt(dfdx * dfdx + dfdy * dfdy + dfdz * dfdz);
+        dfdx *= inv_grad_mag;
+        dfdy *= inv_grad_mag;
+        dfdz *= inv_grad_mag;
+        Real gdotl = dfdx * dlx + dfdy * dly + dfdz * dlz;
+        Real lum = rp.ambient(cam_id) +
+                    rp.diffuse(cam_id) * inv_dist * inv_dist * std::max(0.0, std::abs(gdotl));
+        r += (1 - a) * alpha * rp.rc(cam_id, layer_id, contour_id) * lum;
+        g += (1 - a) * alpha * rp.gc(cam_id, layer_id, contour_id) * lum;
+        b += (1 - a) * alpha * rp.bc(cam_id, layer_id, contour_id) * lum;
+        a += (1 - a) * alpha;
+      } else {
+        auto color_val = get_alpha(layer_id);
+        // we'll ignore alpha, so just send in zero
+        auto p = rp.val_to_rgba(cam_id, layer_id, color_val, 0.0);
+        alpha = rp.ac(cam_id, layer_id, contour_id);
         Real dlx = rp.xl(cam_id) - x[0];
         Real dly = rp.yl(cam_id) - x[1];
         Real dlz = rp.zl(cam_id) - x[2];
@@ -728,15 +1013,11 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         dlx /= dist;
         dly /= dist;
         dlz /= dist;
-        Real ndotl = rp.slice_n(cam_id, slice_id, 0) * dlx +
-                     rp.slice_n(cam_id, slice_id, 1) * dly +
-                     rp.slice_n(cam_id, slice_id, 2) * dlz;
+        auto [dfdx1, dfdx2, dfdx3] = data[layer_id].grad_val(xc[0], xc[1], xc[2]);
+        auto [dfdx, dfdy, dfdz] = transform_coord_to_cart(dfdx1, dfdx2, dfdx3);
+        Real gdotl = dfdx * dlx + dfdy * dly + dfdz * dlz;
         Real lum = rp.ambient(cam_id) +
-                   rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, ndotl);
-        auto val = get_value(slice_id);
-        auto alpha_val = get_alpha(slice_id);
-        auto p = rp.val_to_rgba(cam_id, slice_id, val, alpha_val);
-        alpha = rp.ac(cam_id, slice_id, 0);
+                    rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, -gdotl);
         Real max_lum = std::min(std::min(1.0 / p.r, 1.0 / p.g), 1.0 / p.b);
         lum = std::min(lum, max_lum);
         r += (1 - a) * alpha * p.r * lum;
@@ -744,68 +1025,73 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         b += (1 - a) * alpha * p.b * lum;
         a += (1 - a) * alpha;
       }
-    } else if (contour_id >= 0) {
-      if (rp.masks(cam_id, layer_id, x[0], x[1], x[2])) {
-        if (rp.type(cam_id, layer_id) == VizType::contour) {
-          alpha = rp.ac(cam_id, layer_id, contour_id);
-          Real dlx = rp.xl(cam_id) - x[0];
-          Real dly = rp.yl(cam_id) - x[1];
-          Real dlz = rp.zl(cam_id) - x[2];
-          Real dist = std::sqrt(dlx * dlx + dly * dly + dlz * dlz);
-          dlx /= dist;
-          dly /= dist;
-          dlz /= dist;
-          auto [dfdx1, dfdx2, dfdx3] = data[layer_id].grad_val(xc[0], xc[1], xc[2]);
-          auto [dfdx, dfdy, dfdz] = transform_coord_to_cart(dfdx1, dfdx2, dfdx3);
-          Real gdotl = dfdx * dlx + dfdy * dly + dfdz * dlz;
-          Real lum = rp.ambient(cam_id) +
-                     rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, -gdotl);
-          r += (1 - a) * alpha * rp.rc(cam_id, layer_id, contour_id) * lum;
-          g += (1 - a) * alpha * rp.gc(cam_id, layer_id, contour_id) * lum;
-          b += (1 - a) * alpha * rp.bc(cam_id, layer_id, contour_id) * lum;
-          a += (1 - a) * alpha;
-        } else {
-          auto color_val = get_alpha(layer_id);
-          // we'll ignore alpha, so just send in zero
-          auto p = rp.val_to_rgba(cam_id, layer_id, color_val, 0.0);
-          alpha = rp.ac(cam_id, layer_id, contour_id);
-          Real dlx = rp.xl(cam_id) - x[0];
-          Real dly = rp.yl(cam_id) - x[1];
-          Real dlz = rp.zl(cam_id) - x[2];
-          Real dist = std::sqrt(dlx * dlx + dly * dly + dlz * dlz);
-          dlx /= dist;
-          dly /= dist;
-          dlz /= dist;
-          auto [dfdx1, dfdx2, dfdx3] = data[layer_id].grad_val(xc[0], xc[1], xc[2]);
-          auto [dfdx, dfdy, dfdz] = transform_coord_to_cart(dfdx1, dfdx2, dfdx3);
-          Real gdotl = dfdx * dlx + dfdy * dly + dfdz * dlz;
-          Real lum = rp.ambient(cam_id) +
-                     rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, -gdotl);
-          Real max_lum = std::min(std::min(1.0 / p.r, 1.0 / p.g), 1.0 / p.b);
-          lum = std::min(lum, max_lum);
-          r += (1 - a) * alpha * p.r * lum;
-          g += (1 - a) * alpha * p.g * lum;
-          b += (1 - a) * alpha * p.b * lum;
-          a += (1 - a) * alpha;
-        }
-      } else {
-        PARTHENON_FAIL("Should never get here.");
-      }
-    } else {
-      // ensure it lands "on" the face in just the right way
-      RayTrace::IntegratorBase<VarPack_t>::snap_to_face();
-    }
+    } //else {
+    // ensure it lands "on" the face in just the right way
+    RayTrace::IntegratorBase<VarPack_t>::snap_to_face();
+
+    //}
 
     check_and_flag_off_mesh();
   }
 
   const RenderingParams &rp;
-  int cam_id;
+  int cam_id, pix_id;
   Real &r, &g, &b, &a;
   std::array<VizData, max_layers> data;
   std::array<bool, max_layers> mask;
+  std::array<bool, max_layers> interact;
   parthenon::ParArray1D<parthenon::PackIdx> idx_map;
+  const parthenon::ParArrayND<uint8_t> &images;
 };
+
+namespace impl {
+namespace rt = particles::ray_tracer;
+namespace vr = particles::riot_viz;
+struct TracerInfo {
+  using DescriptorType = decltype(
+      parthenon::MakeSwarmPackDescriptor<
+          swarm_position::x, swarm_position::y, swarm_position::z,
+          rt::vx, rt::vy, rt::vz,
+          vr::r, vr::g, vr::b, vr::a>(
+              vr::particles::name()));
+
+  using IntDescriptorType = decltype(
+    parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(
+        vr::particles::name()));
+
+  TracerInfo(const std::vector<std::string> &fields, RenderingParams &&rp)
+  : fields(fields), render_params(std::move(rp)), initialized(false),
+    desc_ps(parthenon::MakeSwarmPackDescriptor<swarm_position::x, swarm_position::y,
+                                          swarm_position::z, rt::vx, rt::vy, rt::vz, vr::r,
+                                          vr::g, vr::b, vr::a>(vr::particles::name())),
+    desc_ps_int(parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(vr::particles::name())) {}
+
+  void initialize(MeshData<Real> *md) {
+    desc.emplace(parthenon::MakePackDescriptor(md, fields));
+    auto pack_idx_map = desc->GetMap();
+    std::vector<parthenon::PackIdx> pack_idx;
+    for (auto &key : fields)
+      pack_idx.emplace_back(pack_idx_map.at(key));
+    pack_idx_view = RiotUtils::VectorToDevice(pack_idx, "pack_idx_view");
+
+    initialized = true;
+  }
+
+  auto GetPacks(MeshData<Real> *md) const {
+    return std::make_tuple(desc->GetPack(md),
+                           desc_ps.GetPack(md),
+                           desc_ps_int.GetPack(md));
+  }
+
+  std::vector<std::string> fields;
+  RenderingParams render_params;
+  bool initialized;
+  std::optional<parthenon::SparsePack<>::Descriptor> desc;
+  DescriptorType desc_ps;
+  IntDescriptorType desc_ps_int;
+  parthenon::ParArray1D<parthenon::PackIdx> pack_idx_view;
+};
+}
 
 struct LayerInfo {
   Spiner::DataBox<Real> rcmap;
@@ -821,6 +1107,7 @@ struct LayerInfo {
 
 struct CameraInfo {
   int nwidth, nheight, colorbar_thickness;
+  Real scale;
   std::string filename;
   std::vector<LayerInfo> layer;
   int ncolorbar{0};
