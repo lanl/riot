@@ -139,7 +139,7 @@ MATERIALS = {
         "gamma": 1.62,
     },
     "Tungsten": {
-        "sesame_id": 3541,
+        "sesame_id": 93541,
         "density": 19.2367,
         "z": 74,
         "eos": "SpinerEOSDependsRhoT",
