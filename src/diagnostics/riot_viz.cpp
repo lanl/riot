@@ -12,7 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 #include <algorithm>
-#include <format>
+//#include <format>
 #include <iomanip>
 #include <sstream>
 
@@ -1143,7 +1143,11 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
         ilabel++;
       }
 
-      std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
+      // Move to this commented out line when we go to C++20 and add include <format>
+      //std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
+      std::ostringstream ss;
+      ss << camera[i].filename << std::setfill('0') << std::setw(4) << dump_id << ".png";
+      std::string name = ss.str();
       // stbi_write_png
       if (!write_png(name.c_str(), w, total_h,
                      4, // RGBA
