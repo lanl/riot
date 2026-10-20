@@ -376,7 +376,7 @@ def build_parser():
     geom.add_argument(
         "--scale_chromium",
         action="store_true",
-        help="Rescale the Chromium EOS to behave more like Tungsten"
+        help="Rescale the Chromium EOS to behave more like Tungsten",
     )
     geom.add_argument(
         "--idealDT",
@@ -857,7 +857,7 @@ def make_input(args):
                 eos_type="SpinerEOSDependsRhoT",
                 sesame_id=info["sesame_id"],
                 filename=str(ifile_dir / "eos" / "materials.sp5"),
-                eos_scale = scale,
+                eos_scale=scale,
             )
         return rho
 
