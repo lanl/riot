@@ -18,7 +18,11 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <set>
+#include <string>
 #include <tuple>
+#include <type_traits>
+#include <vector>
 // parthenon infrastructure includes
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
@@ -37,7 +41,6 @@ namespace RiotEOS {
 
 // The magic to automatically make zsplit of all EOS's available.
 // TODO(JMM): Thread this through the cmake.
-// TODO(JMM): Add shift and scale eventually when we need them
 namespace impl {
 // Type list of EOS types
 template <typename... Ts>
@@ -50,13 +53,19 @@ using singularity::variadic_utils::concat;
 using singularity::variadic_utils::transform_variadic_list;
 
 // The EOS's that can be zsplit
-static constexpr const auto zsplitable =
-    tl<singularity::IdealGas, singularity::Gruneisen
 #ifdef SPINER_USE_HDF
-       ,
-       singularity::SpinerEOSDependsRhoT, singularity::SpinerEOSDependsRhoSie
+// Tabulated EOS's, which may also be scaled. Scaled is innermost, i.e.,
+// ZSplitE<ScaledEOS<eos>>.
+static constexpr const auto spiner =
+    tl<singularity::SpinerEOSDependsRhoT, singularity::SpinerEOSDependsRhoSie>{};
+static constexpr const auto scaled_spiner =
+    transform_variadic_list(spiner, al<singularity::ScaledEOS>{});
+static constexpr const auto zsplitable =
+    concat(tl<singularity::IdealGas, singularity::Gruneisen>{}, spiner, scaled_spiner);
+#else
+static constexpr const auto zsplitable =
+    tl<singularity::IdealGas, singularity::Gruneisen>{};
 #endif
-       >{};
 // EOS's that should not be zsplit
 static constexpr const auto not_splitable =
     tl<singularity::JWL, singularity::DavisProducts, singularity::DavisReactants,
@@ -70,6 +79,20 @@ static constexpr const auto zspliti =
 // Unmodified, ZSPlitE<eos>, ZSPlitI<eos>, IdealElectrons
 static constexpr const auto all_eoses =
     concat(zsplitable, zsplite, zspliti, not_splitable);
+
+template <typename T, typename... Ts>
+constexpr bool in_list(tl<Ts...>) {
+  return singularity::variadic_utils::contains_v<T, Ts...>();
+}
+#ifdef SPINER_USE_HDF
+// Variant::Modify silently returns the unmodified EOS if the modified
+// type is not in the variant, so make sure scaled tables can be zsplit.
+using ScaledRhoT = singularity::ScaledEOS<singularity::SpinerEOSDependsRhoT>;
+using ScaledRhoSie = singularity::ScaledEOS<singularity::SpinerEOSDependsRhoSie>;
+static_assert(in_list<singularity::ZSplitE<ScaledRhoT>>(all_eoses) &&
+                  in_list<singularity::ZSplitI<ScaledRhoSie>>(all_eoses),
+              "Scaled tables must be zsplitable");
+#endif
 } // namespace impl
 
 using EOS = typename decltype(singularity::tl_to_Variant(impl::all_eoses))::vt;
@@ -205,9 +228,18 @@ class LambdaIndexerMulti {
   parthenon::ScratchPad2D<int> pte2slice_;
 };
 
+// The unmodified base type of an EOS, e.g., ZSplitE<ScaledEOS<T>> -> T
+template <typename T>
+using unmodified_t = std::decay_t<decltype(std::declval<T &>().GetUnmodifiedObject())>;
+
+//----------------------------------------------------------------------------------------
+//! \fn  Container_t RiotEOS::GetEOSNames
+//! \brief Names of the base EOS's in the variant, i.e., valid values of eos_type.
+//! Modifiers are applied via other input parameters, so are stripped here.
 template <typename Container_t = std::vector<std::string>, typename... Ts>
-Container_t GetEOSNames(const singularity::Variant<Ts...> &eos) {
-  return Container_t{Ts::EosType()...};
+Container_t GetEOSNames(const singularity::Variant<Ts...> &) {
+  const std::set<std::string> names{unmodified_t<Ts>::EosType()...};
+  return Container_t(names.begin(), names.end());
 }
 
 template <typename Lambda_t = Real *>
@@ -365,29 +397,11 @@ auto density_zbar_from_P_Ti_Te(const EOS &ion_eos, const EOS &electron_eos,
   return std::make_tuple(density, zbar);
 }
 
-//----------------------------------------------------------------------------------------
-//! \fn  EOS RiotEOS::Shift
-//! \brief
-template <typename T>
-EOS Shift(T &&eos, bool shift, const Real reference_energy) {
-  // if (shift) {
-  // const Real std_temp = 273.15;
-  // const Real std_pres = 1.013e6;
-  // const Real rho0 = rho_from_P_T(eos, std_pres, std_temp, 10.0);
-  // const Real sie0 = eos.InternalEnergyFromDensityTemperature(rho0, std_temp);
-  // printf("sie0 = %g\n", sie0);
-  // const Real sie_shift = reference_energy - sie0;
-  // return singularity::ShiftedEOS<T>(std::forward<T>(eos), sie_shift);
-  //}
-  return eos;
-}
-
 enum class ZSplitting { None, Electrons, Ions };
 //----------------------------------------------------------------------------------------
-//! \fn  auto RiotEOS::ZSplit
+//! \fn  EOS RiotEOS::ZSplit
 //! \brief
-template <typename T>
-auto ZSplit(T eos, const ZSplitting s) {
+inline EOS ZSplit(const EOS &eos, const ZSplitting s) {
   if (s == ZSplitting::Electrons) {
     return singularity::EOSBuilder::Modify<singularity::ZSplitE>(eos);
   } else if (s == ZSplitting::Ions) {
@@ -395,6 +409,18 @@ auto ZSplit(T eos, const ZSplitting s) {
   } else {
     return eos;
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  EOS RiotEOS::MaybeScale
+//! \brief Wraps eos in a ScaledEOS if requested. Scaling must be applied to the
+//! concrete type, as the variant's Modify won't fail if ScaledEOS<T> is missing.
+template <typename T>
+EOS MaybeScale(T eos, const bool do_scale, const Real scale) {
+  if (do_scale) {
+    return singularity::ScaledEOS<T>(std::move(eos), scale);
+  }
+  return eos;
 }
 
 //----------------------------------------------------------------------------------------

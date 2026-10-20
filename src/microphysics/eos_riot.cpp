@@ -50,9 +50,6 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
   auto valid_eos_types = RiotEOS::GetEOSNames(RiotEOS::EOS());
   std::string eos_type = pin->GetString(block_name, std::string("eos_type"),
                                         valid_eos_types, "Equation of state to use");
-  auto shift = pin->GetOrAddBoolean("hydro", "eos_shift", false, "Shift the EOS");
-  auto reference_sie =
-      pin->GetOrAddReal("hydro", "eos_reference_sie", 0.0, "Reference energy for shift");
 
   ZSplitting zsplit = ZSplitting::None;
   if (do_ionization) {
@@ -62,39 +59,49 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     }
   }
 
+  bool do_scale = pin->DoesParameterExist(block_name, "eos_scale");
+  const Real scale =
+      do_scale ? pin->GetReal(block_name, "eos_scale",
+                              "Density scale for tabulated EOS. The table is evaluated "
+                              "at rho*eos_scale and sie/eos_scale.")
+               : 1.0;
+  if (std::abs(scale - 1) < 1e-12) do_scale = false;
+  if (do_scale) {
+    bool is_tabulated = false;
+#ifdef SPINER_USE_HDF
+    is_tabulated = (eos_type.compare(SpinerEOSDependsRhoT::EosType()) == 0) ||
+                   (eos_type.compare(SpinerEOSDependsRhoSie::EosType()) == 0);
+#endif
+    PARTHENON_REQUIRE_THROWS(is_tabulated,
+                             "eos_scale is only supported for tabulated EOS's");
+    PARTHENON_REQUIRE_THROWS(scale > 0, "eos_scale must be positive");
+  }
+
   const Real Abar = pin->GetOrAddReal(block_name, "mean_atomic_mass", 2.0);
   const Real Zbar = pin->GetOrAddReal(block_name, "mean_atomic_number", 1.0);
   singularity::MeanAtomicProperties AZbar(Abar, Zbar);
 
   // Parse inputs
   if (eos_type.compare(IdealGas::EosType()) == 0) {
-    RETURN(load,
-           ZSplit(Shift(IdealGas(GET(Gamma) - 1.0, GET(Cv), AZbar), shift, reference_sie),
-                  zsplit));
+    RETURN(load, ZSplit(IdealGas(GET(Gamma) - 1.0, GET(Cv), AZbar), zsplit));
   } else if (eos_type.compare(Gruneisen::EosType()) == 0) {
-    RETURN(load,
-           ZSplit(Shift(Gruneisen(GET(C0), GET(s1), GET(s2), GET(s3), GET(G0), GET(b),
+    RETURN(load, ZSplit(Gruneisen(GET(C0), GET(s1), GET(s2), GET(s3), GET(G0), GET(b),
                                   GET(rho0), GET(T0), GET(P0), GET(Cv), AZbar),
-                        shift, reference_sie),
-                  zsplit));
+                        zsplit));
   } else if (eos_type.compare(JWL::EosType()) == 0) {
     PARTHENON_REQUIRE_THROWS(zsplit == ZSplitting::None, "Z split not supported for JWL");
     RETURN(load,
-           Shift(JWL(GET(A), GET(B), GET(R1), GET(R2), GET(w), GET(rho0), GET(Cv), AZbar),
-                 shift, reference_sie));
+           JWL(GET(A), GET(B), GET(R1), GET(R2), GET(w), GET(rho0), GET(Cv), AZbar));
   } else if (eos_type.compare(DavisProducts::EosType()) == 0) {
     PARTHENON_REQUIRE_THROWS(zsplit == ZSplitting::None,
                              "Z split not supported for DavisProducts");
-    RETURN(load, Shift(DavisProducts(GET(a), GET(b), GET(k), GET(n), GET(vc), GET(pc),
-                                     GET(Cv), AZbar),
-                       shift, reference_sie));
+    RETURN(load, DavisProducts(GET(a), GET(b), GET(k), GET(n), GET(vc), GET(pc), GET(Cv),
+                               AZbar));
   } else if (eos_type.compare(DavisReactants::EosType()) == 0) {
     PARTHENON_REQUIRE_THROWS(zsplit == ZSplitting::None,
                              "Z split not supported for DavisReactants");
-    RETURN(load,
-           Shift(DavisReactants(GET(rho0), GET(e0), GET(P0), GET(T0), GET(A), GET(B),
-                                GET(C), GET(G0), GET(Z), GET(alpha), GET(Cv0), AZbar),
-                 shift, reference_sie));
+    RETURN(load, DavisReactants(GET(rho0), GET(e0), GET(P0), GET(T0), GET(A), GET(B),
+                                GET(C), GET(G0), GET(Z), GET(alpha), GET(Cv0), AZbar));
 #ifdef SPINER_USE_HDF
   } else if (eos_type.compare(SpinerEOSDependsRhoT::EosType()) == 0) {
     auto filename =
@@ -116,15 +123,16 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     if (pin->DoesParameterExist(block_name, "sesame_id")) {
       auto matid = pin->GetInteger(block_name, "sesame_id",
                                    "Sesame material ID. Takes precedence over a name.");
-      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoT(filename, matid, tsplit, reprod),
-                                shift, reference_sie),
-                          zsplit));
+      RETURN(load,
+             ZSplit(MaybeScale(SpinerEOSDependsRhoT(filename, matid, tsplit, reprod),
+                               do_scale, scale),
+                    zsplit));
     } else if (pin->DoesParameterExist(block_name, "sesame_name")) {
       auto name =
           pin->GetString(block_name, "sesame_name",
                          "Material name in SP5 file. Matid takes precedence if set.");
-      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoT(filename, name, tsplit, reprod),
-                                shift, reference_sie),
+      RETURN(load, ZSplit(MaybeScale(SpinerEOSDependsRhoT(filename, name, tsplit, reprod),
+                                     do_scale, scale),
                           zsplit));
     } else {
       std::stringstream msg;
@@ -152,16 +160,18 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     if (pin->DoesParameterExist(block_name, "sesame_id")) {
       auto matid = pin->GetInteger(block_name, "sesame_id",
                                    "Sesame material ID. Takes precedence over a name.");
-      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoSie(filename, matid, tsplit, reprod),
-                                shift, reference_sie),
-                          zsplit));
+      RETURN(load,
+             ZSplit(MaybeScale(SpinerEOSDependsRhoSie(filename, matid, tsplit, reprod),
+                               do_scale, scale),
+                    zsplit));
     } else if (pin->DoesParameterExist(block_name, "sesame_name")) {
       auto name =
           pin->GetString(block_name, "sesame_name",
                          "Material name in SP5 file. Matid takes precedence if set.");
-      RETURN(load, ZSplit(Shift(SpinerEOSDependsRhoSie(filename, name, tsplit, reprod),
-                                shift, reference_sie),
-                          zsplit));
+      RETURN(load,
+             ZSplit(MaybeScale(SpinerEOSDependsRhoSie(filename, name, tsplit, reprod),
+                               do_scale, scale),
+                    zsplit));
     } else {
       std::stringstream msg;
       msg << "Neither sesame_id nor sesame_name exists for material " << block_name
@@ -170,7 +180,9 @@ EOS InitializeEOS(ParameterInput *pin, const std::string &block_name, bool is_el
     }
 #endif
   } else if (eos_type.compare(singularity::IdealElectrons::EosType()) == 0) {
-    RETURN(load, Shift(IdealElectrons(AZbar), shift, reference_sie));
+    PARTHENON_REQUIRE_THROWS(zsplit == ZSplitting::None,
+                             "Z split not supported for IdealElectrons");
+    RETURN(load, IdealElectrons(AZbar));
   } else {
     std::stringstream error_mesg;
     error_mesg << __func__ << ": " << eos_type << " is an invalid EOS selection"
