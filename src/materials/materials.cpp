@@ -227,7 +227,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto phase_rho_sum = SparsePool::Make<ccmat::phase_rho_sum>(m, control_field);
 
   // Isotopes
-  // TODO(JMM): Should these be defined in the tnburn package?
   m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
                 Metadata::Conserved, Metadata::Sparse, Metadata::FillGhost,
                 Metadata::WithFluxes, Metadata::Advected, BurnFlag});
@@ -241,14 +240,29 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   auto iso = SparsePool::Make<cm::iso>(m, control_field);
 
-  // Ionization State
+  // Isotopic Ionization State
+  m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::WithFluxes,
+                Metadata::Advected, Metadata::Independent, BurnFlag});
+  m.SetSparseThresholds(0.0, 0.0, 0.0);
+  m.Associate(cm::iso_ionization_zbar::name());
+  auto ccmat_iso_ionization_zbar =
+      SparsePool::Make<ccmat::iso_ionization_zbar>(m, control_field);
+
+  // Material-volume-averaged Isotopic Ionization State
+  m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::OneCopy, Metadata::Derived,
+                Metadata::FillGhost, BurnFlag});
+  m.SetSparseThresholds(0.0, 0.0, 0.0);
+  auto cm_iso_ionization_zbar =
+      SparsePool::Make<cm::iso_ionization_zbar>(m, control_field);
+
+  // Material Ionization State
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::WithFluxes,
                 Metadata::Advected, Metadata::Independent, BurnFlag});
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   m.Associate(cm::ionization_zbar::name());
   auto ccmat_ionization_zbar = SparsePool::Make<ccmat::ionization_zbar>(m, control_field);
 
-  // Material-volume-averaged Ionization State
+  // Material-volume-averaged Material Ionization State
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::OneCopy, Metadata::Derived,
                 Metadata::FillGhost, BurnFlag});
   m.SetSparseThresholds(0.0, 0.0, 0.0);
@@ -437,6 +451,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     if (niso > 0) {
       std::vector<int> shape(1, niso);
       AddMatId(matid, shape, mat_iso, iso);
+      if (do_ionization) {
+        AddMatId(matid, shape, ccmat_iso_ionization_zbar, cm_iso_ionization_zbar);
+      }
     }
 
     num_iso_per_mat.push_back(niso);
@@ -734,7 +751,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
            cm_rho, cm_sie, cm_temperature, cm_pressure, cm_bulk_modulus, cm_cv,
            mat_stress, stress, mat_eps, eps, gmod, strength_j2, mat_iso, iso,
            phase_rho_sum, phase_fraction, ccmat_ionization_zbar, cm_ionization_zbar,
-           cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache);
+           cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache, ccmat_iso_ionization_zbar,
+           cm_iso_ionization_zbar);
 
   // Instantiate device ParArray1D of EOS and Opacity objects, setup PTE list vector
   const int num_eos = eos_host.size();
@@ -991,7 +1009,11 @@ void MaterialsFillDerived(MeshData<Real> *md) {
   PARTHENON_REQUIRE(max_array_size <= RiotLimits::MAX_MATERIALS,
                     "Number of materials exceeds MAX_MATERIALS compile-time limit");
 
-  auto v = riot::MakePack<ccmat::rho, ccmat::iso, cm::iso>(md);
+  auto pmb = md->GetBlockData(0)->GetBlockPointer();
+  auto const &hydro = pmb->packages.Get("hydro");
+  const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
+
+  auto v = riot::MakePack<ccmat::rho, ccmat::iso, cm::iso, ccmat::volume_fraction>(md);
 
   const int nblocks = md->NumBlocks();
   if (nblocks == 0) return;
@@ -1018,7 +1040,9 @@ void MaterialsFillDerived(MeshData<Real> *md) {
           auto cons = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
           auto prim = RiotLoop::make_var_view(idx_range, v, cm::iso(iso));
           auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
           RiotLoop::inner(idx_range, [&](const auto kji) {
+            cons(kji) = (fv(kji) < vol_frac_thresh) ? 0.0 : cons(kji);
             prim(kji) = cons(kji) / (rho(kji) + 1e-20);
           });
         }

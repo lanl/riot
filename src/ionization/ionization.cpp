@@ -16,6 +16,7 @@
 
 #include <ports-of-call/robust_utils.hpp>
 
+#include <batched_linear_algebra/qr_decomposition.hpp>
 #include <parthenon/driver.hpp>
 #include <parthenon/package.hpp>
 #include <solvers/bicgstab_solver.hpp>
@@ -29,6 +30,7 @@
 #include "materials/materials.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
+#include "reconstruction/reconstruction.hpp"
 #include "riot_driver.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
@@ -172,8 +174,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Add plasma diffusion fluxes to isotope, mass and energy equations");
   physics->AddParam("plasma_diffusion", plasma_diffusion);
   const std::string ion_diffusion_model =
-      pin->GetOrAddString("ionization", "ion_diffusion_model", "fokker_planck_landau",
-                          std::vector<std::string>{"constant", "fokker_planck_landau"},
+      pin->GetOrAddString("ionization", "ion_diffusion_model", "stefan_maxwell",
+                          std::vector<std::string>{"constant", "stefan_maxwell"},
                           "Model to use for ion diffusion");
   physics->AddParam("ion_diffusion_model", ion_diffusion_model);
   const Real ion_diffusion_coefficient =
@@ -259,6 +261,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m = Metadata(
       {Metadata::Cell, Metadata::Intensive, Metadata::Derived, Metadata::OneCopy});
   physics->AddField<ccbulk::ion_shear_viscosity>(m);
+
+  if (plasma_diffusion) {
+    m = Metadata(
+        {Metadata::Cell, Metadata::Intensive, Metadata::Derived, Metadata::OneCopy});
+    physics->AddField<ccbulk::knudsen_number>(m);
+  }
 
   // timestep controls
   auto m_no_ghost =
@@ -408,16 +416,37 @@ void ComputeFreeElectronNumberDensity(MeshData<Real> *md) {
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  const auto num_iso_per_mat =
+      materials->Param<parthenon::ParArray1D<int>>("num_iso_per_mat");
 
   // pack up vars we need
-  auto v =
-      riot::MakePack<cm::rho, ccmat::rho, ccbulk::electron_temperature,
-                     ccbulk::electron_number_density, ccbulk::ionization_zbar,
-                     ccmat::ionization_zbar, cm::ionization_zbar, ccmat::volume_fraction>(
-          md);
+  auto v = riot::MakePack<cm::rho, ccmat::rho, ccbulk::electron_temperature,
+                          ccbulk::electron_number_density, ccbulk::ionization_zbar,
+                          ccmat::ionization_zbar, cm::ionization_zbar,
+                          ccmat::volume_fraction, cm::iso, ccmat::iso,
+                          cm::iso_ionization_zbar, ccmat::iso_ionization_zbar>(md);
 
   const int nblocks = v.GetNBlocks();
   if (nblocks < 1) return;
+
+  // Pull isotope information.
+  const auto &iso_zaids =
+      materials->Param<std::vector<std::vector<int>>>("Isotope Zaids");
+  int total_niso = 0;
+  for (const auto &mat_zaids : iso_zaids) {
+    total_niso += mat_zaids.size();
+  }
+  // TODO: initialize isotope A/Z through a device-safe host-mirror copy.
+  parthenon::ParArray1D<Real> iso_A("isotope A", total_niso);
+  parthenon::ParArray1D<Real> iso_Z("isotope Z", total_niso);
+  int iso_idx = 0;
+  for (int m = 0; m < iso_zaids.size(); ++m) {
+    for (int iso = 0; iso < iso_zaids[m].size(); ++iso) {
+      iso_A(iso_idx) = iso_zaids[m][iso] % 1000;
+      iso_Z(iso_idx) = iso_zaids[m][iso] / 1000;
+      ++iso_idx;
+    }
+  }
 
   // SWJ: this needs to be computed over entire mesh because thermal diffusion
   // coefficient is calculated in the ghost zones
@@ -430,41 +459,118 @@ void ComputeFreeElectronNumberDensity(MeshData<Real> *md) {
         std::array<int, MAX_MATERIALS> eos_map;
         RiotEOS::FillEosMap<ccmat::rho>(v, b, nmat, eos_from_matid, nphase, eos_map);
 
-        // compute ionization state for each material
+        // Compute ionization states for materials and individual isotopes.
+        // For materials with isotopes, derive the material mean ionization
+        // from the isotope number-density-weighted average.
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         auto ne =
             RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
-        for (int m = 0; m < nmat; m++) {
+
+        int iso_offset = 0;
+
+        for (int m = 0; m < nmat; ++m) {
           auto cm_rho = RiotLoop::make_var_view(idx_range, v, cm::rho(m));
           auto ccmat_rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
           auto cm_zbar = RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
           auto ccmat_zbar =
               RiotLoop::make_var_view(idx_range, v, ccmat::ionization_zbar(m));
+
+          const int mat_id = v(b, ccmat::rho(m)).sparse_id;
+          const int niso = num_iso_per_mat(mat_id);
           auto &eosm = eos(eos_map[m]);
-          const Real anuc = eosm.MeanAtomicMass();
-          const Real one_over_mnuc = 1.0 / (anuc * unit_system::amu);
-          const Real znuc = eosm.MeanAtomicNumber();
-          RiotLoop::inner(idx_range, [&](const auto kji) {
-            Real zbar = cm_zbar(kji);
-            ComputeIonizationState(anuc, znuc, cm_rho(kji),
-                                   pv(ccbulk::electron_temperature(), kji), zbar,
-                                   fully_ionized);
-            cm_zbar(kji) = zbar;
-            ccmat_zbar(kji) = ccmat_rho(kji) * zbar;
-            ne(kji) = (m == 0) ? (ccmat_zbar(kji) * one_over_mnuc)
-                               : (ne(kji) + ccmat_zbar(kji) * one_over_mnuc);
-          });
-          if (v.Contains(b, ccbulk::ionization_zbar())) {
-            idx_range.TeamBarrier();
+
+          if (niso > 0) {
+            // Accumulate ion number density and electron number density
+            // contributed by the isotopes of this material.
             RiotLoop::inner(idx_range, [&](const auto kji) {
-              pv(ccbulk::ionization_zbar(), kji) =
-                  (m == 0) ? (ccmat_zbar(kji) * cm_zbar(kji) * one_over_mnuc)
-                           : (pv(ccbulk::ionization_zbar(), kji) +
-                              ccmat_zbar(kji) * cm_zbar(kji) * one_over_mnuc);
+              Real ni_mat = 0.0;
+              Real ne_mat = 0.0;
+
+              for (int iso = 0; iso < niso; ++iso) {
+                const int iso_idx = iso_offset + iso;
+                const Real anuc = iso_A(iso_idx);
+                const Real znuc = iso_Z(iso_idx);
+
+                auto cm_iso_rho = RiotLoop::make_var_view(idx_range, v, cm::iso(iso_idx));
+                auto ccmat_iso_rho =
+                    RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
+                auto cm_iso_zbar = RiotLoop::make_var_view(
+                    idx_range, v, cm::iso_ionization_zbar(iso_idx));
+                auto ccmat_iso_zbar = RiotLoop::make_var_view(
+                    idx_range, v, ccmat::iso_ionization_zbar(iso_idx));
+
+                Real zbar = 0.0;
+                if (znuc > 0.0) {
+                  zbar = cm_iso_zbar(kji);
+                  // NOTE: this passes the density as the isotope mass fraction
+                  // times the material-averaged density (i.e. physical
+                  // density). That's consistent with Amagat but may not be what
+                  // we want. Alternatively, we could just use ccmat_iso_rho,
+                  // the cell-averaged isotope density, or cm::rho, the physical
+                  // material density
+                  ComputeIonizationState(anuc, znuc, cm_iso_rho(kji) * cm_rho(kji),
+                                         pv(ccbulk::electron_temperature(), kji), zbar,
+                                         fully_ionized);
+                }
+                if (!std::isfinite(zbar)) {
+                  Kokkos::printf("BAD ISO ZBAR: m=%d iso=%d rho_mat=%e Xiso=%e "
+                                 "rho_iso=%e A=%e Z=%e Te=%e zbar=%e\n",
+                                 m, iso_idx, cm_rho(kji), cm_iso_rho(kji),
+                                 cm_rho(kji) * cm_iso_rho(kji), anuc, znuc,
+                                 pv(ccbulk::electron_temperature(), kji), zbar);
+                }
+
+                cm_iso_zbar(kji) = zbar;
+                ccmat_iso_zbar(kji) = ccmat_iso_rho(kji) * zbar;
+
+                const Real ni = ccmat_iso_rho(kji) / (anuc * unit_system::amu);
+                ni_mat += ni;
+                ne_mat += ni * zbar;
+              }
+
+              const Real zbar_mat = ratio(ne_mat, ni_mat);
+              cm_zbar(kji) = zbar_mat;
+              ccmat_zbar(kji) = ccmat_rho(kji) * zbar_mat;
+
+              ne(kji) = (m == 0) ? ne_mat : (ne(kji) + ne_mat);
+            });
+          } else {
+            // Original material-level ionization calculation.
+            const Real anuc = eosm.MeanAtomicMass();
+            const Real znuc = eosm.MeanAtomicNumber();
+            const Real inv_mnuc = 1.0 / (anuc * unit_system::amu);
+
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              Real zbar = cm_zbar(kji);
+              ComputeIonizationState(anuc, znuc, cm_rho(kji),
+                                     pv(ccbulk::electron_temperature(), kji), zbar,
+                                     fully_ionized);
+
+              cm_zbar(kji) = zbar;
+              ccmat_zbar(kji) = ccmat_rho(kji) * zbar;
+
+              const Real ne_mat = ccmat_zbar(kji) * inv_mnuc;
+              ne(kji) = (m == 0) ? ne_mat : (ne(kji) + ne_mat);
             });
           }
+
           idx_range.TeamBarrier();
-        } // mats
+
+          if (v.Contains(b, ccbulk::ionization_zbar())) {
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              const Real anuc = eosm.MeanAtomicMass();
+              const Real inv_mnuc = 1.0 / (anuc * unit_system::amu);
+              const Real contribution = ccmat_zbar(kji) * cm_zbar(kji) * inv_mnuc;
+
+              pv(ccbulk::ionization_zbar(), kji) =
+                  (m == 0) ? contribution
+                           : pv(ccbulk::ionization_zbar(), kji) + contribution;
+            });
+          }
+
+          idx_range.TeamBarrier();
+          iso_offset += niso;
+        }
 
         if (v.Contains(b, ccbulk::ionization_zbar())) {
           RiotLoop::inner(idx_range, [&](const auto kji) {
@@ -1244,7 +1350,6 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
 
   auto &materials = pm->packages.Get("materials");
   const auto &ion_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
-  const int max_array_size = materials->Param<int>("max_array_size");
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
@@ -1436,6 +1541,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   if (plasma_diffusion) {
     const Real max_diffusion_rate = ionization_params.Get<Real>("max_diffusion_rate");
     dt_diffusion = 0.5 * cfl / (max_diffusion_rate + 1e-30);
+    // printf("dt_diffusion = %12.5e\n", dt_diffusion);
   }
 
   return std::min({dt_conduction, dt_viscosity, dt_diffusion});
@@ -1629,68 +1735,118 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
   return TaskStatus::complete;
 } // ComputeViscousFluxes
 
-// Compute fluxes to density, momentum and energy from plasma diffusion
-TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
+KOKKOS_INLINE_FUNCTION
+Real MaxDiffusionEigenvalue(const Real *K, const int n, const int max_iter = 100,
+                            const Real tol = 1e-8) {
+
+  constexpr int MAX_N = 5 * MAX_MATERIALS;
+  Real x[MAX_N], y[MAX_N];
+
+  // Nonuniform initial vector to avoid the barycentric null mode.
+  Real norm = 0.0;
+  for (int i = 0; i < n; ++i) {
+    x[i] = 1.0 + static_cast<Real>(i) / n;
+    norm += x[i] * x[i];
+  }
+
+  norm = sqrt(norm);
+  for (int i = 0; i < n; ++i)
+    x[i] /= norm;
+
+  Real lambda_old = 0.0;
+
+  for (int iter = 0; iter < max_iter; ++iter) {
+    for (int i = 0; i < n; ++i) {
+      y[i] = 0.0;
+      for (int j = 0; j < n; ++j) {
+        y[i] += K[i * n + j] * x[j];
+      }
+    }
+
+    Real ynorm = 0.0;
+    for (int i = 0; i < n; ++i)
+      ynorm += y[i] * y[i];
+    ynorm = sqrt(ynorm);
+
+    if (ynorm < 1e-300) return 0.0;
+
+    for (int i = 0; i < n; ++i)
+      x[i] = y[i] / ynorm;
+
+    // Rayleigh quotient.
+    Real lambda = 0.0;
+    for (int i = 0; i < n; ++i) {
+      Real Kx = 0.0;
+      for (int j = 0; j < n; ++j) {
+        Kx += K[i * n + j] * x[j];
+      }
+      lambda += x[i] * Kx;
+    }
+
+    if (iter > 0 && fabs(lambda - lambda_old) < tol * (fabs(lambda) + 1e-30)) {
+      return lambda;
+    }
+
+    lambda_old = lambda;
+  }
+
+  return lambda_old;
+}
+
+void ComputePlasmaDiffusionFluxesStefanMaxwell(MeshData<Real> *md) {
+  using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+  using parthenon::batched_linear_algebra::matrix_wrapper_t;
+  using parthenon::batched_linear_algebra::QRDecomposition;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
-
   auto pm = md->GetParentPointer();
-
   auto &ionization_pkg = pm->packages.Get("ionization");
   auto &ionization_params = ionization_pkg->AllParams();
-
-  const bool plasma_diffusion = ionization_params.Get<bool>("plasma_diffusion");
-  if (!plasma_diffusion) return TaskStatus::complete;
-
-  const Real diffusion_coefficient =
-      ionization_params.Get<Real>("ion_diffusion_coefficient");
-  const std::string ion_diffusion_model =
-      options->Param<std::string>("ion_diffusion_model");
-  const PlasmaDiffusionModel diffusion_model =
-      PlasmaDiffusionEnumFromString(ion_diffusion_model);
-  const Real zbar_floor = options->Param<Real>("zbar_floor");
-  const Real ion_number_density_floor = options->Param<Real>("ion_number_density_floor");
-
   auto &materials = pm->packages.Get("materials");
+  const auto num_iso_per_mat =
+      materials->Param<parthenon::ParArray1D<int>>("num_iso_per_mat");
   const auto &ion_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
-  const int max_array_size = materials->Param<int>("max_array_size");
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  const Real zbar_floor = ionization_params.Get<Real>("zbar_floor");
+  const Real ion_number_density_floor =
+      ionization_params.Get<Real>("ion_number_density_floor");
+  const Real diffusion_coefficient =
+      ionization_params.Get<Real>("ion_diffusion_coefficient");
+  const auto diffusion_model = PlasmaDiffusionEnumFromString(
+      ionization_params.Get<std::string>("ion_diffusion_model"));
+  const bool constant_diffusion = (diffusion_model == PlasmaDiffusionModel::Constant);
 
-  auto num_iso_per_mat = materials->Param<parthenon::ParArray1D<int>>("num_iso_per_mat");
-
-  // full list of material IDs that have isotopes
-  // The full name of the isotope variable (exact string Parthenon uses)
-  std::string iso_name = ccmat::iso::name(); // "c.c.mat.iso"
-
-  // pack up fields
   std::set<parthenon::PDOpt> opts = {parthenon::PDOpt::WithFluxes};
-  auto v =
-      riot::MakePack<cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccbulk::rho,
-                     ccbulk::electron_temperature, ccbulk::temperature,
-                     cm::ionization_zbar, ccmat::volume_fraction,
-                     ccbulk::electron_number_density, ccmat::internal_energy, ccmat::iso,
-                     cm::iso, ccbulk::pressure, ccbulk::total_material_energy>(
-          md, std::vector<int>{}, opts);
+  auto v = riot::MakePack<ccmat::rho, ccmat::iso, ccmat::volume_fraction,
+                          ccmat::internal_energy, ccbulk::pressure, ccbulk::temperature,
+                          ccbulk::total_material_energy, ccbulk::electron_temperature,
+                          ccbulk::electron_number_density, ccbulk::knudsen_number,
+                          cm::ionization_zbar, cm::iso_ionization_zbar>(
+      md, std::vector<int>{}, opts);
   const int nblocks = v.GetNBlocks();
   const int ndim = pm->ndim;
+  if (nblocks == 0) return;
+  using TE = parthenon::TopologicalElement;
+  using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, 0, nblocks, md, TE::NN);
+  const auto di = idx_space.GetDelta(X1DIR);
+  const auto dj = idx_space.GetDelta(X2DIR);
+  const auto dk = idx_space.GetDelta(X3DIR);
+  constexpr int MAX_DIFFUSION_SPECIES = 5 * MAX_MATERIALS;
+  constexpr bool use_gradP_limiter_in_timestep = true;
+  constexpr bool eigensystem_timestep_estimate = false;
 
-  // don't launch kernel if there are no blocks
-  if (nblocks == 0) return TaskStatus::complete;
-
-  // pull isotope information
+  // Pull isotope information.
   const auto &iso_zaids =
       materials->Param<std::vector<std::vector<int>>>("Isotope Zaids");
-
-  // total number of isotopes (don't we have this somewhere??)
   int total_niso = 0;
   for (const auto &mat_zaids : iso_zaids) {
     total_niso += mat_zaids.size();
   }
-
-  // make a device-save Z and A array
+  // TODO: initialize isotope A/Z through a device-safe host-mirror copy.
   parthenon::ParArray1D<Real> iso_A("isotope A", total_niso);
   parthenon::ParArray1D<Real> iso_Z("isotope Z", total_niso);
   int iso_idx = 0;
@@ -1702,186 +1858,444 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
     }
   }
 
-  // using lt = RiotUtils::LoopType<>;
-  using TE = parthenon::TopologicalElement;
-  using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
-  const int nhalo = 0;
-  // Use the NN logical range so one loop covers all three face orientations.
-  // This deliberately computes an extra transverse face layer for each orientation.
-  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, TE::NN);
-
-  // add scratch for diffusion coefficient, max diffusion coefficient, mole fraction
-  idx_space.template AddPerPointScratch<Real, diffusion_halo_t>(3);
-
-  // The offset type follows the inner-loop indexing model.
-  const auto di = idx_space.GetDelta(X1DIR);
-  const auto dj = idx_space.GetDelta(X2DIR);
-  const auto dk = idx_space.GetDelta(X3DIR);
-
   std::array<int, 4> deltas{0, di, dj, dk};
-
-  // X1 fluxes
-  // RiotLoop::outer(
-  //     idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-  auto max_diffusion_rate = RiotLoop::outer_reduce(
+  constexpr Real mass_fraction_floor = 1e-300;
+  constexpr Real diagnostic_Y_floor = 1e-6;
+  const Real max_diffusion_rate = RiotLoop::outer_reduce(
       idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
-        const auto halo_range = AddHalo<diffusion_halo_t>(idx_range);
-        auto d = RiotLoop::GetPerPointScratch<Real>(halo_range);
-        auto ratemax = RiotLoop::GetPerPointScratch<Real>(halo_range);
-
-        // zero ratemax
-        RiotLoop::inner(halo_range, [&](const auto kji) { ratemax(kji) = 0.; });
-
         auto &coords = v.GetCoordinates(b);
-
-        // EOS map
         const int nmat = v.GetSize(b, ccmat::rho());
         std::array<int, MAX_MATERIALS> eos_map;
         RiotEOS::FillEosMap<ccmat::rho>(v, b, nmat, eos_from_matid, nphase, eos_map);
 
-        // compute diffusion coefficient
+        // Effective species list:
+        //   material with isotopes -> each isotope is a species
+        //   material without isotopes -> whole material is one species
+        std::array<int, MAX_DIFFUSION_SPECIES> species_mat;
+        std::array<int, MAX_DIFFUSION_SPECIES> species_iso;
+        std::array<Real, MAX_DIFFUSION_SPECIES> species_A;
+        std::array<Real, MAX_DIFFUSION_SPECIES> species_Z;
+        std::array<Real, MAX_DIFFUSION_SPECIES> species_mass;
+        std::array<Real, MAX_DIFFUSION_SPECIES> species_mass_inv;
+        int nspecies = 0;
         int offset_iso = 0;
         for (int m = 0; m < nmat; ++m) {
-          // zero d
-          RiotLoop::inner(halo_range, [&](const auto kji) { d(kji) = 0.; });
-          idx_range.TeamBarrier();
-
-          int global_mat_id = v(b, ccmat::rho(m)).sparse_id;
-          const int niso =
-              num_iso_per_mat(global_mat_id); // does the material have isotopes?
-
-          auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
-          auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
-          auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
-
+          const int mat_id = v(b, ccmat::rho(m)).sparse_id;
+          const int niso = num_iso_per_mat(mat_id);
           if (niso > 0) {
-            for (int iso = 0; iso < niso; iso++) {
+            for (int iso = 0; iso < niso; ++iso) {
               const int iso_idx = offset_iso + iso;
-              auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
-
-              // iso A and Z
-              const int A1 = iso_A(iso_idx); // to use when we have proper diffusivities
-              const int Z1 = iso_Z(iso_idx); // to use when we have proper diffusivities
-
-              // calculate mole fraction for this isotope
-              auto mole_fraction = RiotLoop::GetPerPointScratch<Real>(halo_range);
-              RiotLoop::inner(halo_range, [&](const auto kji) {
-                // iso mole fraction within material
-                Real mat_sum = 0.0;
-                for (int iso2 = 0; iso2 < niso; iso2++) {
-                  const int iso2_idx = offset_iso + iso2;
-                  auto iso2rho =
-                      RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso2_idx));
-                  const int A2 =
-                      iso_A(iso2_idx); // to use when we have proper diffusivities
-                  const int x = iso2rho(kji) / (rhom(kji) + 1e-30); // mass fraction
-                  mat_sum += x / A2;                                // mole fraction sum
-                }
-                const int x = isorho(kji) / (rhom(kji) + 1e-30); // mass fraction
-                mole_fraction(kji) = x / A1 / (mat_sum + 1e-20); // mole fraction
-              });
-
-              // calculate isotopic diffusion coefficient and diffusion rate (used for
-              // setting time step)
-              RiotLoop::inner(halo_range, [&](const auto kji) {
-                const int A = iso_A(iso_idx); // to use when we have proper diffusivities
-                const int Z = iso_Z(iso_idx); // to use when we have proper diffusivities
-                d(kji) += diffusion_coefficient * isorho(kji);
-                ratemax(kji) = std::max(ratemax(kji), d(kji));
-              });
-              idx_range.TeamBarrier();
-
-              // calculate fluxes to add in
-              for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
-                auto dl = deltas[DIR];
-                auto flx_rhom =
-                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
-                auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
-                                                      ccbulk::total_material_energy());
-                auto flx_iso =
-                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso_idx));
-                auto isorho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso_idx));
-                RiotLoop::inner(idx_range, [&](const auto kji) {
-                  const auto [k, j, i] = idx_range.GetKJI(kji);
-                  const Real dxinv = 1.0 / (coords.Dxc(DIR, k, j, i) + 1e-20);
-                  const Real J = -0.5 * (d(kji - dl) + d(kji)) *
-                                 (isorho(kji) - isorho(kji - dl)) * dxinv;
-                  const Real face_rhom = 0.5 * (isorho(kji - dl) + isorho(kji));
-
-                  const Real ph = fv(kji) * mole_fraction(kji) * pres(kji);
-                  const Real phm =
-                      fv(kji - dj) * mole_fraction(kji - dj) * pres(kji - dj);
-
-                  Real face_specific_enthalpy = 0.5 *
-                                                (isorho(kji - dl) * Em(kji - dl) +
-                                                 isorho(kji) * Em(kji) + phm + ph) /
-                                                (face_rhom + 1e-20);
-                  face_specific_enthalpy *= (face_rhom > 1e-10);
-
-                  flx_iso(kji) += J;
-                  flx_rhom(kji) += J;
-                  flx_E(kji) += J * face_specific_enthalpy;
-                }); // inner loop
-                idx_range.TeamBarrier();
-              } // direction loop
-            } // isotope loop
-          } else { // no isotopic information - just compute material mass flux
-
-            // calculate material diffusion coefficient and diffusion rate (used for
-            // setting time step)
-            RiotLoop::inner(halo_range, [&](const auto kji) {
-              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-              d(kji) += diffusion_coefficient * rhom(kji);
-              ratemax(kji) = std::max(ratemax(kji), d(kji));
-            });
-            idx_range.TeamBarrier();
-
-            // calculate fluxes to add in
-            for (int DIR = X1DIR; DIR < X1DIR + ndim; DIR++) {
-              auto dl = deltas[DIR];
-              auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
-              auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
-                                                    ccbulk::total_material_energy());
-              RiotLoop::inner(idx_range, [&](const auto kji) {
-                const auto [k, j, i] = idx_range.GetKJI(kji);
-                const Real dxinv = 1.0 / (coords.Dxc(X1DIR, k, j, i) + 1e-20);
-                const Real J =
-                    -0.5 * (d(kji - dj) + d(kji)) * (rhom(kji) - rhom(kji - dl)) * dxinv;
-                const Real face_rhom = 0.5 * (rhom(kji - dl) + rhom(kji));
-                Real face_specific_enthalpy =
-                    0.5 *
-                    (rhom(kji - dl) * Em(kji - dl) + rhom(kji) * Em(kji) +
-                     fv(kji - dl) * pres(kji - dl) + fv(kji) * pres(kji)) /
-                    (face_rhom + 1e-20);
-                face_specific_enthalpy *= (face_rhom > 1e-10);
-
-                flx_rhom(kji) += J;
-                flx_E(kji) += J * face_specific_enthalpy;
-              }); // inner loop
-            } // direction loop
-
-          } // isotopes or not
-
+              species_mat[nspecies] = m;
+              species_iso[nspecies] = iso_idx;
+              species_A[nspecies] = iso_A(iso_idx);
+              species_Z[nspecies] = iso_Z(iso_idx); // nuclear charge (fixed)
+              species_mass[nspecies] = iso_A(iso_idx) * unit_system::amu;
+              species_mass_inv[nspecies] = 1.0 / (species_mass[nspecies] + 1e-30);
+              ++nspecies;
+            }
+          } else {
+            species_mat[nspecies] = m;
+            species_iso[nspecies] = -1;
+            species_A[nspecies] = ion_eos(eos_map[m]).MeanAtomicMass();
+            species_Z[nspecies] =
+                ion_eos(eos_map[m]).MeanAtomicNumber(); // nuclear charge (fixed)
+            species_mass[nspecies] =
+                ion_eos(eos_map[m]).MeanAtomicMass() * unit_system::amu;
+            species_mass_inv[nspecies] = 1.0 / (species_mass[nspecies] + 1e-30);
+            ++nspecies;
+          }
           offset_iso += niso;
-        } // materials loop
+        }
 
-        // reduction on rate for setting stable time step limit
+        auto ccbulk_ne =
+            RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
+        auto tion = RiotLoop::make_var_view(idx_range, v, ccbulk::temperature());
+        auto tele = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_temperature());
+        auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
+        auto knudsen_number =
+            RiotLoop::make_var_view(idx_range, v, ccbulk::knudsen_number());
+
+        // One inner reduction over cells.
         RiotLoop::inner_reduce(idx_range, [&](const auto kji, Real &max_rate) {
           const auto [k, j, i] = idx_range.GetKJI(kji);
-          Real rate = 0.0;
-          for (int dir = 0; dir < ndim; ++dir) {
-            const Real dx = coords.Dxc(dir + 1, k, j, i);
-            rate += ratemax(kji) / (dx * dx);
-          }
-          max_rate = std::max(max_rate, rate);
-        });
-      }); // outer loop
+          Real cell_rate = 0.0;
+          Real cell_kn_max = 0.0;
 
+          // One coupled Stefan-Maxwell solve per face direction.
+          for (int DIR = X1DIR; DIR < X1DIR + ndim; ++DIR) {
+            const auto dl = deltas[DIR];
+            const Real dx = coords.Dxc(DIR, k, j, i);
+            const Real dxinv = 1.0 / (dx + 1e-30);
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoLL, rhoL, rhoR, rhoRR;
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoF;
+            std::array<Real, MAX_DIFFUSION_SPECIES> YL{}, YR{};
+            // Compact list of species active at this face.
+            // summed collision frequencies
+            std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{};
+            // RHS and solution.
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhs{};
+            std::array<Real, MAX_DIFFUSION_SPECIES> mass_flux{};
+            // Gather species densities.
+            Real rhoTotF = 0.0;
+            Real nTotL = 0.0, nTotR = 0.0;
+            for (int s = 0; s < nspecies; ++s) {
+              const int m = species_mat[s];
+              const int iso = species_iso[s];
+              if (iso >= 0) {
+                auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
+                // Keep tiny negative isotope densities from
+                // contaminating the transport closure.
+                rhoLL[s] = std::max(rho(kji - 2 * dl), 0.0);
+                rhoL[s] = std::max(rho(kji - dl), 0.0);
+                rhoR[s] = std::max(rho(kji), 0.0);
+                rhoRR[s] = std::max(rho(kji + dl), 0.0);
+              } else {
+                auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+                rhoLL[s] = std::max(rho(kji - 2 * dl), 0.0);
+                rhoL[s] = std::max(rho(kji - dl), 0.0);
+                rhoR[s] = std::max(rho(kji), 0.0);
+                rhoRR[s] = std::max(rho(kji + dl), 0.0);
+              }
+              rhoF[s] = 0.5 * (rhoL[s] + rhoR[s]);
+              rhoTotF += rhoF[s];
+              nTotL += rhoL[s] * species_mass_inv[s];
+              nTotR += rhoR[s] * species_mass_inv[s];
+            }
+            for (int s = 0; s < nspecies; ++s) {
+              YL[s] = (rhoL[s] * species_mass_inv[s]) / (nTotL + 1e-30);
+              YR[s] = (rhoR[s] * species_mass_inv[s]) / (nTotR + 1e-30);
+            }
+
+            const Real PL = pres(kji - dl);
+            const Real PR = pres(kji);
+            int nactive = 0;
+            std::array<int, MAX_DIFFUSION_SPECIES> active_species;
+            std::array<Real, MAX_MATERIALS> nMatL{}, nMatR{};
+
+            if (constant_diffusion) {
+              // Constant Fickian diffusion for every species, including neutrals.
+              // mass_flux is indexed by the full species index in this branch.
+              for (int s = 0; s < nspecies; ++s) {
+                mass_flux[s] = -diffusion_coefficient * (rhoR[s] - rhoL[s]) * dxinv;
+                const int m = species_mat[s];
+                nMatL[m] += rhoL[s] * species_mass_inv[s];
+                nMatR[m] += rhoR[s] * species_mass_inv[s];
+              }
+              if (nspecies > 0) {
+                cell_rate += diffusion_coefficient / (dx * dx + 1e-30);
+              }
+            } else {
+              // Select charged species using their local face-averaged charge state.
+              std::array<Real, MAX_DIFFUSION_SPECIES> species_zbarF{};
+              for (int s = 0; s < nspecies; ++s) {
+                const int m = species_mat[s];
+                const int iso = species_iso[s];
+                Real zbarF;
+                if (iso >= 0) {
+                  auto zbar =
+                      RiotLoop::make_var_view(idx_range, v, cm::iso_ionization_zbar(iso));
+                  zbarF = 0.5 * (zbar(kji - dl) + zbar(kji));
+                } else {
+                  auto zbar =
+                      RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
+                  zbarF = 0.5 * (zbar(kji - dl) + zbar(kji));
+                }
+                species_zbarF[s] = std::max(0.0, std::min(zbarF, species_Z[s]));
+                if (rhoF[s] > rhoTotF * mass_fraction_floor &&
+                    species_zbarF[s] > zbar_floor) {
+                  active_species[nactive++] = s;
+                }
+              }
+              // No relative diffusion if fewer than two species
+              // are present.
+              if (nactive <= 1) {
+                continue;
+              }
+              // Wrap matrix backing storage for the active system.
+              //
+              // IMPORTANT: row stride is nactive here, because
+              // matrix_wrapper_t sees this as an nactive x nactive
+              // contiguous matrix.
+
+              // Allocate QR workspace only for the Stefan-Maxwell model.
+              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{};
+              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> Q_data{};
+              std::array<double,
+                         QRDecomposition::double_scratch_size(MAX_DIFFUSION_SPECIES)>
+                  qr_scratch{};
+              matrix_wrapper_t<Real> M(M_data.data(), nactive, nactive);
+              matrix_wrapper_t<Real> Q(Q_data.data(), nactive, nactive);
+
+              // Charged-ion subsystem: neutral species remain in the bulk EOS/hydro,
+              // but are excluded from this Coulomb-collision diffusion solve.
+              Real rhoCL = 0.0, rhoCR = 0.0;
+              Real nCLL = 0.0, nCL = 0.0, nCR = 0.0, nCRR = 0.0;
+              for (int a = 0; a < nactive; ++a) {
+                const int s = active_species[a];
+                rhoCL += rhoL[s];
+                rhoCR += rhoR[s];
+                nCLL += rhoLL[s] * species_mass_inv[s];
+                nCL += rhoL[s] * species_mass_inv[s];
+                nCR += rhoR[s] * species_mass_inv[s];
+                nCRR += rhoRR[s] * species_mass_inv[s];
+              }
+
+              // limited ion number density gradient
+              const Real nCF = 0.5 * (nCL + nCR);
+              const Real dnCm1 = (nCL - nCLL) * dxinv;
+              const Real dnC0 = (nCR - nCL) * dxinv;
+              const Real dnCp1 = (nCRR - nCR) * dxinv;
+              const Real gradnC = 0.5 * (RiotReconstruction::minmod(dnCm1, dnC0) +
+                                         RiotReconstruction::minmod(dnC0, dnCp1));
+              const Real invLn = fabs(gradnC) / (nCF + 1e-30);
+
+              const Real PCLL = nCLL * unit_system::kb * tion(kji - 2 * dl);
+              const Real PCL = nCL * unit_system::kb * tion(kji - dl);
+              const Real PCR = nCR * unit_system::kb * tion(kji);
+              const Real PCRR = nCRR * unit_system::kb * tion(kji + dl);
+              const Real PCF = 0.5 * (PCL + PCR);
+              const Real dPCm1 = (PCL - PCLL) * dxinv;
+              const Real dPC0 = (PCR - PCL) * dxinv;
+              const Real dPCp1 = (PCRR - PCR) * dxinv;
+              const Real gradPC = 0.5 * (RiotReconstruction::minmod(dPCm1, dPC0) +
+                                         RiotReconstruction::minmod(dPC0, dPCp1));
+              // unlimited centered gradPC
+              const Real gradPC_center = (PCR - PCL) * dxinv;
+              // effective limiter (used in time step estimate for linear perturbation of
+              // grad rho)
+              const Real thetaP = (fabs(gradPC_center) > 1e-12)
+                                      ? std::min(1.0, fabs(gradPC / gradPC_center))
+                                      : 1.0;
+
+              // limited ion temperature gradient
+              const Real TiLL = tion(kji - 2 * dl);
+              const Real TiL = tion(kji - dl);
+              const Real TiR = tion(kji);
+              const Real TiRR = tion(kji + dl);
+              const Real TiF = 0.5 * (TiL + TiR);
+              const Real dTim1 = (TiL - TiLL) * dxinv;
+              const Real dTi0 = (TiR - TiL) * dxinv;
+              const Real dTip1 = (TiRR - TiR) * dxinv;
+              const Real gradTi = 0.5 * (RiotReconstruction::minmod(dTim1, dTi0) +
+                                         RiotReconstruction::minmod(dTi0, dTip1));
+              const Real invLT = fabs(gradTi) / (TiF + 1e-30);
+
+              // Arrays are value-initialized; the active matrix is already zero.
+
+              // Build Stefan-Maxwell mass-flux matrix.
+              for (int a = 0; a < nactive; ++a) {
+                const int s = active_species[a];
+                const Real ns = rhoF[s] * species_mass_inv[s];
+                for (int bb = a + 1; bb < nactive; ++bb) {
+                  const int q = active_species[bb];
+                  const Real nq = rhoF[q] * species_mass_inv[q];
+                  const Real nu_sq = IonIonMomentumExchangeRate(
+                      tele(kji), tion(kji), ccbulk_ne(kji), ns, nq, species_mass[s],
+                      species_mass[q], species_zbarF[s], species_zbarF[q], zbar_floor,
+                      ion_number_density_floor);
+                  const Real lambda = rhoF[s] * nu_sq;
+                  M(a, a) += nu_sq;
+                  M(a, bb) -= lambda / (rhoF[q] + 1e-30);
+                  M(bb, bb) += lambda / (rhoF[q] + 1e-30);
+                  M(bb, a) -= nu_sq;
+                  // sum in collision frequencies
+                  nu_total[a] += nu_sq;                       // s collisions due to q
+                  nu_total[bb] += lambda / (rhoF[q] + 1e-30); // q collisions due to s
+                }
+                // Self collisions for Knudsen diagnostic and heuristic timestep
+                const Real nu_sq = IonIonMomentumExchangeRate(
+                    tele(kji), tion(kji), ccbulk_ne(kji), ns, ns, species_mass[s],
+                    species_mass[s], species_zbarF[s], species_zbarF[s], zbar_floor,
+                    ion_number_density_floor);
+                nu_total[a] += nu_sq;
+              }
+
+              // compute RHS and knudsen numbers
+              // This preserves sum_a rhs[a] = 0 (roundoff).
+              Real max_kn_face = 0.0;
+              Real D_est = 0.0;
+              for (int a = 0; a < nactive; ++a) {
+                const int s = active_species[a];
+                const Real YCL = rhoL[s] * species_mass_inv[s] / (nCL + 1e-30);
+                const Real YCR = rhoR[s] * species_mass_inv[s] / (nCR + 1e-30);
+                const Real XCL = rhoL[s] / (rhoCL + 1e-30);
+                const Real XCR = rhoR[s] / (rhoCR + 1e-30);
+                const Real gradYC = (YCR - YCL) * dxinv;
+                const Real YCF = 0.5 * (YCL + YCR);
+                const Real XCF = 0.5 * (XCL + XCR);
+                rhs[a] = -(PCF * gradYC + (YCF - XCF) * gradPC);
+
+                const Real vth = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
+                const Real mfp = vth / (nu_total[a] + 1e-300);
+                // Heuristic timestep estimate, including self-collisions.
+                D_est = std::max(D_est, unit_system::kb * TiF * species_mass_inv[s] /
+                                            (nu_total[a] + 1e-300));
+                const Real invLY =
+                    fabs(gradYC) /
+                    (YCF + 1e-30); // non-dimensional gradient of mole fraction
+
+                const Real kn_bulk = mfp * std::max(invLT, invLn);
+                const Real kn_comp = mfp * invLY;
+
+                const Real kn =
+                    (YCF > diagnostic_Y_floor) ? std::max(kn_bulk, kn_comp) : kn_bulk;
+
+                max_kn_face = std::max(max_kn_face, kn); // max face knudsen number
+              }
+              cell_kn_max = std::max(cell_kn_max, max_kn_face);
+
+              // Replace the minimum-norm friction row with a scaled
+              // barycentric constraint. For nactive >= 2, the largest row
+              // norm is also attained by a retained row (including ties).
+              int replace_row = 0;
+              Real min_row_norm = std::numeric_limits<Real>::max();
+              Real row_scale = 0.0;
+              for (int a = 0; a < nactive; ++a) {
+                Real row_norm = 0.0;
+                for (int bb = 0; bb < nactive; ++bb)
+                  row_norm += fabs(M(a, bb));
+                if (row_norm < min_row_norm) {
+                  min_row_norm = row_norm;
+                  replace_row = a;
+                }
+                row_scale = std::max(row_scale, row_norm);
+              }
+              for (int a = 0; a < nactive; ++a)
+                M(replace_row, a) = row_scale;
+              rhs[replace_row] = 0.0;
+
+              // QR decomposition; M_original = Q R. On return M contains R.
+              const int qr_status = QRDecomposition::execute(&M, &Q, qr_scratch.data());
+              if (qr_status != 0) {
+                PARTHENON_FAIL("Failed to factor plasma "
+                               "diffusion system");
+              }
+              // Solve R J = Q^T rhs.
+              const int solve_status = QRDecomposition::solve(M, Q, rhs, mass_flux);
+              if (solve_status != 0) {
+                PARTHENON_FAIL("Failed to solve plasma diffusion system");
+              }
+
+              // Frozen-T charged-ion diffusion matrix for all N species-density
+              // gradient modes. Reuse the existing QR factorization.
+              if (eigensystem_timestep_estimate) {
+                Real rhoCF = 0.0;
+                for (int a = 0; a < nactive; ++a)
+                  rhoCF += rhoF[active_species[a]];
+
+                std::array<Real, MAX_DIFFUSION_SPECIES> K_row_sum{};
+                std::array<Real, MAX_DIFFUSION_SPECIES> rhs_basis{}, J_basis{};
+                // Full N x N frozen-coefficient diffusion matrix.
+                // J = -K_rho grad(rho).
+                std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> K_data{};
+
+                for (int q = 0; q < nactive; ++q) {
+                  const int s_q = active_species[q];
+
+                  // Pressure response to grad(rho_q) = 1, all other gradients zero.
+                  // apply effective limiter for gradP
+                  const Real limiter = (use_gradP_limiter_in_timestep) ? thetaP : 1.0;
+                  const Real gradPC_basis = limiter * unit_system::kb * TiF * species_mass_inv[q];
+
+                  for (int a = 0; a < nactive; ++a) {
+                    const int s = active_species[a];
+                    const Real Ys = (rhoF[s] * species_mass_inv[s]) / (nCF + 1e-30);
+                    const Real Xs = rhoF[s] / (rhoCF + 1e-30);
+
+                    // Derivative of charged-ion mole fraction with respect to rho_q.
+                    const Real dYq =
+                        (((s == s_q) ? 1.0 * species_mass_inv[s] : 0.0) - Ys * species_mass_inv[q]) /
+                        (nCF + 1e-30);
+
+                    rhs_basis[a] = -(PCF * dYq + (Ys - Xs) * gradPC_basis);
+                    J_basis[a] = 0.0;
+                  }
+
+                  // The replacement row enforces sum_s J_s = 0.
+                  rhs_basis[replace_row] = 0.0;
+
+                  if (QRDecomposition::solve(M, Q, rhs_basis, J_basis) != 0) {
+                    PARTHENON_FAIL("Failed to solve plasma diffusion basis system");
+                  }
+
+                  // Accumulate absolute row sums of the full N x N diffusion matrix.
+                  for (int a = 0; a < nactive; ++a) {
+                    K_row_sum[a] += fabs(J_basis[a]);
+                    K_data[a * nactive + q] = -J_basis[a]; // full NxN diffusion matrix
+                  }
+                }
+
+                // max. eigenvalue of full NxN diffusion matrix
+                const Real lambda_max = MaxDiffusionEigenvalue(K_data.data(), nactive);
+                cell_rate += lambda_max / (dx * dx + 1e-30);
+
+              } else {
+                cell_rate += D_est / (dx * dx + 1e-30);
+              }
+
+            } // Stefan-Maxwell branch
+
+            // Scatter diffusion fluxes.
+            const int nflux = constant_diffusion ? nspecies : nactive;
+            for (int a = 0; a < nflux; ++a) {
+              const int s = constant_diffusion ? a : active_species[a];
+              const int m = species_mat[s];
+              const int iso = species_iso[s];
+              // Already the species mass flux.
+              const Real J = mass_flux[a];
+              // Isotope conserved flux.
+              if (iso >= 0) {
+                auto flx_iso =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso));
+                flx_iso(kji) += J;
+              }
+              // Parent-material density flux.
+              auto flx_rhom = RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+              flx_rhom(kji) += J;
+
+              // Energy carried by the diffusing species.
+              auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
+              auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
+              auto flx_E = RiotLoop::make_flux_view(idx_range, v, DIR,
+                                                    ccbulk::total_material_energy());
+              // For constant diffusion, use isotope mole fractions within
+              // their parent material, as in the original constant model.
+              Real yL = YL[s], yR = YR[s];
+              if (constant_diffusion) {
+                yL = rhoL[s] * species_mass_inv[s] / (nMatL[m] + 1e-30);
+                yR = rhoR[s] * species_mass_inv[s] / (nMatR[m] + 1e-30);
+              }
+              const Real pIsoL = fv(kji - dl) * yL * PL;
+              const Real pIsoR = fv(kji) * yR * PR;
+              Real hF = 0.0;
+              if (rhoF[s] > 1e-20) {
+                hF = 0.5 * (rhoL[s] * Em(kji - dl) + rhoR[s] * Em(kji) + pIsoL + pIsoR) /
+                     rhoF[s];
+              }
+              flx_E(kji) += J * hF;
+            }
+          } // DIR
+          knudsen_number(kji) = cell_kn_max;
+          // Max over all cells / blocks.
+          max_rate = std::max(max_rate, cell_rate);
+        }); // inner_reduce
+      });   // outer_reduce
   ionization_pkg->UpdateParam<Real>("max_diffusion_rate", max_diffusion_rate);
+}
+
+// Compute fluxes to density, momentum and energy from plasma diffusion
+TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  auto &ionization_pkg = pm->packages.Get("ionization");
+  auto &ionization_params = ionization_pkg->AllParams();
+  const bool plasma_diffusion = ionization_params.Get<bool>("plasma_diffusion");
+
+  if (!plasma_diffusion) return TaskStatus::complete;
+
+  ComputePlasmaDiffusionFluxesStefanMaxwell(md);
 
   return TaskStatus::complete;
-} // ComputeDiffusionFluxes
+} // ComputePlasmaDiffusionFluxes
 
 //----------------------------------------------------------------------------------------
 //! \fn  ElectronThermalConductivityModel
@@ -1944,8 +2358,8 @@ PlasmaViscosityModel PlasmaViscosityEnumFromString(const std::string &model) {
 PlasmaDiffusionModel PlasmaDiffusionEnumFromString(const std::string &model) {
   if (model == "constant") {
     return PlasmaDiffusionModel::Constant;
-  } else if (model == "fokker_planck_landau") {
-    return PlasmaDiffusionModel::FokkerPlanckLandau;
+  } else if (model == "stefan_maxwell") {
+    return PlasmaDiffusionModel::StefanMaxwell;
   } else {
     PARTHENON_FAIL("Invalid choice for ionization/plasma_diffusion_model");
   }
