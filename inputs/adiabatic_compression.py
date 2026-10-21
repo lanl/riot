@@ -123,7 +123,7 @@ def make_input():
         nlim=-1,
         tlim=tf,
         integrator="rk2",
-        ncycle_out=1,
+        ncycle_out=100,
     )
 
     riot.input(

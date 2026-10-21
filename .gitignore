@@ -45,9 +45,11 @@ script/.ipynb_checkpoints/
 .ipynb_checkpoints
 *.pyc
 __pycache__
+Untitled.ipynb
 
 # AI artifacts
 .aider.*
+.virtual_documents
 
 # test-based input deck artifacts
 inputs/adiabatic_compression.rin
@@ -55,6 +57,9 @@ inputs/bubble_source.dat
 
 # Ignore .rin input files (converted to .py)
 *.rin
+
+# Spiner files
+*.sp5
 
 # Prompt-spectrum problem: generated opacity table + its generator and reference data
 inputs/radiation_transport/prompt/make_prompt_opacity_table.py

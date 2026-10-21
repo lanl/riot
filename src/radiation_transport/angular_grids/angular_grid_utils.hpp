@@ -35,12 +35,13 @@ using namespace parthenon::package::prelude;
 //! classes but expose identically-named members; this bundle lets callers pull them in
 //! one shot regardless of which grid is active.
 struct AngularGridArrays {
-  ParArrayND<Real> cart_pos;     // coord position (cartesian) at face center
-  ParArrayND<Real> gflux;        // flux at face edges for 1D sph and 2D RZ
-  ParArrayND<Real> arc_weights;  // arc lengths / 4pi
-  ParArrayND<Real> weights;      // solid angles / 4pi
-  ParArrayND<int> num_neighbors; // number of neighbors
-  ParArrayND<int> ind_neighbors; // indices of neighbors
+  ParArrayND<Real> cart_pos;      // <n^i>_\Omega normal direction
+  ParArrayND<Real> cart_pos_unit; // true unit direction cosines at face center
+  ParArrayND<Real> gflux;         // flux at face edges for 1D sph and 2D RZ
+  ParArrayND<Real> arc_weights;   // arc lengths / 4pi
+  ParArrayND<Real> weights;       // solid angles / 4pi
+  ParArrayND<int> num_neighbors;  // number of neighbors
+  ParArrayND<int> ind_neighbors;  // indices of neighbors
 };
 
 //----------------------------------------------------------------------------------------
@@ -52,6 +53,7 @@ GetAngularGridArrays(const std::shared_ptr<StateDescriptor> &pkg) {
   auto bundle = [](const auto &agrid) {
     AngularGridArrays arrays;
     arrays.cart_pos = agrid->cart_pos;
+    arrays.cart_pos_unit = agrid->cart_pos_unit;
     arrays.gflux = agrid->gflux;
     arrays.arc_weights = agrid->arc_weights;
     arrays.weights = agrid->weights;

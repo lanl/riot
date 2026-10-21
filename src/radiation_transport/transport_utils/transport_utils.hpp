@@ -26,6 +26,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,7 @@
 #include <utils/error_checking.hpp>
 
 // Riot includes
+#include "microphysics/opacity_models.hpp"
 #include "radiation_transport/angular_grids/angular_grid_utils.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
@@ -130,6 +132,29 @@ struct UnitUtils {
   Real boltzmann = 0.0; // boltzmann's constant
   Real arad = 0.0;      // radiation constant
 };
+
+//----------------------------------------------------------------------------------------
+//! \fn Real MMOpacity
+//! \brief Evaluate one material's contribution to a mixed-cell opacity using the
+//! Amagat/homogeneous interpolation.
+template <typename Opacity>
+KOKKOS_INLINE_FUNCTION static Real
+MMOpacity(const Opacity &opac, const Real rm, const Real rbarm, const Real vfracm,
+          const Real temp, const int gg, const Real mix_frac) {
+  const Real wamg = (1.0 - mix_frac) * vfracm;
+  const Real whom = mix_frac;
+
+  Real opac_amg = 0.0;
+  Real opac_hom = 0.0;
+  if constexpr (std::is_same_v<Opacity, RiotOpacity::MeanOpacA>) {
+    if (wamg > 0.0) opac_amg = opac.AbsorptionCoefficient(rm, temp, gg);
+    if (whom > 0.0) opac_hom = opac.AbsorptionCoefficient(rbarm, temp, gg);
+  } else {
+    if (wamg > 0.0) opac_amg = opac.ScatteringCoefficient(rm, temp, gg);
+    if (whom > 0.0) opac_hom = opac.ScatteringCoefficient(rbarm, temp, gg);
+  }
+  return wamg * opac_amg + whom * opac_hom;
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real OpacityStencil
@@ -695,10 +720,10 @@ GetBoundaryPackDescriptorMap(std::shared_ptr<MeshBlockData<Real>> &rc) {
 //----------------------------------------------------------------------------------------
 //! \fn  void SetMomentsMesh
 //! \brief
-inline void SetMomentsMesh(MeshData<Real> *md) {
+inline void SetMomentsMesh(Mesh *pm, ParameterInput *pin, SimTime &tm) {
   namespace ccrad = cell_variables::cell_averaged::rad;
 
-  auto pm = md->GetParentPointer();
+  auto md = pm->mesh_data.Get().get();
   auto &resolved_pkgs = pm->resolved_packages;
   static auto desc =
       MakePackDescriptor<ccrad::intensity, ccrad::moments>(resolved_pkgs.get());

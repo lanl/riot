@@ -142,6 +142,7 @@ riot.input(
     "radiation_transport",
     do_explicit=False,  # enable explicit transport
     do_jacobi=True,  # enable implicit Jacobi solver (diffusion-dominated)
+    fv_fix=False,  # use centroid unit normals
     nlevel=1,  # level of geodesic mesh
     beta=5.0,  # parameter controlling tauc in Rusanov rad-flux
     coupling=True,  # flag to enable radiation source term
@@ -153,8 +154,7 @@ riot.input(
     "radiation_transport/jacobi",
     err_thr=1.0e-4,  # implicit residual threshold
     niter_limit=200,  # cap Jacobi iterations per step
-    dt_ratio_hyperbolic=5.0e4,  # timestep controller for multiple of hyperbolic dt
-    dt_ratio_lag=0.25,  # timestep controller for lagged opacities
+    dt_ratio_hyperbolic=1.0e4,  # timestep controller for multiple of hyperbolic dt
 )
 
 riot.input(

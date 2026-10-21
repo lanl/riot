@@ -151,15 +151,28 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
 //! \brief Construct the requested angular mesh (geodesic or latlon), store it and the
 //! "angular_mesh" selector, and return the number of angles.
 inline int AddAngularMesh(ParameterInput *pin, Params &params) {
+  // Angular resolution
+  const int nlevel = pin->GetOrAddInteger(
+      radiation_block, "nlevel", 1,
+      "Angular resolution: geodesic nangles = 10*nlevel^2 + 2; lat-lon "
+      "uses nangles = 2*nlevel in 1D spherical, 4*nlevel^2 in RZ, 8*nlevel^2 otherwise");
+  params.Add("nlevel", nlevel);
+
+  // Angular mesh
+  const std::string default_amesh =
+      (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+       parthenon::IsCoord<parthenon::UniformSpherical>())
+          ? "latlon"
+          : "geodesic";
   const std::string amesh =
-      pin->GetOrAddString(radiation_block, "angular_mesh", "geodesic",
+      pin->GetOrAddString(radiation_block, "angular_mesh", default_amesh,
                           "Choose which angular mesh to use for SN");
   params.Add("angular_mesh", amesh);
+  const bool fv_fix = pin->GetOrAddBoolean(
+      radiation_block, "fv_fix", true,
+      "Compute solid-angle-averaged (i.e., FV) unit normals on the angular mesh");
   int nangles = 0;
   if (amesh == "geodesic") {
-    const int nlevel = pin->GetOrAddInteger(
-        radiation_block, "nlevel", 1,
-        "For geodesic grid, set nlevel, where nangles=10*nlevel^2 + 2");
     const int rotate =
         pin->GetOrAddInteger(radiation_block, "rotate_geo", 1,
                              "0: do not rotate geodesic grid, 1: automatically rotate "
@@ -173,15 +186,11 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
         pin->GetOrAddReal(radiation_block, "ppole", qnan,
                           "Psi rotation angle for manual geodesic grid rotation");
     std::shared_ptr<GeodesicGrid> prgeo =
-        std::make_unique<GeodesicGrid>(nlevel, rotate, zpole, ppole);
+        std::make_unique<GeodesicGrid>(nlevel, rotate, zpole, ppole, fv_fix);
     params.Add("geodesic_grid", prgeo);
     nangles = prgeo->nangles;
   } else if (amesh == "latlon") {
-    const int ntheta = pin->GetOrAddInteger(radiation_block, "ntheta", 8,
-                                            "For latlon grid, number of latitude bins");
-    const int nphi = pin->GetOrAddInteger(radiation_block, "nphi", 16,
-                                          "For latlon grid, number of longitude bins");
-    std::shared_ptr<LatLonGrid> prlatlon = std::make_unique<LatLonGrid>(ntheta, nphi);
+    std::shared_ptr<LatLonGrid> prlatlon = std::make_unique<LatLonGrid>(nlevel, fv_fix);
     params.Add("latlon_grid", prlatlon);
     nangles = prlatlon->nangles;
   } else {
@@ -224,6 +233,38 @@ inline int AddGroupStructure(StateDescriptor *materials, Params &params) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn void AddMixFrac
+//! \brief Store the phenomenological opacity mixing parameter.  mix_frac in [0,1]
+//! interpolates the multi-material extinction coefficient between the Amagat closure
+//! (mix_frac = 0, each material at its intrinsic density rho_m weighted by its volume
+//! fraction f_m) and the homogeneous closure (mix_frac = 1, each material evaluated at
+//! the partial density f_m*rho_m).
+inline void AddMixFrac(ParameterInput *pin, Params &params) {
+  const Real mix_frac = pin->GetOrAddReal(
+      radiation_block, "mix_frac", 0.0,
+      "Phenomenological opacity mixing parameter in [0,1] interpolating between the "
+      "Amagat (0) and homogeneous (1) opacity closures");
+  PARTHENON_REQUIRE(mix_frac >= 0.0 && mix_frac <= 1.0, "mix_frac must be in [0,1]!");
+  params.Add("mix_frac", mix_frac);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void AddOpacFloors
+//! \brief Store the density/temperature floors applied to opacity evaluations.
+inline void AddOpacFloors(ParameterInput *pin, Params &params) {
+  const Real opac_rho_min =
+      pin->GetOrAddReal(radiation_block, "opac_rho_min", 0.0,
+                        "Density floor [g/cc] for opacity evaluations");
+  const Real opac_temp_min =
+      pin->GetOrAddReal(radiation_block, "opac_temp_min", 0.0,
+                        "Temperature floor [K] for opacity evaluations");
+  PARTHENON_REQUIRE(opac_rho_min >= 0.0, "opac_rho_min must be >= 0!");
+  PARTHENON_REQUIRE(opac_temp_min >= 0.0, "opac_temp_min must be >= 0!");
+  params.Add("opac_rho_min", opac_rho_min);
+  params.Add("opac_temp_min", opac_temp_min);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn void AddFixedPgenOpac
 //! \brief Store the flag that fixes opacities to the values set in the ProblemGenerator.
 inline void AddFixedPgenOpac(ParameterInput *pin, Params &params) {
@@ -251,6 +292,8 @@ inline SharedParams AddSharedParams(ParameterInput *pin, StateDescriptor *materi
   ConfigOption::AddUnitUtils(pin, params);
   const bool coupling = ConfigOption::AddCouplingParams(pin, params);
   ConfigOption::AddCouplingUtils(pin, params, coupling);
+  ConfigOption::AddMixFrac(pin, params);
+  ConfigOption::AddOpacFloors(pin, params);
   ConfigOption::AddFixedPgenOpac(pin, params);
   SharedParams shared;
   shared.nangles = ConfigOption::AddAngularMesh(pin, params);

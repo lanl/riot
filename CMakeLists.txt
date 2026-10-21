@@ -52,12 +52,21 @@ project(riot
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 
+# regression test reference data
+set(RIOT_REGRESSION_GOLD_VER 20260831 CACHE STRING "Version of gold standard to download and use")
+set(RIOT_REGRESSION_GOLD_HASH
+  "SHA512=72e523a69e98fa3d45a9c80542c10a0fb5b36f5d83e2c48516be12f9537ad6972f27d03ae1810fe6a0728b13bf8363ee1c33f0a4758a523af4e6f92a976ae0f7"
+  CACHE STRING "Hash of default gold standard file to download")
+option(RIOT_REGRESSION_GOLD_SYNC "Automatically sync gold standard files." ON)
+set(RIOT_REGRESSION_GOLD_LOCAL "" CACHE STRING
+  "Path to a pre-downloaded gold standard tarball. If set, it is used instead of \
+downloading from GitHub (e.g. fetched ahead of time on a login node with internet).")
+
 # TODO(JMM): Tests? Copy what's in riot? Hack something in?
 # TODO(JMM): Pgen?
 include(CTest)
 include(CMakeDependentOption)
 option(RIOT_ENABLE_UNIT_TESTS "Enable unit tests" OFF)
-option(RIOT_ENABLE_INTEGRATION_TESTS "Enable integration tests" OFF)
 option(RIOT_ENABLE_REGRESSION_TESTS "Enable regression tests" OFF)
 option(RIOT_ENABLE_CUDA "Enable cuda for riot and all dependencies" OFF)
 option(RIOT_ENABLE_HDF5 "Enable HDF5 for riot and all dependencies" ON)
@@ -196,6 +205,7 @@ add_compiler_flag_if_supported(-Wno-reorder CXX)
 add_compiler_flag_if_supported(-Wno-unused-function)
 add_compiler_flag_if_supported(-Wno-unknown-pragmas)
 add_compiler_flag_if_supported(-Wno-ps-abi)
+add_compiler_flag_if_supported(-Wno-tautological-constant-compare)
 if (RIOT_ENABLE_WARNINGS)
   add_compiler_flag_if_supported(-Wall)
 else()
@@ -408,15 +418,16 @@ else()
   add_subdirectory(src/plugin_stubs)
 endif()
 
-# TODO(JMM): Testing?
-if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_INTEGRATION_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
+if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
   message("\nConfiguring tests")
-  if(RIOT_BUILD_CATCH2)
-    add_subdirectory(external/Catch2 Catch2)
-    list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/external/Catch2/extras)
-  else()
-    find_package(Catch2 REQUIRED)
-  endif()
-  enable_testing()
+  if (RIOT_ENABLE_UNIT_TESTS)
+    if(RIOT_BUILD_CATCH2)
+      add_subdirectory(external/Catch2 Catch2)
+      list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/external/Catch2/extras)
+    else()
+      find_package(Catch2 REQUIRED)
+    endif()
+    enable_testing()
+    endif()
   add_subdirectory(tst)
 endif()

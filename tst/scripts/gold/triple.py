@@ -27,7 +27,9 @@ sparse = False
 nranks = 1
 # JMM: M2 Max seems to disagree with all other architectures at 1.15e-12
 # PDM: Move to reconstructing material internal energy increments tol to 2.0e-11
-diff_tol = 2.0e-11
+# JMM: Rocinante appears to be a sufficiently different arch that
+# tolerances need to be loosened again
+diff_tol = 1.0e-10
 
 
 # Run riot
