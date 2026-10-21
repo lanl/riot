@@ -32,11 +32,30 @@
 namespace Ionization {
 using namespace parthenon::package::prelude;
 
+// NN plus one cell in each negative direction:
+//
+//   {(-1,0,0), (0,-1,0), (0,0,-1), (0,0,0)}
+//
+// Halo offsets must be sorted lexicographically in (dk, dj, di).
+struct diffusion_halo_t {
+  static constexpr int npoints = 4;
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int dk(const int n) { return n == 0 ? -1 : 0; }
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int dj(const int n) { return n == 1 ? -1 : 0; }
+
+  KOKKOS_INLINE_FUNCTION
+  static constexpr int di(const int n) { return n == 2 ? -1 : 0; }
+};
+
 ElectronThermalConductivityModel
 ElectronConductivityModelEnumFromString(const std::string &model);
 IonThermalConductivityModel IonConductivityModelEnumFromString(const std::string &model);
 CoulombLogarithmKind ParseCoulombLogarithmKind(std::string coulomb_logarithm);
 PlasmaViscosityModel PlasmaViscosityEnumFromString(const std::string &model);
+PlasmaDiffusionModel PlasmaDiffusionEnumFromString(const std::string &model);
 
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
 TaskStatus CalculateElectronPDVWork(MeshData<Real> *u0, MeshData<Real> *dudt);
@@ -361,9 +380,35 @@ KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
   }
 }
 
+template <std::size_t MAX_N>
+KOKKOS_INLINE_FUNCTION void PrintMatrix(const std::array<Real, MAX_N * MAX_N> &A,
+                                        const int n) {
+  Kokkos::printf("Matrix (%d x %d):\n", n, n);
+
+  for (int i = 0; i < n; ++i) {
+    Kokkos::printf("[ ");
+
+    for (int j = 0; j < n; ++j) {
+      Kokkos::printf("%12.5e ", A[i * MAX_N + j]);
+    }
+
+    Kokkos::printf("]\n");
+  }
+}
+
+constexpr int MAX_N = 20;
+bool SolveSmallDenseSystem(std::array<Real, MAX_N * MAX_N> &A, std::array<Real, MAX_N> &b,
+                           std::array<Real, MAX_N> &x, const int n);
 TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md);
+TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md);
+void ComputePlasmaDiffusionFluxesConstantCoefficient(MeshData<Real> *md);
+void ComputePlasmaDiffusionFluxesStefanMaxwell(MeshData<Real> *md);
 void FillDerivedIonization(MeshData<Real> *md);
 void CalculatePlasmaViscosity(MeshData<Real> *md);
+
+KOKKOS_INLINE_FUNCTION
+Real MaxDiffusionEigenvalue(const Real *K, const int n, const int max_iter,
+                            const Real tol);
 
 } // namespace Ionization
 

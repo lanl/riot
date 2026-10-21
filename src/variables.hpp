@@ -122,6 +122,7 @@ VARIABLE_SCALAR(c.c.bulk, rho_bhr_ST, false);
 VARIABLE_SCALAR(c.c.bulk, rho_bhr_SD, false);
 VARIABLE_SCALAR(c.c.bulk, electron_thermal_conductivity_face, false);
 VARIABLE_SCALAR(c.c.bulk, ion_shear_viscosity, false);
+VARIABLE_SCALAR(c.c.bulk, knudsen_number, false);
 VARIABLE_SCALAR(c.c, cell_delta, false);
 VARIABLE_SCALAR(c.c.bulk, laser_deposition, false);
 VARIABLE_SCALAR(c.c.bulk, laser_energy_density, false);
@@ -139,6 +140,7 @@ VARIABLE_SCALAR(c.c.mat, tn_reaction_density, true);
 VARIABLE_VECTOR(c.c.mat, deviatoric_stress, true, 5);
 VARIABLE_SCALAR(c.c.mat, equivalent_plastic_strain, true);
 VARIABLE_SCALAR(c.c.mat, ionization_zbar, true);
+VARIABLE_SCALAR(c.c.mat, iso_ionization_zbar, true);
 VARIABLE_SCALAR(c.c.mat, electron_internal_energy, true);
 } // namespace mat
 
@@ -185,6 +187,7 @@ VARIABLE_SCALAR(c.m, shear_modulus, true);
 VARIABLE_SCALAR(c.m, strength_j2, true);
 VARIABLE_SCALAR(c.m, tn_specific_reactions, true);
 VARIABLE_SCALAR(c.m, ionization_zbar, true);
+VARIABLE_SCALAR(c.m, iso_ionization_zbar, true);
 // JMM: Used for initial guesses for EOS root finding.
 VARIABLE_SCALAR(c.m, lT_cache, true);
 VARIABLE_SCALAR(c.m, lr_cache, true);

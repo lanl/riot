@@ -241,7 +241,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto phase_rho_sum = SparsePool::Make<ccmat::phase_rho_sum>(m, control_field);
 
   // Isotopes
-  // TODO(JMM): Should these be defined in the tnburn package?
   m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
                 Metadata::Conserved, Metadata::Sparse, Metadata::FillGhost,
                 Metadata::WithFluxes, Metadata::Advected, BurnFlag});
@@ -255,16 +254,31 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   auto iso = SparsePool::Make<cm::iso>(m, control_field);
 
-  // Ionization State
+  // Isotopic Ionization State
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::WithFluxes,
-                Metadata::Advected, Metadata::Independent});
+                Metadata::Advected, Metadata::Independent, BurnFlag});
+  m.SetSparseThresholds(0.0, 0.0, 0.0);
+  m.Associate(cm::iso_ionization_zbar::name());
+  auto ccmat_iso_ionization_zbar =
+      SparsePool::Make<ccmat::iso_ionization_zbar>(m, control_field);
+
+  // Material-volume-averaged Isotopic Ionization State
+  m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::OneCopy, Metadata::Derived,
+                Metadata::FillGhost, BurnFlag});
+  m.SetSparseThresholds(0.0, 0.0, 0.0);
+  auto cm_iso_ionization_zbar =
+      SparsePool::Make<cm::iso_ionization_zbar>(m, control_field);
+
+  // Material Ionization State
+  m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::WithFluxes,
+                Metadata::Advected, Metadata::Independent, BurnFlag});
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   m.Associate(cm::ionization_zbar::name());
   auto ccmat_ionization_zbar = SparsePool::Make<ccmat::ionization_zbar>(m, control_field);
 
-  // Material-volume-averaged Ionization State
+  // Material-volume-averaged Material Ionization State
   m = Metadata({Metadata::Cell, Metadata::Sparse, Metadata::OneCopy, Metadata::Derived,
-                Metadata::FillGhost});
+                Metadata::FillGhost, BurnFlag});
   m.SetSparseThresholds(0.0, 0.0, 0.0);
   auto cm_ionization_zbar = SparsePool::Make<cm::ionization_zbar>(m, control_field);
 
@@ -461,6 +475,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     if (niso > 0) {
       std::vector<int> shape(1, niso);
       AddMatId(matid, shape, mat_iso, iso);
+      if (do_ionization) {
+        AddMatId(matid, shape, ccmat_iso_ionization_zbar, cm_iso_ionization_zbar);
+      }
     }
 
     num_iso_per_mat.push_back(niso);
@@ -768,7 +785,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
            cm_rho, cm_sie, cm_temperature, cm_pressure, cm_bulk_modulus, cm_cv,
            mat_stress, stress, mat_eps, eps, gmod, strength_j2, mat_iso, iso,
            phase_rho_sum, phase_fraction, ccmat_ionization_zbar, cm_ionization_zbar,
-           cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache);
+           cm_ue, cm_sie_e, cm_lr_cache, cm_lT_cache, ccmat_iso_ionization_zbar,
+           cm_iso_ionization_zbar);
 
   // Instantiate device ParArray1D of EOS and Opacity objects, setup PTE list vector
   const int num_eos = eos_host.size();
@@ -1005,7 +1023,64 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("pte_stats_avg_fields", pte_stats_avg_fields);
   params.Add("pte_stats_reset_fields", pte_stats_reset_fields);
 
+  materials->FillDerivedMesh = MaterialsFillDerived;
+
   return materials;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void Materials::MaterialsFillDerived
+//! \brief
+void MaterialsFillDerived(MeshData<Real> *md) {
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace cm = cell_variables::material_averaged;
+  using parthenon::ParArray1D;
+
+  Mesh *pm = md->GetMeshPointer();
+
+  auto &materials = pm->packages.Get("materials");
+  const int max_array_size = materials->Param<int>("max_array_size");
+  PARTHENON_REQUIRE(max_array_size <= RiotLimits::MAX_MATERIALS,
+                    "Number of materials exceeds MAX_MATERIALS compile-time limit");
+
+  auto pmb = md->GetBlockData(0)->GetBlockPointer();
+  auto const &hydro = pmb->packages.Get("hydro");
+  const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
+
+  auto v = riot::MakePack<ccmat::rho, ccmat::iso, cm::iso, ccmat::volume_fraction>(md);
+
+  const int nblocks = md->NumBlocks();
+  if (nblocks == 0) return;
+
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, md,
+                                     parthenon::TopologicalElement::CC);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        // sparse_id -> dense material index; identical for every cell of the block, so
+        // it lives on the stack (bounded by MAX_MATERIALS) rather than in team scratch.
+        std::array<int, RiotLimits::MAX_MATERIALS> mat_map;
+        const int nmat = v.GetSize(b, ccmat::rho());
+        const int niso = v.GetSize(b, ccmat::iso());
+
+        for (int m = 0; m < nmat; m++) {
+          const int sparse_id = v(b, ccmat::rho(m)).sparse_id;
+          mat_map[sparse_id] = m;
+        }
+
+        // Fill in isotopic information
+        for (int iso = 0; iso < niso; iso++) {
+          const int m = mat_map[v(b, ccmat::iso(iso)).sparse_id];
+          auto cons = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
+          auto prim = RiotLoop::make_var_view(idx_range, v, cm::iso(iso));
+          auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
+          RiotLoop::inner(idx_range, [&](const auto kji) {
+            cons(kji) = (fv(kji) < vol_frac_thresh) ? 0.0 : cons(kji);
+            prim(kji) = cons(kji) / (rho(kji) + 1e-20);
+          });
+        }
+      });
 }
 
 int CountMaterials(ParameterInput *pin) {
