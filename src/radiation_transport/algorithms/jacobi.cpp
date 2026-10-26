@@ -276,9 +276,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
 
   // Jacobi iterate, which holds the previous intensity between solves and is carried
   // through remeshing for the extrapolated initial guess
-  Metadata mr = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy,
-                          MetadataOperatorSplit},
-                         std::vector<int>({ngroups * nangles}));
+  Metadata mr = Metadata(
+      {Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataOperatorSplit},
+      std::vector<int>({ngroups * nangles}));
   if (params.Get<bool>("extrapolate_guess")) {
     mr.Set(Metadata::ForceRemeshComm);
     mr.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
@@ -576,8 +576,8 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt,
         (dt_ratio > 0.0)
             ? tl.AddTask(TaskQualifier::local_sync, base_bc, ExtrapolateIterate,
                          rbase.get(), riter.get(), dt_ratio)
-            : tl.AddTask(TaskQualifier::local_sync, base_bc, CopyToIterate,
-                         rbase.get(), riter.get());
+            : tl.AddTask(TaskQualifier::local_sync, base_bc, CopyToIterate, rbase.get(),
+                         riter.get());
 
     // Execute Jacobi iterations
     auto [solver, solver_id] = tl.AddSublist(init_iter, {1, max_iters});
