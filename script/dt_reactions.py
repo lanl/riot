@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-#========================================================================================
+# ========================================================================================
 # (C) (or copyright) 2026-2026. Triad National Security, LLC. All rights reserved.
 #
 # This program was produced under U.S. Government contract 89233218CNA000001 for Los
@@ -10,7 +10,7 @@
 # itself and others acting on its behalf a nonexclusive, paid-up, irrevocable worldwide
 # license in this material to reproduce, prepare derivative works, distribute copies to
 # the public, perform publicly and display publicly, and to permit others to do so.
-#========================================================================================
+# ========================================================================================
 
 """D + T -> n + alpha: equal-temperature Maxwellian averages.
 
@@ -27,7 +27,7 @@ The cross section is the Bosch-Hale D-T fit:
 H.-S. Bosch & G.M. Hale, Nuclear Fusion 32 (1992) 611.
 https://doi.org/10.1088/0029-5515/32/4/I07
 Coefficients taken from the reference implementation
-Higginson, Link, and Schmidti, J Comp Phys. 388, 439 (2019)
+Higginson, Link, and Schmidt, J Comp Phys. 388, 439 (2019)
 https://doi.org/10.1016/j.jcp.2019.03.020
 implemented here
 https://github.com/llnl/pyPICfusion/blob/master/_BoschHale_library.py
