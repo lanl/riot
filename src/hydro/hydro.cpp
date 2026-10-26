@@ -134,6 +134,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     PARTHENON_THROW("Invalid Riemann solver option");
   }
 
+  // Blend chllc/lhllc toward HLL on faces parallel to shocks and density fronts
+  const bool hll_blend = pin->GetOrAddBoolean(
+      "hydro", "hll_blend", false,
+      "Blend chllc/lhllc toward HLL on faces parallel to shocks and density fronts "
+      "(carbuncle and grid-aligned odd-even cure)");
+  params.Add("hll_blend", hll_blend);
+
   // Thornber's low-Mach correction
   bool lm_correction =
       pin->GetOrAddBoolean("hydro", "lm_correction", false,
@@ -228,6 +235,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
         {Metadata::Cell, Metadata::Intensive, Metadata::Derived, Metadata::OneCopy},
         face_vel_shape);
     hydro->AddField<ccbulk::face_velocity>(m);
+  }
+
+  // X1 Face Pressures (to balance the curvilinear geometric source). Flux, so that they
+  // are flux corrected at fine/coarse faces consistently with the momentum fluxes.
+  if (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
+    m = Metadata({Metadata::Face, Metadata::Derived, Metadata::Flux, Metadata::OneCopy,
+                  Metadata::CellMemAligned});
+    hydro->AddField<ccbulk::face_pressure>(m);
   }
 
   // Hydro Timestep
@@ -525,7 +540,10 @@ TaskStatus GuessCellVolumeFractions(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus Hydro::CalculateGeometricSource
-//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries
+//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries.
+//!        The pressure part uses the mean of the cell's two X1 face pressures from the
+//!        Riemann solve, so with the area-weighted flux divergence the net radial
+//!        pressure force is -(p_{i+1/2} - p_{i-1/2})/dr scaled by the mean face area.
 TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -545,9 +563,10 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
     do_plasma_viscosity = pm->packages.Get("ionization")->Param<bool>("plasma_viscosity");
   }
 
-  auto v = riot::MakePack<ccbulk::pressure, ccmat::volume_fraction, cm::deviatoric_stress,
-                          ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(
-      state, strength_mats);
+  auto v =
+      riot::MakePack<ccbulk::face_pressure, ccmat::volume_fraction, cm::deviatoric_stress,
+                     ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(state,
+                                                                       strength_mats);
   const int nblocks = v.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
   auto vsrc = riot::MakePack<ccbulk::momentum>(src);
@@ -558,6 +577,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
   idx_space.template AddPerPointScratch<Real>(1);
   idx_space.template AddPerPointScratch<Real>(1);
   idx_space.template AddPerPointScratch<Real>(1);
+  auto di = idx_space.GetDelta(X1DIR);
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -584,7 +604,8 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
 
         const int nstr_mat = v.GetSize(b, ccmat::volume_fraction());
         RiotLoop::inner(idx_range, [&](const auto kji) {
-          stress(kji) = pv(ccbulk::pressure(), kji);
+          stress(kji) = 0.5 * (pv(TE::F1, ccbulk::face_pressure(), kji) +
+                               pv(TE::F1, ccbulk::face_pressure(), kji + di));
         });
 
         if (do_strength) {

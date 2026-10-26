@@ -41,6 +41,10 @@ const std::unordered_map<std::string, Type> NAME_MAP = {{"CONSTANT", Type::CONST
                                                         {"WENO5", Type::WENO5},
                                                         {"MP5", Type::MP5}};
 
+// MC slope limit for the quantities that set the flow (velocity, material density,
+// energy, pressure, bulk modulus, stress)
+constexpr Real kSlopeLimit = 1.5;
+
 //----------------------------------------------------------------------------------------
 //! \fn  Real RiotReconstruction::mc
 //! \brief
@@ -169,6 +173,31 @@ void PiecewiseLinear(const Real qm, const Real q0, const Real qp, Real &l, Real 
   dq = 0.5 * mc(q0 - qm, dq, slope_limit);
   l = q0 + dq; // wgt *dq;
   r = q0 - dq; //(1.0 - wgt) * dq;
+}
+
+//----------------------------------------------------------------------------------------
+//! \struct  RiotReconstruction::CellGeometry
+//! \brief Centroid spacings to the minus/plus neighbors (dxm, dxp) and centroid-to-face
+//!        distances to the minus/plus faces (hm, hp) of a cell along one direction.
+struct CellGeometry {
+  Real dxm, dxp, hm, hp;
+};
+
+//----------------------------------------------------------------------------------------
+//! \fn  void RiotReconstruction::PiecewiseLinear
+//! \brief MC-limited PLM about the cell centroid on a nonuniform stencil (Mignone 2014).
+//!        Reduces to the uniform PiecewiseLinear when dxm = dxp = 2 hm = 2 hp.
+KOKKOS_INLINE_FUNCTION
+void PiecewiseLinear(const Real qm, const Real q0, const Real qp, const CellGeometry &g,
+                     Real &l, Real &r, const Real slope_limit = 1.99) {
+  const Real dqm = (q0 - qm) / g.dxm;
+  const Real dqp = (qp - q0) / g.dxp;
+  const Real dqc = (qp - qm) / (g.dxm + g.dxp);
+  const Real bound = 0.5 * slope_limit *
+                     std::min(std::abs(dqp) * g.dxp / g.hp, std::abs(dqm) * g.dxm / g.hm);
+  const Real dq = (dqm * dqp > 0.0) * std::copysign(std::min(std::abs(dqc), bound), dqc);
+  l = q0 + dq * g.hp;
+  r = q0 - dq * g.hm;
 }
 
 //----------------------------------------------------------------------------------------
@@ -379,11 +408,11 @@ void MP5(const Real q0, const Real q1, const Real q2, const Real q3, const Real 
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  Real ComputeMCSlope
-//  \brief Compute MC-limited slope in one direction
+//! \fn  Real ComputeMinModSlope
+//  \brief Compute minmod-limited slope (forward, backward, central) in one direction
 KOKKOS_INLINE_FUNCTION
-Real ComputeMCSlope(const Real u_im1, const Real u_i, const Real u_ip1,
-                    const Real dx_minus, const Real dx_plus) {
+Real ComputeMinModSlope(const Real u_im1, const Real u_i, const Real u_ip1,
+                        const Real dx_minus, const Real dx_plus) {
   const Real slope_central = (u_ip1 - u_im1) / (dx_minus + dx_plus);
   const Real slope_forward = (u_ip1 - u_i) / dx_plus;
   const Real slope_backward = (u_i - u_im1) / dx_minus;

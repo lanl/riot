@@ -96,7 +96,7 @@ KOKKOS_INLINE_FUNCTION void ProjectStencilFace(int count, const Real *alpha,
   }
 }
 
-constexpr Real kMaterialSlopeLimit = 1.5;
+constexpr Real kMaterialSlopeLimit = RiotReconstruction::kSlopeLimit;
 constexpr Real kMaxGeometricEnrichment = 1;
 
 //----------------------------------------------------------------------------------------
@@ -121,16 +121,37 @@ struct MaterialFaces {
 };
 
 //----------------------------------------------------------------------------------------
+//! \fn  void THINC::LinearFaces
+//! \brief Limited linear face values of one quantity. geom (see
+//!        Hydro::MakeReconGeometry) selects the index-space stencil or, along curvilinear
+//!        directions, PLM about the volume centroid, as in the ordinary reconstruction.
+template <typename Geom, typename Index>
+KOKKOS_INLINE_FUNCTION void LinearFaces(const Geom &geom, const Index &idx, Real left,
+                                        Real center, Real right, Real &minus, Real &plus,
+                                        const Real slope_limit = kMaterialSlopeLimit) {
+  if constexpr (Geom::uniform) {
+    const Real dq =
+        RiotReconstruction::PiecewiseLinearSlope(left, center, right, slope_limit);
+    minus = center - dq;
+    plus = center + dq;
+  } else {
+    RiotReconstruction::PiecewiseLinear(left, center, right, geom(idx), plus, minus,
+                                        slope_limit);
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void THINC::ReconstructIntrinsic
 //! \brief Limited linear face values of one intrinsic quantity, weighted by the face
 //!        volume fractions.
-KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(Real left, Real center, Real right,
+template <typename Geom, typename Index>
+KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(const Geom &geom, const Index &idx,
+                                                 Real left, Real center, Real right,
                                                  Real alpha_minus, Real alpha_plus,
                                                  Real &minus, Real &plus) {
-  const Real dq =
-      RiotReconstruction::PiecewiseLinearSlope(left, center, right, kMaterialSlopeLimit);
-  minus = alpha_minus * (center - dq);
-  plus = alpha_plus * (center + dq);
+  LinearFaces(geom, idx, left, center, right, minus, plus);
+  minus *= alpha_minus;
+  plus *= alpha_plus;
 }
 
 //----------------------------------------------------------------------------------------
@@ -138,25 +159,26 @@ KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(Real left, Real center, Real ri
 //! \brief Pass the center state as both neighbors on unsupported material stencils.
 //!        Each intrinsic quantity is limited separately, and each face state is weighted
 //!        by the face volume fraction.
-KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const IntrinsicState &left,
-                                                         const IntrinsicState &center,
-                                                         const IntrinsicState &right,
-                                                         Real alpha_minus,
-                                                         Real alpha_plus) {
+template <typename Geom, typename Index>
+KOKKOS_INLINE_FUNCTION MaterialFaces
+ReconstructMaterial(const Geom &geom, const Index &idx, const IntrinsicState &left,
+                    const IntrinsicState &center, const IntrinsicState &right,
+                    Real alpha_minus, Real alpha_plus) {
   MaterialFaces f;
-  ReconstructIntrinsic(left.density, center.density, right.density, alpha_minus,
-                       alpha_plus, f.minus.density, f.plus.density);
-  ReconstructIntrinsic(left.internal_energy, center.internal_energy,
+  ReconstructIntrinsic(geom, idx, left.density, center.density, right.density,
+                       alpha_minus, alpha_plus, f.minus.density, f.plus.density);
+  ReconstructIntrinsic(geom, idx, left.internal_energy, center.internal_energy,
                        right.internal_energy, alpha_minus, alpha_plus,
                        f.minus.internal_energy, f.plus.internal_energy);
-  ReconstructIntrinsic(left.pressure, center.pressure, right.pressure, alpha_minus,
-                       alpha_plus, f.minus.pressure, f.plus.pressure);
-  ReconstructIntrinsic(left.bulk_modulus, center.bulk_modulus, right.bulk_modulus,
-                       alpha_minus, alpha_plus, f.minus.bulk_modulus,
+  ReconstructIntrinsic(geom, idx, left.pressure, center.pressure, right.pressure,
+                       alpha_minus, alpha_plus, f.minus.pressure, f.plus.pressure);
+  ReconstructIntrinsic(geom, idx, left.bulk_modulus, center.bulk_modulus,
+                       right.bulk_modulus, alpha_minus, alpha_plus, f.minus.bulk_modulus,
                        f.plus.bulk_modulus);
-  ReconstructIntrinsic(left.electron_internal_energy, center.electron_internal_energy,
-                       right.electron_internal_energy, alpha_minus, alpha_plus,
-                       f.minus.electron_internal_energy, f.plus.electron_internal_energy);
+  ReconstructIntrinsic(geom, idx, left.electron_internal_energy,
+                       center.electron_internal_energy, right.electron_internal_energy,
+                       alpha_minus, alpha_plus, f.minus.electron_internal_energy,
+                       f.plus.electron_internal_energy);
   return f;
 }
 
@@ -503,12 +525,12 @@ SelectFaceProfiles(const Range &faces, Delta dn, int count, Mat &minus, Mat &plu
 //! \fn  void THINC::ReconstructMaterialStates
 //! \brief
 template <typename Pack, typename BaseRange, typename Range, typename Delta,
-          typename MatScratch, typename SumScratch>
+          typename MatScratch, typename SumScratch, typename Geom>
 KOKKOS_INLINE_FUNCTION void
 ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &range, int b,
                           Delta dn, MatScratch &mat_minus, MatScratch &mat_plus,
                           SumScratch &sum_minus, SumScratch &sum_plus,
-                          const bool electrons) {
+                          const bool electrons, const Geom &geom) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace cm = cell_variables::material_averaged;
@@ -545,7 +567,7 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
         state_left = state(idx - dn);
         state_right = state(idx + dn);
       }
-      const auto faces = ReconstructMaterial(state_left, center, state_right,
+      const auto faces = ReconstructMaterial(geom, idx, state_left, center, state_right,
                                              mat_minus(ccmat::volume_fraction(), m, idx),
                                              mat_plus(ccmat::volume_fraction(), m, idx));
       mat_minus(cm::rho(), m, idx) = faces.minus.density;
@@ -574,12 +596,14 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
 //! \brief Complete the face state of a material-tied advected quantity in mixed cells.
 //!       Like specific energy and stress, q is intrinsic to material m and is carried by
 //!       that material's THINC mass flux (summed over its phases), so it is never
-//!       extrapolated through a cell where the material is absent.
+//!       extrapolated through a cell where the material is absent. slope_limit matches
+//!       the ordinary reconstruction of q.
 template <typename Pack, typename BaseRange, typename Range, typename Delta, typename Var,
-          typename Scratch>
+          typename Scratch, typename Geom>
 KOKKOS_INLINE_FUNCTION void
 ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, Delta dn,
-                    int b, int m, const Var &q, Scratch &minus, Scratch &plus) {
+                    int b, int m, const Var &q, Scratch &minus, Scratch &plus,
+                    const Real slope_limit, const Geom &geom) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   const int count = v.GetSize(b, ccmat::volume_fraction());
   const int id = v(b, ccmat::volume_fraction(m)).sparse_id;
@@ -597,11 +621,8 @@ ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, De
     if (active <= 1) return; // preserve ordinary reconstruction in pure cells
     const bool supported = alpha > 0 && left > 0 && right > 0;
     const Real center = alpha > 0 ? q(idx) : 0;
-    const Real dq = supported ? RiotReconstruction::PiecewiseLinearSlope(
-                                    q(idx - dn), center, q(idx + dn), kMaterialSlopeLimit)
-                              : 0;
-    minus(idx) = center - dq;
-    plus(idx) = center + dq;
+    LinearFaces(geom, idx, supported ? q(idx - dn) : center, center,
+                supported ? q(idx + dn) : center, minus(idx), plus(idx), slope_limit);
   });
 }
 
@@ -609,11 +630,11 @@ ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, De
 //! \fn  void THINC::ReconstructStrength
 //! \brief
 template <typename Pack, typename StrengthPack, typename BaseRange, typename Range,
-          typename Delta, typename Stress>
+          typename Delta, typename Stress, typename Geom>
 KOKKOS_INLINE_FUNCTION void
 ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &base,
                     const Range &range, Delta dn, int b, int m, int s,
-                    Stress &stress_minus, Stress &stress_plus) {
+                    Stress &stress_minus, Stress &stress_plus, const Geom &geom) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
   const int count = v.GetSize(b, ccmat::volume_fraction());
@@ -632,12 +653,9 @@ ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &ba
                            material(ccmat::volume_fraction(), idx + dn) > 0;
     auto reconstruct = [&](const auto var) {
       const Real q = alpha > 0 ? strong(var, idx) : 0;
-      const Real dq = supported ? RiotReconstruction::PiecewiseLinearSlope(
-                                      strong(var, idx - dn), q, strong(var, idx + dn),
-                                      kMaterialSlopeLimit)
-                                : 0;
-      stress_minus(var, s, idx) = q - dq;
-      stress_plus(var, s, idx) = q + dq;
+      LinearFaces(geom, idx, supported ? strong(var, idx - dn) : q, q,
+                  supported ? strong(var, idx + dn) : q, stress_minus(var, s, idx),
+                  stress_plus(var, s, idx));
     };
     for (int c = 0; c < 5; ++c) {
       reconstruct(cm::deviatoric_stress(c));

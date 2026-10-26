@@ -168,6 +168,10 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
   const std::string amesh =
       pin->GetOrAddString(radiation_block, "angular_mesh", default_amesh,
                           "Choose which angular mesh to use for SN");
+  if (default_amesh == "latlon") {
+    PARTHENON_REQUIRE_THROWS(amesh == "latlon",
+                             "1D spherical and 2D RZ only support angular_mesh = latlon");
+  }
   params.Add("angular_mesh", amesh);
   const bool fv_fix = pin->GetOrAddBoolean(
       radiation_block, "fv_fix", true,

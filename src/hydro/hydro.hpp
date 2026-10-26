@@ -76,6 +76,51 @@ using strength_mat_recon_types =
 static constexpr Real THETA = 1.99;
 
 //----------------------------------------------------------------------------------------
+//! \struct  Hydro::UniformReconGeometry
+//! \brief Reconstruction geometry for directions where cell averages sit at the
+//!        midpoints of uniform cells; PLM uses the index-space stencil.
+struct UniformReconGeometry {
+  static constexpr bool uniform = true;
+};
+
+//----------------------------------------------------------------------------------------
+//! \struct  Hydro::CentroidReconGeometry
+//! \brief Reconstruction geometry along DIR for curvilinear coordinates: cell averages
+//!        sit at the volume centroids Xc<DIR> (r in cylindrical and spherical, theta in
+//!        spherical), so PLM is performed about the centroid on a nonuniform stencil.
+template <parthenon::CoordinateDirection DIR, typename Coords, typename Range>
+struct CentroidReconGeometry {
+  static constexpr bool uniform = false;
+  const Coords &coords;
+  const Range &range;
+  template <typename Index>
+  KOKKOS_FORCEINLINE_FUNCTION RiotReconstruction::CellGeometry
+  operator()(const Index &kji) const {
+    const auto [k, j, i] = range.GetKJI(kji);
+    const int n = (DIR == X1DIR) ? i : ((DIR == X2DIR) ? j : k);
+    const Real x0 = coords.template Xc<DIR>(n);
+    return {x0 - coords.template Xc<DIR>(n - 1), coords.template Xc<DIR>(n + 1) - x0,
+            x0 - coords.template Xf<DIR>(n), coords.template Xf<DIR>(n + 1) - x0};
+  }
+};
+
+//----------------------------------------------------------------------------------------
+//! \fn  auto Hydro::MakeReconGeometry
+//! \brief Pick the reconstruction geometry for direction DIR of block coordinates coords.
+template <parthenon::CoordinateDirection DIR, typename Coords, typename Range>
+KOKKOS_FORCEINLINE_FUNCTION auto MakeReconGeometry(const Coords &coords,
+                                                   const Range &range) {
+  constexpr bool curvilinear =
+      (DIR == X1DIR && !parthenon::IsCoord<parthenon::UniformCartesian>()) ||
+      (DIR == X2DIR && parthenon::IsCoord<parthenon::UniformSpherical>());
+  if constexpr (curvilinear) {
+    return CentroidReconGeometry<DIR, Coords, Range>{coords, range};
+  } else {
+    return UniformReconGeometry{};
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void Hydro::ReconCells
 //! \brief Reconstruct variable(s) VARS on the minus and plus faces of cells in the
 //!        direction defined by the offset delta in halo_range. The reconstruction
@@ -84,12 +129,13 @@ static constexpr Real THETA = 1.99;
 //!        simply read further into the pack's ghost zones (sized by stencil_width /
 //!        nghost). plus/minus receive the l/r face states respectively (l = plus, r =
 //!        minus), matching the (..., l, r) convention of the reconstruction routines.
+//!        geom (see MakeReconGeometry) supplies the centroid stencil used by PLM.
 template <typename... VARS, typename Pack_t, typename IdxRange_t, typename delta_t,
-          typename scratch_t>
+          typename scratch_t, typename Geom_t = UniformReconGeometry>
 KOKKOS_INLINE_FUNCTION void
 ReconCells(const Pack_t &v, const IdxRange_t &halo_range, delta_t delta, scratch_t &minus,
            scratch_t &plus, const RiotReconstruction::Type t, const int mat_idx = 0,
-           const Real slope_limit = THETA) {
+           const Real slope_limit = THETA, const Geom_t &geom = Geom_t{}) {
   namespace RR = RiotReconstruction;
   // Manual loop unswitching: pick the reconstruction method ONCE (this switch), then
   // run a branch-free inner loop for it. The per-cell stencil `op` is applied over
@@ -116,10 +162,17 @@ ReconCells(const Pack_t &v, const IdxRange_t &halo_range, delta_t delta, scratch
     });
     break;
   case RR::Type::PLM:
-    for_all([&](auto var, auto kji, Real &pl, Real &mn) {
-      RR::PiecewiseLinear(v(var, kji - delta), v(var, kji), v(var, kji + delta), pl, mn,
-                          slope_limit);
-    });
+    if constexpr (Geom_t::uniform) {
+      for_all([&](auto var, auto kji, Real &pl, Real &mn) {
+        RR::PiecewiseLinear(v(var, kji - delta), v(var, kji), v(var, kji + delta), pl, mn,
+                            slope_limit);
+      });
+    } else {
+      for_all([&](auto var, auto kji, Real &pl, Real &mn) {
+        RR::PiecewiseLinear(v(var, kji - delta), v(var, kji), v(var, kji + delta),
+                            geom(kji), pl, mn, slope_limit);
+      });
+    }
     break;
   case RR::Type::PPM4:
     for_all([&](auto var, auto kji, Real &pl, Real &mn) {
@@ -150,11 +203,12 @@ ReconCells(const Pack_t &v, const IdxRange_t &halo_range, delta_t delta, scratch
 //!        members. Same reconstruction methods and (l=plus, r=minus) face convention; the
 //!        manual unswitching (switch outside RiotLoop::inner) mirrors ReconCells so CPU
 //!        vectorization is unaffected.
-template <typename VarView_t, typename IdxRange_t, typename delta_t, typename scratch_t>
-KOKKOS_INLINE_FUNCTION void ReconVar(const VarView_t &q, const IdxRange_t &halo_range,
-                                     delta_t delta, scratch_t &minus, scratch_t &plus,
-                                     const RiotReconstruction::Type t,
-                                     const Real slope_limit = THETA) {
+template <typename VarView_t, typename IdxRange_t, typename delta_t, typename scratch_t,
+          typename Geom_t = UniformReconGeometry>
+KOKKOS_INLINE_FUNCTION void
+ReconVar(const VarView_t &q, const IdxRange_t &halo_range, delta_t delta,
+         scratch_t &minus, scratch_t &plus, const RiotReconstruction::Type t,
+         const Real slope_limit = THETA, const Geom_t &geom = Geom_t{}) {
   namespace RR = RiotReconstruction;
   auto for_all = [&](auto op) {
     RiotLoop::inner(halo_range, [&](auto kji) { op(kji, plus(kji), minus(kji)); });
@@ -165,9 +219,16 @@ KOKKOS_INLINE_FUNCTION void ReconVar(const VarView_t &q, const IdxRange_t &halo_
     for_all([&](auto kji, Real &pl, Real &mn) { RR::PiecewiseConstant(q(kji), pl, mn); });
     break;
   case RR::Type::PLM:
-    for_all([&](auto kji, Real &pl, Real &mn) {
-      RR::PiecewiseLinear(q(kji - delta), q(kji), q(kji + delta), pl, mn, slope_limit);
-    });
+    if constexpr (Geom_t::uniform) {
+      for_all([&](auto kji, Real &pl, Real &mn) {
+        RR::PiecewiseLinear(q(kji - delta), q(kji), q(kji + delta), pl, mn, slope_limit);
+      });
+    } else {
+      for_all([&](auto kji, Real &pl, Real &mn) {
+        RR::PiecewiseLinear(q(kji - delta), q(kji), q(kji + delta), geom(kji), pl, mn,
+                            slope_limit);
+      });
+    }
     break;
   case RR::Type::PPM4:
     for_all([&](auto kji, Real &pl, Real &mn) {

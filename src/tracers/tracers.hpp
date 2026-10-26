@@ -187,14 +187,14 @@ inline void AddSamplingSwarmValues(const std::vector<std::string> &sample_fields
 //----------------------------------------------------------------------------------------
 //! \fn  void ReconstructVelocity
 //  \brief Reconstruct velocity at particle position using piecewise-linear reconstruction
-//         with MC limiting
+//         with minmod limiting
 template <typename Pack>
 KOKKOS_INLINE_FUNCTION void
 ReconstructVelocity(const Pack &pack_vel, const int b, const int k, const int j,
                     const int i, const Real x1, const Real x2, const Real x3,
                     const auto &coords, const bool multi_d, const bool three_d, Real &v1,
                     Real &v2, Real &v3) {
-  using RiotReconstruction::ComputeMCSlope;
+  using RiotReconstruction::ComputeMinModSlope;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
 
   // Cell center position
@@ -220,35 +220,35 @@ ReconstructVelocity(const Pack &pack_vel, const int b, const int k, const int j,
 
   // Compute x1-direction slopes
   const std::array<Real, 3> slope_x1 = {
-      ComputeMCSlope(pack_vel(b, ccbulk::velocity(0), k, j, i - 1), vi[0],
-                     pack_vel(b, ccbulk::velocity(0), k, j, i + 1), dx1m, dx1p),
-      ComputeMCSlope(pack_vel(b, ccbulk::velocity(1), k, j, i - 1), vi[1],
-                     pack_vel(b, ccbulk::velocity(1), k, j, i + 1), dx1m, dx1p),
-      ComputeMCSlope(pack_vel(b, ccbulk::velocity(2), k, j, i - 1), vi[2],
-                     pack_vel(b, ccbulk::velocity(2), k, j, i + 1), dx1m, dx1p)};
+      ComputeMinModSlope(pack_vel(b, ccbulk::velocity(0), k, j, i - 1), vi[0],
+                         pack_vel(b, ccbulk::velocity(0), k, j, i + 1), dx1m, dx1p),
+      ComputeMinModSlope(pack_vel(b, ccbulk::velocity(1), k, j, i - 1), vi[1],
+                         pack_vel(b, ccbulk::velocity(1), k, j, i + 1), dx1m, dx1p),
+      ComputeMinModSlope(pack_vel(b, ccbulk::velocity(2), k, j, i - 1), vi[2],
+                         pack_vel(b, ccbulk::velocity(2), k, j, i + 1), dx1m, dx1p)};
 
   // Compute x2-direction slopes
   std::array<Real, 3> slope_x2 = {0.0, 0.0, 0.0};
   if (multi_d) {
-    slope_x2 = {ComputeMCSlope(pack_vel(b, ccbulk::velocity(0), k, j - 1, i), vi[0],
-                               pack_vel(b, ccbulk::velocity(0), k, j + 1, i), dx2m, dx2p),
-                ComputeMCSlope(pack_vel(b, ccbulk::velocity(1), k, j - 1, i), vi[1],
-                               pack_vel(b, ccbulk::velocity(1), k, j + 1, i), dx2m, dx2p),
-                ComputeMCSlope(pack_vel(b, ccbulk::velocity(2), k, j - 1, i), vi[2],
-                               pack_vel(b, ccbulk::velocity(2), k, j + 1, i), dx2m,
-                               dx2p)};
+    slope_x2 = {
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(0), k, j - 1, i), vi[0],
+                           pack_vel(b, ccbulk::velocity(0), k, j + 1, i), dx2m, dx2p),
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(1), k, j - 1, i), vi[1],
+                           pack_vel(b, ccbulk::velocity(1), k, j + 1, i), dx2m, dx2p),
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(2), k, j - 1, i), vi[2],
+                           pack_vel(b, ccbulk::velocity(2), k, j + 1, i), dx2m, dx2p)};
   }
 
   // Compute x3-direction slopes
   std::array<Real, 3> slope_x3 = {0.0, 0.0, 0.0};
   if (three_d) {
-    slope_x3 = {ComputeMCSlope(pack_vel(b, ccbulk::velocity(0), k - 1, j, i), vi[0],
-                               pack_vel(b, ccbulk::velocity(0), k + 1, j, i), dx3m, dx3p),
-                ComputeMCSlope(pack_vel(b, ccbulk::velocity(1), k - 1, j, i), vi[1],
-                               pack_vel(b, ccbulk::velocity(1), k + 1, j, i), dx3m, dx3p),
-                ComputeMCSlope(pack_vel(b, ccbulk::velocity(2), k - 1, j, i), vi[2],
-                               pack_vel(b, ccbulk::velocity(2), k + 1, j, i), dx3m,
-                               dx3p)};
+    slope_x3 = {
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(0), k - 1, j, i), vi[0],
+                           pack_vel(b, ccbulk::velocity(0), k + 1, j, i), dx3m, dx3p),
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(1), k - 1, j, i), vi[1],
+                           pack_vel(b, ccbulk::velocity(1), k + 1, j, i), dx3m, dx3p),
+        ComputeMinModSlope(pack_vel(b, ccbulk::velocity(2), k - 1, j, i), vi[2],
+                           pack_vel(b, ccbulk::velocity(2), k + 1, j, i), dx3m, dx3p)};
   }
 
   // Reconstruct velocities at particle position

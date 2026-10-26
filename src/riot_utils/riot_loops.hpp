@@ -68,7 +68,7 @@ struct pm_k_t {
 // order. The transverse pair is in CYCLIC (right-handed) order: for normal
 // component c, transverse components are (c+1)%3 then (c+2)%3. This is the physically
 // meaningful convention (curl/EMF signs for CT-MHD); it is also safe for symmetric
-// reductions like GetVdiff's transverse min.
+// reductions like ShockSensor's transverse min.
 template <parthenon::CoordinateDirection DIR, typename Offset>
 struct DirBasis {
   // Component indices (0/1/2) for the normal and the two cyclic transverse dirs.
