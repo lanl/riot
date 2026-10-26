@@ -168,7 +168,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                  "against err_thr."));
   params.Add("extrapolate_guess",
              pin->GetOrAddBoolean(
-                 input_block, "extrapolate_guess", true,
+                 input_block, "extrapolate_guess", false,
                  "Start each Jacobi solve from a linear extrapolation in time of the "
                  "intensity at the two previous steps rather than from the intensity at "
                  "the previous step."));
@@ -279,8 +279,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   Metadata mr = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy,
                           MetadataOperatorSplit},
                          std::vector<int>({ngroups * nangles}));
-  if (params.Get<bool>("extrapolate_guess")) mr.Set(Metadata::ForceRemeshComm);
-  mr.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  if (params.Get<bool>("extrapolate_guess")) {
+    mr.Set(Metadata::ForceRemeshComm);
+    mr.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  }
   jacobi_pkg->AddField<ccrad::intensity_iterate>(mr);
 
   // Opacity fields
@@ -618,8 +620,8 @@ TaskCollection JacobiCommit(Mesh *pmesh, const Real dt) {
     }
 
     // Apply feedback to fluid (if radiation affects fluid)
-    auto feedback =
-        tl.AddTask(srec, JacobiFeedback, rbase.get(), rout.get(), ubase.get(), dt);
+    auto feedback = tl.AddTask(srec, JacobiFeedback, rbase.get(), riter.get(), rout.get(),
+                               ubase.get(), dt);
 
     // Keep the previous intensity in riter for the next solve's initial guess
     auto save_prev = feedback;
@@ -1392,8 +1394,8 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
 //----------------------------------------------------------------------------------------
 //! \fn  void Jacobi::JacobiFeedback
 //! \brief Difference moments to update fluid conserved variables after Jacobi update
-TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *rout,
-                          MeshData<Real> *ubase, const Real dt) {
+TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
+                          MeshData<Real> *rout, MeshData<Real> *ubase, const Real dt) {
   if (rout->NumBlocks() == 0) return TaskStatus::complete;
   auto pm = rbase->GetParentPointer();
   auto jacobi_pkg = pm->packages.Get(pkg_name);
@@ -1427,22 +1429,28 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *rout,
   auto &resolved_pkgs = pm->resolved_packages;
   static auto desc_g = MakePackDescriptor<ccr::aa, ccr::ss>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
+  static auto desc_r = MakePackDescriptor<ccr::intensity_iterate>(resolved_pkgs.get());
   static auto desc_u = MakePackDescriptor<ccbulk::internal_energy>(resolved_pkgs.get());
   auto vu = desc_u.GetPack(ubase);
   auto vg = desc_g.GetPack(rbase);
   auto vb = desc_i.GetPack(rbase);
+  auto vi = desc_r.GetPack(riter);
   auto vo = desc_i.GetPack(rout);
 
   // Angular flux indexing
   const auto NDIR = AngularFluxDirs();
 
-  // Compute feedback with the converged intensity at every neighbor (Jiang 21, Equation
-  // (22)), such that the transport is in flux form and cancels between cells
+  // Compute feedback with the intensities that the last JacobiUpdate of each cell saw, so
+  // that it is the coupling source applied by the last ApplyRHS (consistent with the
+  // advanced temperature)
+  const RedBlack rb_red(rbase, 0), rb_black(rbase, 1);
   auto idx_space =
       RiotFlatLoop::GetIndexSpace(IndexDomain::interior, vo.GetNBlocks(), rbase);
   RiotFlatLoop::four_d(
       "JacobiFeedback::Moments", idx_space,
       KOKKOS_LAMBDA(const int &b, const int &k, const int &j, const int &i) {
+        const auto &rb = ((i + j + k) & 1) ? rb_black : rb_red;
+
         // Extract coordinates
         auto &coords = vg.GetCoordinates(b);
         const Real ivol = 0.5 * cdt / coords.CellVolume(k, j, i);
@@ -1475,12 +1483,13 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *rout,
             // clang-format on
 
             // Backtrack contributions from g2-g7 and gn
-            Real df = g1pp * vo(b, n, k, j, i);
-            df += (gn[0] * vo(b, n, k, j, i - 1) + gn[1] * vo(b, n, k, j, i + 1));
-            df += multid * (gn[2] * vo(b, n, k, j - multid, i) +
-                            gn[3] * vo(b, n, k, j + multid, i));
-            df += threed * (gn[4] * vo(b, n, k - threed, j, i) +
-                            gn[5] * vo(b, n, k + threed, j, i));
+            Real df = g1pp * vi(b, n, k, j, i);
+            df += (gn[0] * rb.Neighbor(vi, vo, b, n, k, j, i - 1) +
+                   gn[1] * rb.Neighbor(vi, vo, b, n, k, j, i + 1));
+            df += multid * (gn[2] * rb.Neighbor(vi, vo, b, n, k, j - multid, i) +
+                            gn[3] * rb.Neighbor(vi, vo, b, n, k, j + multid, i));
+            df += threed * (gn[4] * rb.Neighbor(vi, vo, b, n, k - threed, j, i) +
+                            gn[5] * rb.Neighbor(vi, vo, b, n, k + threed, j, i));
 
             [[maybe_unused]] auto &wght_ = wght;
             [[maybe_unused]] auto &numn_ = numn;
@@ -1501,7 +1510,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *rout,
             //      g1 I^{m+1} - Ic == RHS
             // ...where...
             //      Ic = I^m - (g2 I^{m+1}_{i+1} + g3 I^{m+1}_{i-1} + ...)
-            // ...such that, evaluating Ic with the converged I^{m+1} in place of I^m...
+            // ...such that...
             //      I^{m+1} - RHS == Ic + (1 - g1) * I^{m+1}
             // ...and...
             //      \Delta Er == \int [ I^{m+1} ] dW - \int [ I^{m+1} - RHS ] dW

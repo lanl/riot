@@ -66,8 +66,8 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
 TaskStatus UpdateOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase);
 TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> *ubase,
                     const Real dt, const int color);
-TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *rout,
-                          MeshData<Real> *ubase, const Real dt);
+TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
+                          MeshData<Real> *rout, MeshData<Real> *ubase, const Real dt);
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real TauWeight
