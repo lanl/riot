@@ -103,14 +103,14 @@ constexpr Real kMaxGeometricEnrichment = 1;
 //! \struct  THINC::IntrinsicState
 //! \brief
 struct IntrinsicState {
-  Real density, internal_energy, pressure, bulk_modulus, electron_internal_energy;
+  Real density, internal_energy, bulk_modulus, electron_internal_energy;
 };
 
 //----------------------------------------------------------------------------------------
 //! \struct  THINC::PartialState
 //! \brief
 struct PartialState {
-  Real density, internal_energy, pressure, bulk_modulus, electron_internal_energy;
+  Real density, internal_energy, bulk_modulus, electron_internal_energy;
 };
 
 //----------------------------------------------------------------------------------------
@@ -149,8 +149,6 @@ KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const IntrinsicState &l
   ReconstructIntrinsic(left.internal_energy, center.internal_energy,
                        right.internal_energy, alpha_minus, alpha_plus,
                        f.minus.internal_energy, f.plus.internal_energy);
-  ReconstructIntrinsic(left.pressure, center.pressure, right.pressure, alpha_minus,
-                       alpha_plus, f.minus.pressure, f.plus.pressure);
   ReconstructIntrinsic(left.bulk_modulus, center.bulk_modulus, right.bulk_modulus,
                        alpha_minus, alpha_plus, f.minus.bulk_modulus,
                        f.plus.bulk_modulus);
@@ -520,19 +518,17 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
       active += pm(ccmat::volume_fraction(), idx) > 0;
     }
     if (active <= 1) return;
-    PartialState sum_m{0, 0, 0, 0, 0}, sum_p{0, 0, 0, 0, 0};
+    PartialState sum_m{0, 0, 0, 0}, sum_p{0, 0, 0, 0};
     auto accumulate = [](PartialState &sum, const PartialState &face) {
       sum.density += face.density;
       sum.internal_energy += face.internal_energy;
-      sum.pressure += face.pressure;
       sum.bulk_modulus += face.bulk_modulus;
       sum.electron_internal_energy += face.electron_internal_energy;
     };
     for (int m = 0; m < count; ++m) {
       auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
       auto state = [&](auto i) -> IntrinsicState {
-        return {pm(cm::rho(), i), pm(cm::internal_energy(), i), pm(cm::pressure(), i),
-                pm(cm::bulk_modulus(), i),
+        return {pm(cm::rho(), i), pm(cm::internal_energy(), i), pm(cm::bulk_modulus(), i),
                 electrons ? pm(cm::electron_internal_energy(), i) : 0.0};
       };
       const Real alpha = pm(ccmat::volume_fraction(), idx);
@@ -558,7 +554,6 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
     auto store = [&](SumScratch &sum, const PartialState &face) {
       sum(ccbulk::rho(), idx) = face.density;
       sum(ccbulk::internal_energy(), idx) = face.internal_energy;
-      sum(ccbulk::pressure(), idx) = face.pressure;
       sum(ccbulk::bulk_modulus(), idx) = face.bulk_modulus;
       if (electrons) {
         sum(ccbulk::electron_internal_energy(), idx) = face.electron_internal_energy;
