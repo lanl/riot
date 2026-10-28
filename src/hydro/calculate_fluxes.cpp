@@ -82,40 +82,6 @@ KOKKOS_FORCEINLINE_FUNCTION Real ShockSensor(const PackView &pv, const Index &kj
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn Real Hydro::FrontSensor
-//! \brief Density-front sensor for the hll_blend option. Compares the relative bulk
-//!        density jump across the face with the largest one-sided jump along the
-//!        transverse directions in the two adjacent cells, in the spirit of ShockSensor.
-//!        Faces lying along a front (large transverse jump, small normal jump) go to 0;
-//!        faces the front crosses, oblique fronts, and smooth flow stay at 1. Transverse
-//!        jumps below kFloor are ignored.
-template <typename PackView, typename Index, typename Basis>
-KOKKOS_FORCEINLINE_FUNCTION Real FrontSensor(const PackView &pv, const Index &kji,
-                                             const Basis &basis) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  constexpr Real kFloor = 0.05;
-  constexpr Real kEps = 0.05;
-  const auto dn = basis.normal();
-  auto jump = [&](auto a, auto b) {
-    const Real ra = pv(ccbulk::rho(), a);
-    const Real rb = pv(ccbulk::rho(), b);
-    return std::abs(ra - rb) / (ra + rb + 1.e-100);
-  };
-  auto trans = [&](auto t) {
-    return std::max(std::max(jump(kji - dn + t, kji - dn), jump(kji - dn, kji - dn - t)),
-                    std::max(jump(kji + t, kji), jump(kji, kji - t)));
-  };
-  Real dt = 0.0;
-  if (!RiotUtils::IsZeroOffset(basis.trans_a()))
-    dt = std::max(dt, trans(basis.trans_a()));
-  if (!RiotUtils::IsZeroOffset(basis.trans_b()))
-    dt = std::max(dt, trans(basis.trans_b()));
-  const Real rt =
-      std::min(1.0, (jump(kji, kji - dn) + kEps) / (std::max(dt - kFloor, 0.0) + kEps));
-  return SQR(rt);
-}
-
-//----------------------------------------------------------------------------------------
 //! \fn  void Hydro::StoreFacePressure
 //! \brief Store the pressure part of the X1 normal-momentum flux, F_mom - F_rho * v_face,
 //!        into ccbulk::face_pressure for CalculateGeometricSource. Curvilinear only.
@@ -215,17 +181,15 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::GetSensors
-//! \brief Evaluate the face sensors into the per-face weight th consumed by
-//!        BulkRiemannFluxesLM: the ShockSensor, limited by the FrontSensor with
-//!        hll_blend. cmax uses the same reconstructed face sound speeds as the Riemann
-//!        solve, so the face states must be complete (and barriered) before this is
-//!        called.
+//! \brief Evaluate the ShockSensor into the per-face weight th consumed by
+//!        BulkRiemannFluxesLM. cmax uses the same reconstructed face sound speeds as the
+//!        Riemann solve, so the face states must be complete (and barriered) before this
+//!        is called.
 template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
           typename Basis, typename Delta, typename SumBulk, typename Scratch>
 KOKKOS_INLINE_FUNCTION void
 GetSensors(const Pack_t &v, const IdxRange &idx_range, const Basis &basis, Delta delta,
-           const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
-           const bool hll_blend, Scratch &th) {
+           const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus, Scratch &th) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   auto pv = RiotLoop::make_pack_view(idx_range, v);
   RiotLoop::inner(idx_range, [&](const auto kji) {
@@ -235,9 +199,7 @@ GetSensors(const Pack_t &v, const IdxRange &idx_range, const Basis &basis, Delta
                                      sum_bulk_plus(ccbulk::rho(), kji_L));
     const Real cs_R = BulkSoundSpeed(sum_bulk_minus(ccbulk::bulk_modulus(), kji_R),
                                      sum_bulk_minus(ccbulk::rho(), kji_R));
-    Real w = ShockSensor(pv, kji, basis, std::max(cs_L, cs_R));
-    if (hll_blend) w = std::min(w, FrontSensor(pv, kji, basis));
-    th(kji) = w;
+    th(kji) = ShockSensor(pv, kji, basis, std::max(cs_L, cs_R));
   });
 }
 
@@ -253,8 +215,7 @@ KOKKOS_INLINE_FUNCTION void
 BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                     const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
                     const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
-                    Scratch &riemann_vel, Scratch &th, const bool store_vf,
-                    const bool hll_blend) {
+                    Scratch &riemann_vel, Scratch &th, const bool store_vf) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
@@ -281,7 +242,7 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                 sum_bulk_minus(ccbulk::internal_energy(), kji_R),
                 set_bulk_plus(ccbulk::pressure(), kji_L),
                 set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R, f_v1, f_v2, f_v3,
-                f_eng, v1face, v2face, v3face, riemann_vel(kji), th(kji), hll_blend);
+                f_eng, v1face, v2face, v3face, riemann_vel(kji), th(kji));
 
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
@@ -628,10 +589,9 @@ template <parthenon::CoordinateDirection DIR, bool DoTHINC, typename Pack_t,
 void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &vstr,
                          const AdvPack_t &adv, const RiotReconstruction::Type recon_tag,
                          const RiotReconstruction::Type vfrac_recon_tag,
-                         const RiemannSolver rsolver_tag, const bool hll_blend,
-                         const bool store_vf, const StrengthArr &mat_strength,
-                         const bool do_viscosity, const Real thinc_beta,
-                         const bool do_electrons) {
+                         const RiemannSolver rsolver_tag, const bool store_vf,
+                         const StrengthArr &mat_strength, const bool do_viscosity,
+                         const Real thinc_beta, const bool do_electrons) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -865,20 +825,18 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
               sum_bulk_plus, riemann_vel, store_vf);
           break;
         case RiemannSolver::chllc:
-          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus,
-                          hll_blend, th);
+          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus, th);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_chllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, riemann_vel, th, store_vf, hll_blend);
+              sum_bulk_plus, riemann_vel, th, store_vf);
           break;
         case RiemannSolver::lhllc:
-          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus,
-                          hll_blend, th);
+          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus, th);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_lhllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, riemann_vel, th, store_vf, hll_blend);
+              sum_bulk_plus, riemann_vel, th, store_vf);
           break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG, DoTHINC>(
@@ -957,7 +915,6 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   const bool do_thinc = pm->packages.Get("riot")->Param<bool>("do_thinc");
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
   if (do_strength) rsolver_tag = RiemannSolver::strong;
-  const bool hll_blend = options->Param<bool>("hll_blend");
   const bool store_vf = options->Param<bool>("store_vf");
   const auto &mat_strength =
       pm->packages.Get("materials")->Param<parthenon::ParArray1D<bool>>("d.strong");
@@ -975,7 +932,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   // sparse fields here are allocated on *all* materials, so a single sparse index
   // addresses them uniformly.
   auto v =
-      riot::MakePack<ccbulk::rho, ccbulk::pressure, ccbulk::velocity, ccbulk::momentum,
+      riot::MakePack<ccbulk::pressure, ccbulk::velocity, ccbulk::momentum,
                      ccbulk::total_material_energy, ccbulk::electron_internal_energy,
                      ccbulk::face_signal, ccbulk::face_velocity, ccbulk::face_pressure,
                      ccmat::volume_fraction, ccmat::rho, cm::rho, cm::internal_energy,
@@ -1000,16 +957,16 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto adv = MakeAdvectionPack(md);
 
   CalculateFluxesDir<X1DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
-                            rsolver_tag, hll_blend, store_vf, mat_strength, do_viscosity,
-                            thinc_beta, do_ionization);
+                            rsolver_tag, store_vf, mat_strength, do_viscosity, thinc_beta,
+                            do_ionization);
   if (ndim > 1)
     CalculateFluxesDir<X2DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
-                              rsolver_tag, hll_blend, store_vf, mat_strength,
-                              do_viscosity, thinc_beta, do_ionization);
+                              rsolver_tag, store_vf, mat_strength, do_viscosity,
+                              thinc_beta, do_ionization);
   if (ndim > 2)
     CalculateFluxesDir<X3DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
-                              rsolver_tag, hll_blend, store_vf, mat_strength,
-                              do_viscosity, thinc_beta, do_ionization);
+                              rsolver_tag, store_vf, mat_strength, do_viscosity,
+                              thinc_beta, do_ionization);
 
   return TaskStatus::complete;
 }

@@ -184,16 +184,14 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
 //!   chllc is carbuncle corrected hllc
 //!   lhllc is low-Mach corrected and carbuncle corrected hllc
 //! Relevant reference is Minoshima and Miyoshi, 2021
-//! th is the per-face sensor weight from GetSensors (shock sensor, limited by the
-//! density-front sensor with hll_blend). With hll_blend, faces parallel to shocks or
-//! fronts are additionally blended toward HLL with weight 1 - th^2.
+//! th is the per-face shock-sensor weight from GetSensors.
 template <int DIR, bool enable_low_mach>
 KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
     Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
     Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
-    const Real th, const bool hll_blend) {
+    const Real th) {
 
   // Extract L/R states
   rhol = std::max(rhol, 1.e-100);
@@ -264,16 +262,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
 
   // Compute HLLC flux weights
   const bool am_pos = (am >= 0.0);
-  const Real wl_c = am_pos ? am / (am - bm) : 0.0;
-  const Real wr_c = am_pos ? 0.0 : -am / (bp - am);
+  const Real wl = am_pos ? am / (am - bm) : 0.0;
+  const Real wr = am_pos ? 0.0 : -am / (bp - am);
   const Real sm = am_pos ? -bm / (am - bm) : bp / (bp - am);
-
-  // Blend with the HLL weights on the same L/R fluxes, F_hll = (bp*fl - bm*fr)/(bp - bm)
-  const Real w = hll_blend ? SQR(th) : 1.0;
-  const Real ibpm = 1.0 / (bp - bm);
-  const Real wl = w * wl_c + (1.0 - w) * bp * ibpm;
-  const Real wr = w * wr_c - (1.0 - w) * bm * ibpm;
-  const Real wcp = w * sm * cp;
+  const Real wcp = sm * cp;
 
   // Compute the momentum and total energy fluxes
   f_v1 = wl * flIVX + wr * frIVX;
@@ -289,15 +281,6 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   const Real rho_upwind = (frho >= 0.0) * rhol + (frho < 0.0) * rhor;
   riemann_vel = frho / rho_upwind;
 
-  // Normal face velocity, blended with the HLL star velocity when subsonic
-  const Real flIVN = (DIR == X1DIR) ? flIVX : ((DIR == X2DIR) ? flIVY : flIVZ);
-  const Real frIVN = (DIR == X1DIR) ? frIVX : ((DIR == X2DIR) ? frIVY : frIVZ);
-  const Real vn_hll = (sl * sr < 0.0) ? (flIVN - frIVN) / (flIDN - frIDN) : ss;
-  const Real vn = w * ss + (1.0 - w) * vn_hll;
-  if constexpr (DIR == X1DIR) v1face = vn;
-  if constexpr (DIR == X2DIR) v2face = vn;
-  if constexpr (DIR == X3DIR) v3face = vn;
-
   return std::max(std::abs(sl), std::abs(sr));
 }
 
@@ -310,10 +293,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc(
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
     Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
-    const Real th = 1.0, const bool hll_blend = false) {
-  return lr_to_flux_lhllc_base<DIR, true>(
-      rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul, ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3,
-      f_eng, v1face, v2face, v3face, riemann_vel, th, hll_blend);
+    const Real th = 1.0) {
+  return lr_to_flux_lhllc_base<DIR, true>(rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul,
+                                          ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3, f_eng,
+                                          v1face, v2face, v3face, riemann_vel, th);
 }
 //----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::lr_to_flux_chllc
@@ -324,10 +307,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_chllc(
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
     Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
-    const Real th = 1.0, const bool hll_blend = false) {
-  return lr_to_flux_lhllc_base<DIR, false>(
-      rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul, ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3,
-      f_eng, v1face, v2face, v3face, riemann_vel, th, hll_blend);
+    const Real th = 1.0) {
+  return lr_to_flux_lhllc_base<DIR, false>(rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul,
+                                           ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3, f_eng,
+                                           v1face, v2face, v3face, riemann_vel, th);
 }
 
 //----------------------------------------------------------------------------------------

@@ -134,13 +134,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     PARTHENON_THROW("Invalid Riemann solver option");
   }
 
-  // Blend chllc/lhllc toward HLL on faces parallel to shocks and density fronts
-  const bool hll_blend = pin->GetOrAddBoolean(
-      "hydro", "hll_blend", false,
-      "Blend chllc/lhllc toward HLL on faces parallel to shocks and density fronts "
-      "(carbuncle and grid-aligned odd-even cure)");
-  params.Add("hll_blend", hll_blend);
-
   // Thornber's low-Mach correction
   bool lm_correction =
       pin->GetOrAddBoolean("hydro", "lm_correction", false,
