@@ -42,7 +42,8 @@ namespace Hydro {
 //----------------------------------------------------------------------------------------
 //! \brief  Bulk quantities reconstructed directly to faces (set each pass by ReconCells).
 using set_bulk_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::velocity>;
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::pressure,
+                                 cell_variables::cell_averaged::bulk::velocity>;
 
 //! \brief  Bulk quantities accumulated (+=) on faces by summing vfrac-weighted
 //!         per-material face states; these are the scratch slots that must be zeroed
@@ -50,7 +51,6 @@ using set_bulk_recon_types =
 using sum_bulk_recon_types = RiotLoop::IndexedVarTypeList<
     cell_variables::cell_averaged::bulk::rho,
     cell_variables::cell_averaged::bulk::internal_energy,
-    cell_variables::cell_averaged::bulk::pressure,
     cell_variables::cell_averaged::bulk::bulk_modulus,
     cell_variables::cell_averaged::bulk::electron_internal_energy>;
 
@@ -63,7 +63,6 @@ using mat_recon_types =
 //! \brief  Per-material quantities reconstructed to faces one material at a time and
 //!         accumulated directly into the summed bulk quantities.
 using mat_sum_recon_types = RiotLoop::IndexedVarTypeList<
-    cell_variables::material_averaged::pressure,
     cell_variables::material_averaged::bulk_modulus,
     cell_variables::material_averaged::electron_internal_energy>;
 
