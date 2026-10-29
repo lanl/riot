@@ -259,9 +259,11 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     riot->PreFillDerivedMesh = Multiphysics::PostCommsFillDerived;
   }
 
-  // setup regions for initialization
-  //riot->AddParam("BlockInitData",
-  //               std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  // setup regions for initialization (not needed when only post-processing dumps)
+  if (!pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false)) {
+    riot->AddParam("BlockInitData",
+                   std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  }
 
   // add any diagnostic packages
   diagnostics::AddDiagnostics(pin.get(), packages);

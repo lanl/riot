@@ -217,10 +217,6 @@ class IntegratorBase : public CellInfo {
     h3 = h1 + kStepOvershoot * min_size();
     h1 = (h2 == std::numeric_limits<Real>::max() ? h3
                                                  : std::min(h3, 0.5 * (h1 + h2)));
-    if (h1 <= 0.0) {
-      printf("h1 = %g  %g %g %g  %g %g %g    %g %g   %g %g    %g %g\n", h1, xc[0], xc[1], xc[2], v[0], v[1], v[2],
-        context.x_min_, context.x_max_, context.y_min_, context.y_max_, context.z_min_, context.z_max_);
-    }
     loop_3d([&]<int d>() {
       xc[d - 1] += h1 * v[d - 1];
     });

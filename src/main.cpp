@@ -37,10 +37,8 @@ int main(int argc, char *argv[]) {
 
   int main_status;
   if (pman.IsAnalysis()) {
-    printf("Calling AnalysisDriver\n");
     main_status = main<AnalysisDriver>(pman);
   } else {
-    printf("Calling RiotDriver\n");
     main_status = main<RiotDriver>(pman);
   }
 

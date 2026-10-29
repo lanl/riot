@@ -500,9 +500,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         AddCamera(pin, nimages, ndim, scene);
         auto &camera = scene.camera.back();
         max_size = std::max(max_size, camera.nwidth * camera.nheight +
-                                          camera.ncolorbar * camera.colorbar_thickness *
-                                              camera.nwidth +
-                                          timebar * 10 * camera.nwidth);
+                                          (camera.ncolorbar + timebar) *
+                                              camera.colorbar_thickness * camera.nwidth);
         nimages++;
       }
     }
@@ -533,7 +532,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   pkg->AddSwarmValue<pvr::camera_id, pvr::particles>(m_int);
   pkg->AddSwarmValue<pvr::pixel_id, pvr::particles>(m_int);
 
-  Metadata m({Metadata::OneCopy, Metadata::Node, Metadata::Analysis});//, Metadata::FillGhost});//, Metadata::CommunicateOne});
+  const bool analysis =
+      pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false);
+  std::vector<parthenon::MetadataFlag> flags{Metadata::OneCopy, Metadata::Node,
+                                             Metadata::Analysis};
+  if (analysis) flags.push_back(Metadata::FillGhost);
+  Metadata m(flags);
   std::vector<std::string> orig_fields = scene.field;
   std::string suffix = "_nodal_";
   for (auto &f : scene.field) {
@@ -542,14 +546,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   }
   params.Add("scene_info", scene, true);
   params.Add("orig_fields", orig_fields);
+  params.Add("analysis", analysis);
   //RenderingParams rparams(scene.rendering_params);
   //params.Add("rendering_params", rparams);
   params.Add("tracer_info", impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)), true);
 
-  params.Add("max_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("max_alpha_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_alpha_value_view", parthenon::ParArray2D<Real>(), true);
+  params.Add("nodal_bounds", impl::NodalBounds(), true);
 
   return pkg;
 }
@@ -777,20 +779,16 @@ TaskStatus Tracer(MeshData<Real> *md) {
 
   auto [v, ps, ps_int] = tinfo->GetPacks(md);
 
-  auto max_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
-  auto max_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
+  auto &bounds = viz->Param<impl::NodalBounds>("nodal_bounds");
 
   return RayTrace::Trace<Composer>(ps, v, md->GetParentPointer(), ps_int,
-                                   tinfo->render_params, tinfo->pack_idx_view, max_value,
-                                   min_value, scene_info.images);
+                                   tinfo->render_params, tinfo->pack_idx_view,
+                                   bounds.max_value, bounds.min_value, scene_info.images);
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md) {
   using TE = parthenon::TopologicalElement;
 
-  const auto start = std::chrono::steady_clock::now();
   auto pm = md->GetMeshPointer();
   auto viz = pm->packages.Get("riot_viz");
   auto orig_fields =
@@ -833,8 +831,19 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
 
   int dj = pm->ndim > 1 ? 1 : 0;
   int dk = pm->ndim > 2 ? 1 : 0;
+  // In analysis mode only the first ghost layer of file-backed fields is communicated
+  const int ngc = viz->Param<bool>("analysis") ? 1 : parthenon::Globals::nghost;
+  const auto ibi = md->GetBoundsI(IndexDomain::interior);
+  const auto jbi = md->GetBoundsJ(IndexDomain::interior);
+  const auto kbi = md->GetBoundsK(IndexDomain::interior);
+  const int ics = ibi.s - ngc;
+  const int jcs = jbi.s - ngc * dj;
+  const int kcs = kbi.s - ngc * dk;
+  const int ice = ibi.e + ngc;
+  const int jce = jbi.e + ngc * dj;
+  const int kce = kbi.e + ngc * dk;
 
-  using lt = RiotUtils::LoopType<>;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space =
       lt::GetIndexSpace(IndexDomain::entire, 0, vorig.GetNBlocks(), md, TE::NN);
   RiotLoop::outer(
@@ -853,10 +862,13 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
               RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
                 Real nodal_val = 0.0;
                 int cnt = 0;
-                for (int kk = -1 * dkl; kk <= 0; kk++) {
-                  for (int jj = -1 * djl; jj <= 0; jj++) {
-                    for (int ii = -1; ii <= 0; ii++) {
-                      nodal_val += cell(k + kk, j + jj, i + ii);
+                const int kl = std::clamp(k - dkl, kcs, kce);
+                const int jl = std::clamp(j - djl, jcs, jce);
+                const int il = std::clamp(i - 1, ics, ice);
+                for (int kc = kl; kc <= std::clamp(k, kl, kce); kc++) {
+                  for (int jc = jl; jc <= std::clamp(j, jl, jce); jc++) {
+                    for (int ic = il; ic <= std::clamp(i, il, ice); ic++) {
+                      nodal_val += cell(kc, jc, ic);
                       cnt++;
                     }
                   }
@@ -883,15 +895,10 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
 
   Kokkos::fence();
 
-  auto max_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("max_value_view");
-  *max_value_view = std::move(max_value);
-  auto min_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("min_value_view");
-  *min_value_view = std::move(min_value);
+  auto bounds = viz->MutableParam<impl::NodalBounds>("nodal_bounds");
+  bounds->max_value = std::move(max_value);
+  bounds->min_value = std::move(min_value);
 
-  const auto stop = std::chrono::steady_clock::now();
-  const double seconds = std::chrono::duration<double>(stop - start).count();
-  if (parthenon::Globals::my_rank == 0)
-    std::cout << "InitializeNodalValues completed in " << seconds << " seconds." << std::endl;
   return TaskStatus::complete;
 }
 
@@ -900,7 +907,6 @@ TaskCollection Render(Mesh *pm, Real time) {
   using TQ = TaskQualifier;
   TaskCollection tc;
   TaskID none;
-  printf("Starting rendering...\n");
   // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
   constexpr int num_partitions = 1; // pm->DefaultNumPartitions();
   auto &reg = tc.AddRegion(num_partitions);
@@ -911,9 +917,15 @@ TaskCollection Render(Mesh *pm, Real time) {
 
     auto set_nodal_vals = tl.AddTask(none, InitializeNodalValues, md);
     auto init_particles = tl.AddTask(none, InitializeCameras, md);
-    //auto comms = parthenon::AddBoundaryExchangeTasks(set_nodal_vals, tl, md_sp,
-                                                        //pm->multilevel);
     auto comms = set_nodal_vals;
+    auto viz = pm->packages.Get("riot_viz");
+    if (viz->Param<bool>("analysis")) {
+      auto &md_nodes = pm->mesh_data.AddShallow(
+          "riot_viz_nodes", md_sp, viz->Param<SceneInfo>("scene_info").field);
+      comms = parthenon::AddBoundaryExchangeTasks(
+          set_nodal_vals, tl, md_nodes, pm->multilevel,
+          [](TaskID id, TaskList *, std::shared_ptr<MeshData<Real>>, bool) { return id; });
+    }
     auto [itl, push] = tl.AddSublist(comms | init_particles, {0, 100000});
     
     auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp, pvr::particles::name());

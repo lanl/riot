@@ -93,12 +93,14 @@ using DataBox = Spiner::DataBox<Real>;
 //                    the dump-time comparison tolerance).
 //   kAxisStepFrac  - largest step permitted near a coordinate axis, as a
 //                    fraction of the cylindrical/spherical radius.
+//   kContourBisect - bisection iterations locating a contour crossing in a step.
 //   kGeomTol       - relative tolerance for placing/testing points on the
 //                    domain boundary during host-side camera setup.
 //   kBoundaryBand  - relative band for detecting that a host point coincides
 //                    with a block's outer radius.
 constexpr Real kMarchTiny = 1.e-14;
 constexpr Real kAxisStepFrac = 0.1;
+constexpr int kContourBisect = 24;
 constexpr Real kGeomTol = 1.e-12;
 constexpr Real kBoundaryBand = 1.e-6;
 
@@ -190,6 +192,7 @@ class VectorView3D {
         for (int ii = 0; ii < h[o][i].size(); ii++)
           host_data(idx++) = h[o][i][ii];
       }
+      curr_out += h[o].size();
     }
 
     Kokkos::deep_copy(data, host_data);
@@ -609,12 +612,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
                       "Too many viz layers requested. Must recompile after setting "
                       "max_layers large enough");
     //if (!is_active()) return;
+    interact.fill(true);
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       // check which layers could possibly interact with this block
-      //if (!on_block()) {
-        //printf("Not on block in setup: %g %g %g  %g %g %g    %g %g   %g %g    %g %g\n", xc[0], xc[1], xc[2], v[0], v[1], v[2],
-        //context.x_min_, context.x_max_, context.y_min_, context.y_max_, context.z_min_, context.z_max_);
-      //}
       int ninteract = 0;
       for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
         const Real min_v = min_value(blk, rp.pack_idx(cam_id, ilay));
@@ -676,7 +676,6 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         push_to_block_boundary();
         check_and_flag_off_mesh();
         //commit(ps, blk);
-        //printf("skipped!\n");
       }
     }
   }
@@ -767,17 +766,27 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         h = std::min(h, ht);
       });
     } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      Real nc[2];
-      nc[0] = (x[0] * v[0] + x[1] * v[1]) / xc[0];
-      nc[1] = v[2];
-      loop_2d([&]<int d>() {
-        auto ht =
-            (RayTrace::IntegratorBase<VarPack_t>::template xlo<d>() +
-             (nc[d - 1] > 0) * RayTrace::IntegratorBase<VarPack_t>::template dx<d>() -
-             xc[d - 1]) /
-            nc[d - 1];
-        h = std::min(h, ht);
-      });
+      using Base = RayTrace::IntegratorBase<VarPack_t>;
+      // R(h)^2 = r2 + bq h + aq h^2 along the straight ray
+      const Real aq = v[0] * v[0] + v[1] * v[1];
+      const Real bq = 2.0 * (x[0] * v[0] + x[1] * v[1]);
+      const Real r2 = x[0] * x[0] + x[1] * x[1];
+      if (aq > 0.0) {
+        const Real rlo = Base::template xlo<X1DIR>();
+        const Real rhi = Base::template xhi<X1DIR>();
+        const Real disc_lo = bq * bq - 4.0 * aq * (r2 - rlo * rlo);
+        if (bq < 0.0 && disc_lo >= 0.0) {
+          h = std::min(h, 2.0 * (r2 - rlo * rlo) / (-bq + std::sqrt(disc_lo)));
+        }
+        const Real sq_hi = std::sqrt(std::max(bq * bq - 4.0 * aq * (r2 - rhi * rhi), 0.0));
+        h = std::min(h, bq > 0.0 ? 2.0 * (rhi * rhi - r2) / (bq + sq_hi)
+                                 : (sq_hi - bq) / (2.0 * aq));
+      }
+      if (v[2] != 0.0) {
+        h = std::min(h, (Base::template xlo<X2DIR>() +
+                         (v[2] > 0) * Base::template dx<X2DIR>() - xc[1]) /
+                            v[2]);
+      }
       Real ht = std::max(kAxisStepFrac * xc[0], min_size());
       h = std::min(h, ht);
     } else {
@@ -890,8 +899,23 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         Real ht_min = 1.0;
         Real h0 = h;
         for (int i = 0; i < rp.ncontours(cam_id, ilay); i++) {
-          Real ht = (rp.contours(cam_id, ilay, i) - initial) / (final - initial);
-          if (ht > 0.0 && ht < ht_min) {
+          const Real cval = rp.contours(cam_id, ilay, i);
+          const Real f0 = initial - cval;
+          if (f0 * (final - cval) >= 0.0) continue;
+          Real tlo = 0.0;
+          Real ht = 1.0;
+          for (int it = 0; it < kContourBisect; it++) {
+            const Real tm = 0.5 * (tlo + ht);
+            std::array<Real, 3> xm{x[0] + tm * h0 * v[0], x[1] + tm * h0 * v[1],
+                                   x[2] + tm * h0 * v[2]};
+            auto cm = cart_to_coord(xm);
+            if ((get_value(ilay, cm[0], cm[1], cm[2]) - cval) * f0 > 0.0) {
+              tlo = tm;
+            } else {
+              ht = tm;
+            }
+          }
+          if (ht <= ht_min) {
             final_x[0] = x[0] + ht * h0 * v[0];
             final_x[1] = x[1] + ht * h0 * v[1];
             final_x[2] = x[2] + ht * h0 * v[2];
@@ -1047,6 +1071,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
 namespace impl {
 namespace rt = particles::ray_tracer;
 namespace vr = particles::riot_viz;
+struct NodalBounds {
+  parthenon::ParArray2D<Real> max_value, min_value;
+};
 struct TracerInfo {
   using DescriptorType = decltype(
       parthenon::MakeSwarmPackDescriptor<
