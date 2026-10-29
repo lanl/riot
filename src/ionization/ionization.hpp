@@ -402,6 +402,7 @@ bool SolveSmallDenseSystem(std::array<Real, MAX_N * MAX_N> &A, std::array<Real, 
 TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md);
 TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md);
 void ComputePlasmaDiffusionFluxesConstantCoefficient(MeshData<Real> *md);
+void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md);
 void ComputePlasmaDiffusionFluxesStefanMaxwell(MeshData<Real> *md);
 void FillDerivedIonization(MeshData<Real> *md);
 void CalculatePlasmaViscosity(MeshData<Real> *md);
