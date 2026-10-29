@@ -177,18 +177,16 @@ void PostCommsFillDerived(MeshData<Real> *md) {
   const Real mass_frac_thresh = hydro->Param<Real>("mass_frac_thresh");
   const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
 
-  auto v =
-      riot::MakePack<ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
-                     ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho,
-                     cm::sie, cm::temperature, cm::pressure, cm::bulk_modulus,
-                     cm::specific_heat, cm::electron_sie, cm::lT_cache, cm::lr_cache,
-                     ccbulk::rho, ccbulk::momentum, ccbulk::total_material_energy,
-                     ccbulk::velocity, ccbulk::internal_energy, ccbulk::pressure,
-                     ccbulk::bulk_modulus, ccbulk::temperature,
-                     ccbulk::electron_internal_energy, ccbulk::electron_temperature,
-                     ccbulk::electron_pressure, ccbulk::electron_number_density,
-                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter>(
-          md);
+  auto v = riot::MakePack<
+      ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
+      ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho, cm::sie,
+      cm::internal_energy, cm::temperature, cm::pressure, cm::bulk_modulus,
+      cm::specific_heat, cm::electron_sie, cm::lT_cache, cm::lr_cache, ccbulk::rho,
+      ccbulk::momentum, ccbulk::total_material_energy, ccbulk::velocity,
+      ccbulk::internal_energy, ccbulk::pressure, ccbulk::bulk_modulus,
+      ccbulk::temperature, ccbulk::electron_internal_energy, ccbulk::electron_temperature,
+      ccbulk::electron_pressure, ccbulk::electron_number_density,
+      ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter>(md);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
@@ -266,9 +264,11 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                   (rho_val > 0.0)
                       ? eosm_c.InternalEnergyFromDensityTemperature(rho_val, T, lambda)
                       : 0.0;
-              // NOTE(@pdmullen): ccmat::rho already contains mask
+              // NOTE(@pdmullen): ccmat::rho and cm::rho already contain mask
               pv_n(ccmat::internal_energy(), kji) =
                   pv_n(ccmat::rho(), kji) * pv_n(cm::sie(), kji);
+              pv_n(cm::internal_energy(), kji) =
+                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           };
           eosm.EvaluateDevice(eosmloop);
@@ -316,6 +316,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
               pv_n(ccmat::internal_energy(), kji) +=
                   pv_n(ccmat::electron_internal_energy(), kji);
               pv_n(cm::sie(), kji) += pv_n(cm::electron_sie(), kji);
+              pv_n(cm::internal_energy(), kji) =
+                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           }
           idx_range.TeamBarrier();

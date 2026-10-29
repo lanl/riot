@@ -409,6 +409,10 @@ documented in those chapters.
      - :math:`e_m`
      - 1
      - Cell, Intensive, Sparse, Derived, OneCopy; specific internal energy.
+   * - cm::internal_energy
+     - :math:`\rho_m e_m`
+     - 1
+     - Cell, Intensive, Sparse, Derived, OneCopy; material-averaged volumetric internal energy :math:`E_m/V_m`.
    * - cm::temperature
      - :math:`T_m`
      - 1
