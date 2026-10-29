@@ -92,6 +92,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   int stencil_width = std::max(recon_width, vfrac_recon_width);
   params.Add("recon", recon_tag);
   params.Add("vfrac_recon", vfrac_recon_tag);
+  const bool do_thinc = pin->GetOrAddBoolean("physics", "thinc", false);
+  if (do_thinc) stencil_width = std::max(stencil_width, 1);
   params.Add("stencil_width", stencil_width);
 
   // CFL is 0.8 by default
