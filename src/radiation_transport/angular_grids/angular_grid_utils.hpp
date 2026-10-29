@@ -42,6 +42,9 @@ struct AngularGridArrays {
   ParArrayND<Real> weights;       // solid angles / 4pi
   ParArrayND<int> num_neighbors;  // number of neighbors
   ParArrayND<int> ind_neighbors;  // indices of neighbors
+  ParArrayND<int> num_reflect;    // # interior angles feeding a mirrored ghost angle
+  ParArrayND<int> ind_reflect;    // interior angle indices of the reflection map
+  ParArrayND<Real> wgt_reflect;   // reflection map weights
 };
 
 //----------------------------------------------------------------------------------------
@@ -59,6 +62,9 @@ GetAngularGridArrays(const std::shared_ptr<StateDescriptor> &pkg) {
     arrays.weights = agrid->weights;
     arrays.num_neighbors = agrid->num_neighbors;
     arrays.ind_neighbors = agrid->ind_neighbors;
+    arrays.num_reflect = agrid->num_reflect;
+    arrays.ind_reflect = agrid->ind_reflect;
+    arrays.wgt_reflect = agrid->wgt_reflect;
     return arrays;
   };
   const auto &amesh = pkg->Param<std::string>("angular_mesh");
@@ -66,6 +72,22 @@ GetAngularGridArrays(const std::shared_ptr<StateDescriptor> &pkg) {
     return bundle(pkg->Param<std::shared_ptr<GeodesicGrid>>("geodesic_grid"));
   } else if (amesh == "latlon") {
     return bundle(pkg->Param<std::shared_ptr<LatLonGrid>>("latlon_grid"));
+  } else {
+    PARTHENON_FAIL("Invalid angular mesh choice!");
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void BuildReflectionMaps
+//! \brief Build the reflecting-BC angle maps of the package's angular grid for the
+//! direction components flagged in comps.  Must be called before GetAngularGridArrays.
+inline void BuildReflectionMaps(StateDescriptor *pkg, const std::array<bool, 3> &comps) {
+  const auto &amesh = pkg->Param<std::string>("angular_mesh");
+  if (amesh == "geodesic") {
+    pkg->Param<std::shared_ptr<GeodesicGrid>>("geodesic_grid")
+        ->BuildReflectionMaps(comps);
+  } else if (amesh == "latlon") {
+    pkg->Param<std::shared_ptr<LatLonGrid>>("latlon_grid")->BuildReflectionMaps(comps);
   } else {
     PARTHENON_FAIL("Invalid angular mesh choice!");
   }
