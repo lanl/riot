@@ -80,10 +80,6 @@ option(RIOT_BUILD_PYTHON "Build Python interface" ON)
 option(RIOT_BUILD_CAD "Build support for using CAD files" OFF)
 option(RIOT_ENABLE_SANITIZE "Build with address sanitizer" OFF)
 
-option(RIOT_ENABLE_NDI "Enable NDI for ndi2spiner tool only" OFF)
-cmake_dependent_option(RIOT_BUILD_NDI "Build included version of NDI"
-  ON RIOT_ENABLE_NDI OFF)
-
 # Compile-time limits. These control fixed-size storage (mostly in
 # hydro/calculate_fluxes and the radiation_diffusion package). Note the
 # material limits are per-block, so an individual problem can have more
@@ -336,36 +332,6 @@ endif()
 # singularity opac
 #message("Configuring singularity-opac")
 #add_subdirectory(external/singularity-opac singularity-opac)
-
-# NDI
-if (RIOT_ENABLE_NDI)
-  if(RIOT_BUILD_NDI)
-    message("Fetching NDI")
-    add_subdirectory(external/ndi ndi)
-    # Silence all the warnings coming from NDI
-    add_target_compiler_flag_if_supported(ndi PRIVATE "-Wno-incompatible-pointer-types" C)
-    add_target_compiler_flag_if_supported(ndi PRIVATE "-Wno-missing-braces" C)
-    add_target_compiler_flag_if_supported(ndi PRIVATE "-Wno-unused-result" C)
-    add_target_compiler_flag_if_supported(ndi_float32 PRIVATE "-Wno-incompatible-pointer-types" C)
-    add_target_compiler_flag_if_supported(ndi_float32 PRIVATE "-Wno-missing-braces" C)
-    add_target_compiler_flag_if_supported(ndi_float32 PRIVATE "-Wno-unused-result" C)
-    add_target_compiler_flag_if_supported(ndi_float64 PRIVATE "-Wno-incompatible-pointer-types" C)
-    add_target_compiler_flag_if_supported(ndi_float64 PRIVATE "-Wno-missing-braces" C)
-    add_target_compiler_flag_if_supported(ndi_float64 PRIVATE "-Wno-unused-result" C)
-    add_target_compiler_flag_if_supported(ndi_C PRIVATE "-Wno-incompatible-pointer-types" C)
-    add_target_compiler_flag_if_supported(ndi_C PRIVATE "-Wno-missing-braces" C)
-    add_target_compiler_flag_if_supported(ndi_C PRIVATE "-Wno-unused-result" C)
-  else()
-    find_package(ndi REQUIRED)
-  endif()
-
-  # ndi2spiner tool (requires NDI and HDF5)
-  if(SPINER_USE_HDF)
-    add_subdirectory(tools/ndi2spiner)
-  else()
-    message(STATUS "Skipping ndi2spiner tool (requires HDF5 support)")
-  endif()
-endif() # RIOT_ENABLE_NDI
 
 if(RIOT_BUILD_PYTHON)
   message("Python")

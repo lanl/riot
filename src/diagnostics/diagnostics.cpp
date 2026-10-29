@@ -13,6 +13,7 @@
 // This file was made in part with generative AI.
 
 #include "diagnostics.hpp"
+#include "riot_viz.hpp"
 
 namespace diagnostics {
 
@@ -27,6 +28,20 @@ void AddDiagnostics(ParameterInput *pin, Packages_t &packages) {
       PARTHENON_REQUIRE_THROWS(diagnostics_init.count(diag) > 0,
                                "Diagnostic " + diag + " does not exist.");
       packages.Add(diagnostics_init[diag](pin));
+    }
+  }
+}
+
+void PostStepDiagnosticsInLoop(Mesh *pm, ParameterInput *pin,
+                               const parthenon::SimTime &tm) {
+  auto actual_time = tm.time + tm.dt;
+
+  if (riot_viz::TimeToRender(pm, actual_time)) {
+    TaskCollection tc = riot_viz::Render(pm, actual_time);
+    auto status = tc.Execute();
+    if (status != TaskListStatus::complete) {
+      PARTHENON_WARN("Visualization failed");
+      return;
     }
   }
 }

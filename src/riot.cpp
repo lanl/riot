@@ -40,12 +40,12 @@
 namespace riot {
 
 // need this because it's static
-std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
+// std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
 
 //----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::RegisterPgens
 //  \brief Pgen registration
-void RiotDriver::RegisterPgens() {
+void RegisterPgens() {
   riot::RegisterAllRiotProblems();
   // Add more registration calls below if needed. e.g.,
   // RIOT_PROBLEM(my_cool_pgen);
@@ -54,7 +54,7 @@ void RiotDriver::RegisterPgens() {
 //----------------------------------------------------------------------------------------
 //! \fn  Packages_t RiotDriver::ProcessPackages
 //  \brief Package initializer for Parthenon
-Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
+Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   Packages_t packages;
 
@@ -209,13 +209,9 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
       packages.Add(
           RadiationDiffusion::MultiGroup<ccbulk::electron_temperature>::Initialize(
               pin.get(), materials));
-      OperatorSplitTasks.push_back(
-          RadiationDiffusion::MultiGroup<ccbulk::electron_temperature>::Step);
     } else {
       packages.Add(RadiationDiffusion::MultiGroup<ccbulk::temperature>::Initialize(
           pin.get(), materials));
-      OperatorSplitTasks.push_back(
-          RadiationDiffusion::MultiGroup<ccbulk::temperature>::Step);
     }
   }
   if (do_radiation_transport) {
@@ -232,35 +228,26 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     riot->AddParam("do_jacobi", do_jacobi);
     if (do_explicit) {
       packages.Add(Explicit::Initialize(pin.get(), materials));
-      OperatorSplitTasks.push_back(&Explicit::ExplicitTasks);
     } else if (do_jacobi) {
       packages.Add(Jacobi::Initialize(pin.get(), materials));
-      OperatorSplitTasks.push_back(&Jacobi::JacobiTasks);
     }
   }
   if (do_levelsets) {
     packages.Add(Levelsets::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(Levelsets::Reinitialize);
   }
   if (do_lasers) packages.Add(Laser::Initialize(pin.get()));
   if (do_ionization) {
     packages.Add(Ionization::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(Ionization::ElectronIonCouplingStep);
-    OperatorSplitTasks.push_back(
-        Ionization::ConductionStep<Ionization::TransportSpecies::Electron>);
-    OperatorSplitTasks.push_back(
-        Ionization::ConductionStep<Ionization::TransportSpecies::Ion>);
   }
   if (do_prescribed_sources) {
     packages.Add(PrescribedSources::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(PrescribedSources::Step);
   }
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);
 
   // Problem-specific package object
-  packages.Add(ProblemPackage(pin.get()));
+  // packages.Add(ProblemPackage(pin.get()));
 
   // sparse deallocation
   bool sparse_dealloc = pin->GetOrAddBoolean("materials", "sparse_dealloc", true);
@@ -273,8 +260,8 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   }
 
   // setup regions for initialization
-  riot->AddParam("BlockInitData",
-                 std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  //riot->AddParam("BlockInitData",
+  //               std::make_shared<region_pgen::BlockInitData>(pin.get()));
 
   // add any diagnostic packages
   diagnostics::AddDiagnostics(pin.get(), packages);
@@ -282,7 +269,6 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   // Tracers must be added AFTER all other packages so it can introspect their fields
   if (do_tracers) {
     packages.Add(Tracers::Initialize(pin.get(), packages));
-    OperatorSplitTasks.push_back(Tracers::PushTracers);
   }
 
   return packages;
