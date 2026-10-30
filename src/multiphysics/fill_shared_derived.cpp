@@ -344,9 +344,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
 //! \fn  void Multiphysics::FillInteriorBlockDerived
 //! \brief
 void FillInteriorBlockDerived(std::shared_ptr<MeshBlockData<Real>> pmbd) {
-  MeshData<Real> md;
   parthenon::BlockList_t block_list{pmbd->GetBlockSharedPointer()};
-  md.Initialize(block_list, pmbd->GetMeshPointer());
+  MeshData<Real> md("temp", block_list, pmbd->GetMeshPointer());
   md.GetBlockData(0) = pmbd;
   FillInteriorDerived(&md);
 }
