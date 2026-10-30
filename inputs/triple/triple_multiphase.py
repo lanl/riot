@@ -36,6 +36,13 @@ def make_input():
         file_type="hdf5",
         dt=0.1,
     )
+    riot.input(
+        "parthenon/output2",
+        file_type = "openpmd",
+        output_type = "restart",
+        variables=["c.c.bulk.rho", "c.c.mat.volume_fraction"],
+        dt = 0.1
+    )
 
     riot.input("parthenon/time", nlim=-1, tlim=5.0, integrator="rk2", ncycle_out=10)
 
