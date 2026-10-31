@@ -721,14 +721,15 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
         DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
         KOKKOS_LAMBDA(const int n) {
           const int pidx = new_context(0).GetNewParticleIndex(n);
+	  x(pidx) = camera_pts(n, sample::x); // to make Cuda happy
+	  y(pidx) = camera_pts(n, sample::y);
+	  z(pidx) = camera_pts(n, sample::z);
+	  const auto block_xmax0 = block_xmax[0];
           if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-            x(pidx) = camera_pts(n, sample::x);
-            y(pidx) = camera_pts(n, sample::y);
-            z(pidx) = camera_pts(n, sample::z);
           } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
             Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
                                   camera_pts(n, sample::y) * camera_pts(n, sample::y));
-            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < kBoundaryBand)
+            if (std::abs(rcyl - block_xmax0) / block_xmax0 < kBoundaryBand)
               rcyl = block_xmax[0] - kGeomTol;
             const Real zcyl = camera_pts(n, sample::z);
             Real phi_cyl = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));

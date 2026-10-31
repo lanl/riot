@@ -365,44 +365,55 @@ class IntegratorBase : public CellInfo {
   }
 };
 
+template <typename Integrator,
+	  typename VarPack_t, typename SwarmPack_t,
+	  typename Tuple, std::size_t... I>
+KOKKOS_INLINE_FUNCTION
+Integrator MakeIntegrator(const VarPack_t &v, const SwarmPack_t &ps, int b, int n,
+                          int ndim, const auto &context, const Tuple &args,
+                          std::index_sequence<I...>) {
+  return Integrator(v, ps, b, n, ndim, context, std::get<I>(args)...);
+}
+
 template <template <typename> class Integrator_t,
           typename SwarmPack_t, typename VarPack_t, typename... Args>
 TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
   namespace rt = particles::ray_tracer;
   using Integrator = Integrator_t<const VarPack_t>;
 
+  // One ordinary capture, rather than a variadic pack capture.
+  const auto captured_args = std::make_tuple(std::forward<Args>(args)...);
+
   const int ndim = pm->ndim;
-
-  int dj = ndim > 1 ? 1 : 0;
-  int dk = ndim > 2 ? 1 : 0;
-
   int num_not_done = 0;
+
   parthenon::par_reduce(
       parthenon::loop_pattern_flatrange_tag, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
       ps.GetMaxFlatIndex(),
       KOKKOS_LAMBDA(const int idx, int &num_unfinished) {
         auto [b, n] = ps.GetBlockParticleIndices(idx);
         auto &context = ps.GetContext(b);
+
         if (context.IsActive(n)) {
-          Integrator integrator(v, ps, b, n, ndim, context, args...);
+          auto integrator = MakeIntegrator<Integrator>(
+              v, ps, b, n, ndim, context, captured_args,
+              std::index_sequence_for<Args...>{});
+
           if (integrator.is_active()) {
             while (!integrator.stop()) {
               integrator.set_cell();
               integrator.advance();
             }
           }
+
           integrator.commit(ps, b);
-          if (integrator.is_active()) {
-            num_unfinished++;
-          }
+          if (integrator.is_active()) ++num_unfinished;
         }
       },
       Kokkos::Sum<int>(num_not_done));
 
-  if (num_not_done) return TaskStatus::iterate;
-  return TaskStatus::complete;
+  return num_not_done ? TaskStatus::iterate : TaskStatus::complete;
 }
-
 } // namespace RayTrace
 
 #endif // DIAGNOSTICS_RAY_TRACE_HPP_
