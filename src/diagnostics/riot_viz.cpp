@@ -20,11 +20,10 @@
 
 #include <riot_utils/riot_loops.hpp>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// stb implementations live in stb_impl.c, compiled with the C compiler rather than
+// nvcc. See the note there.
 #include <stb_image_write.h>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include "stb_image_resize2.h"
+#include <stb_image_resize2.h>
 
 #include <font8x8.h>
 
