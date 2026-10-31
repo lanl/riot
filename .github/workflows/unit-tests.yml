@@ -7,6 +7,19 @@ on:
   # Keep a baseline compiler cache that pull-request builds can restore.
   push:
     branches: [main]
+  # Called by Parthenon to test a candidate Parthenon revision against RIOT.
+  workflow_call:
+    inputs:
+      riot_ref:
+        description: "RIOT revision to test when called externally"
+        type: string
+        required: false
+        default: ""
+      parthenon_ref:
+        description: "Optional Parthenon branch, SHA, tag, or PR merge ref"
+        type: string
+        required: false
+        default: ""
 
 # ccache is a compiler launcher that caches object files and carefully
 # checks that the compilation should be identical, and if it is, uses
@@ -45,15 +58,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # An external reusable-workflow call has the caller's GitHub context,
+          # so identify RIOT explicitly.
+          repository: lanl/riot
+          ref: ${{ inputs.riot_ref || github.ref }}
           submodules: false
+          persist-credentials: false
 
-      - name: Initialize in-tree build dependencies
+      - name: Initialize pinned non-Parthenon dependencies
         run: |
           git submodule update --init --recursive \
-            external/parthenon \
             external/kokkos-kernels \
             external/singularity-eos \
             external/singularity-opac
+
+      - name: Initialize pinned Parthenon
+        if: ${{ inputs.parthenon_ref == '' }}
+        run: git submodule update --init --recursive external/parthenon
+
+      - name: Checkout candidate Parthenon
+        if: ${{ inputs.parthenon_ref != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: parthenon-hpc-lab/parthenon
+          ref: ${{ inputs.parthenon_ref }}
+          path: external/parthenon
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Show exact revisions
+        run: |
+          echo "RIOT: $(git rev-parse HEAD)"
+          echo "Parthenon: $(git -C external/parthenon rev-parse HEAD)"
 
       - name: Identify in-tree dependency revisions
         id: dependencies
