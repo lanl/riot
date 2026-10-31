@@ -197,7 +197,7 @@ TaskStatus TransportParticles(MeshData<Real> *md, const std::string &swarm_name,
 //  \brief Sample requested fields at tracer particle locations (template implementation)
 template <typename T>
 TaskStatus SampleFieldsAtTracers(T *data, const std::string &swarm_name) {
-  using RiotReconstruction::ComputeMCSlope;
+  using RiotReconstruction::ComputeMinModSlope;
 
   auto pm = data->GetParentPointer();
   auto pmesh = data->GetMeshPointer();
@@ -296,20 +296,20 @@ TaskStatus SampleFieldsAtTracers(T *data, const std::string &swarm_name) {
             // Compute slopes in each direction
             const Real u_im1 = pack_field(b, pack_idx, kp, jp, ip - 1);
             const Real u_ip1 = pack_field(b, pack_idx, kp, jp, ip + 1);
-            const Real slope1 = ComputeMCSlope(u_im1, u_i, u_ip1, dx1m, dx1p);
+            const Real slope1 = ComputeMinModSlope(u_im1, u_i, u_ip1, dx1m, dx1p);
 
             Real slope2 = 0.0;
             if (multi_d) {
               const Real u_jm1 = pack_field(b, pack_idx, kp, jp - 1, ip);
               const Real u_jp1 = pack_field(b, pack_idx, kp, jp + 1, ip);
-              slope2 = ComputeMCSlope(u_jm1, u_i, u_jp1, dx2m, dx2p);
+              slope2 = ComputeMinModSlope(u_jm1, u_i, u_jp1, dx2m, dx2p);
             }
 
             Real slope3 = 0.0;
             if (three_d) {
               const Real u_km1 = pack_field(b, pack_idx, kp - 1, jp, ip);
               const Real u_kp1 = pack_field(b, pack_idx, kp + 1, jp, ip);
-              slope3 = ComputeMCSlope(u_km1, u_i, u_kp1, dx3m, dx3p);
+              slope3 = ComputeMinModSlope(u_km1, u_i, u_kp1, dx3m, dx3p);
             }
 
             return u_i + slope1 * delta1 + slope2 * delta2 + slope3 * delta3;

@@ -241,14 +241,6 @@ TaskCollection RiotDriver::RiotStepTasks() {
       auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx,
                                  parthenon::LoadAndSendFluxCorrections, mu0);
 
-      // geometric sources, if curvilinear
-      auto geom_source = none;
-      if (curvilinear) {
-        geom_source =
-            tl.AddTask(none, Hydro::CalculateGeometricSource, mu0.get(),
-                       hydro_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
-      }
-
       // compute strength sources, if enabled
       auto strength_source = none;
       if (do_strength) {
@@ -296,6 +288,14 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // receive and apply flux corrections
       auto recv_flx = tl.AddTask(start_flx_recv, parthenon::ReceiveFluxCorrections, mu0);
       auto set_flx = tl.AddTask(recv_flx, parthenon::SetFluxCorrections, mu0);
+
+      // geometric sources, if curvilinear (after flux correction of the face pressures)
+      auto geom_source = none;
+      if (curvilinear) {
+        geom_source =
+            tl.AddTask(hydro_flx | set_flx, Hydro::CalculateGeometricSource, mu0.get(),
+                       hydro_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+      }
 
       // one giant update kernel to rule them all
       // JMM: UpdateToNextStage sums every source term in dudt_args into the state

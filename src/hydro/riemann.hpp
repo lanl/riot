@@ -62,7 +62,6 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_fleischmann(
 
   const Real rhos_rhol = (sl - vpl) / (sl - ss);
   const Real rhos_rhor = (sr - vpr) / (sr - ss);
-  const Real rho_upwind = (ss >= 0.0) * rhol + (ss < 0.0) * rhor;
 
   const Real v1fl = (DIR == X1DIR ? ss : v1l);
   const Real v1fr = (DIR == X1DIR ? ss : v1r);
@@ -86,6 +85,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_fleischmann(
                     super_beta * (slp * rhol * (rhos_rhol - 1.0) +
                                   std::abs(ss) * (rhos_rhol * rhol - rhos_rhor * rhor) +
                                   srp * rhor * (rhos_rhor - 1.0));
+  const Real rho_upwind = (frho >= 0.0) * rhol + (frho < 0.0) * rhor;
   riemann_vel = frho / rho_upwind;
 
   f_v1 =
@@ -157,7 +157,8 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
 
   const Real rhos_rho = (s - vp) / (s - ss);
   const Real frho = rho * (vp + s * (rhos_rho - 1.0));
-  riemann_vel = frho / rho;
+  const Real rho_upwind = (frho >= 0.0) * rhol + (frho < 0.0) * rhor;
+  riemann_vel = frho / rho_upwind;
 
   f_v1 = rho * (vp * v1 + s * (rhos_rho * v1face - v1));
   f_v2 = rho * (vp * v2 + s * (rhos_rho * v2face - v2));
@@ -183,13 +184,14 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
 //!   chllc is carbuncle corrected hllc
 //!   lhllc is low-Mach corrected and carbuncle corrected hllc
 //! Relevant reference is Minoshima and Miyoshi, 2021
+//! th is the per-face shock-sensor weight from GetSensors.
 template <int DIR, bool enable_low_mach>
 KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
     Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
-    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel, Real &dvn,
-    Real &dvt) {
+    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    const Real th) {
 
   // Extract L/R states
   rhol = std::max(rhol, 1.e-100);
@@ -206,12 +208,6 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   const Real vsql = SQR(v1l) + SQR(v2l) + SQR(v3l);
   const Real vsqr = SQR(v1r) + SQR(v2r) + SQR(v3r);
 
-  // Shock detector
-  const Real cmax = std::max(cl, cr);
-  const Real rt6th =
-      std::min(1.0, (cmax - std::min(dvn, 0.0)) / (cmax - std::min(dvt, 0.0)));
-  Real th = SQR(rt6th * rt6th * rt6th);
-
   // Determine the contact wave speed and the pressure at the contact surface
   const Real rhocsl = rhol * (sl - vpl);
   const Real rhocsr = rhor * (sr - vpr);
@@ -222,6 +218,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   Real phi = 1.0;
   if constexpr (enable_low_mach) {
     static constexpr Real SAFETY = 1e-4;
+    const Real cmax = std::max(cl, cr);
     const Real chi =
         std::max(SAFETY, std::min(1.0, std::sqrt(std::max(vsql, vsqr)) / cmax));
     phi = chi * (2.0 - chi);
@@ -268,20 +265,21 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   const Real wl = am_pos ? am / (am - bm) : 0.0;
   const Real wr = am_pos ? 0.0 : -am / (bp - am);
   const Real sm = am_pos ? -bm / (am - bm) : bp / (bp - am);
+  const Real wcp = sm * cp;
 
-  // Compute the HLLC momentum and total energy fluxes
+  // Compute the momentum and total energy fluxes
   f_v1 = wl * flIVX + wr * frIVX;
   f_v2 = wl * flIVY + wr * frIVY;
   f_v3 = wl * flIVZ + wr * frIVZ;
-  f_eng = wl * flIEN + wr * frIEN + sm * cp * am;
-  if constexpr (DIR == X1DIR) f_v1 += sm * cp;
-  if constexpr (DIR == X2DIR) f_v2 += sm * cp;
-  if constexpr (DIR == X3DIR) f_v3 += sm * cp;
+  f_eng = wl * flIEN + wr * frIEN + wcp * am;
+  if constexpr (DIR == X1DIR) f_v1 += wcp;
+  if constexpr (DIR == X2DIR) f_v2 += wcp;
+  if constexpr (DIR == X3DIR) f_v3 += wcp;
 
-  // Compute the HLLC bulk mass flux to assign the Riemann velocity
+  // Bulk mass flux, upwinded by its own sign so the partial densities stay positive
   const Real frho = wl * flIDN + wr * frIDN;
-  const Real rho = l_flag * rhol + r_flag * rhor;
-  riemann_vel = frho / rho;
+  const Real rho_upwind = (frho >= 0.0) * rhol + (frho < 0.0) * rhor;
+  riemann_vel = frho / rho_upwind;
 
   return std::max(std::abs(sl), std::abs(sr));
 }
@@ -294,11 +292,11 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc(
     Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
-    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel, Real &dvn,
-    Real &dvt) {
+    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    const Real th = 1.0) {
   return lr_to_flux_lhllc_base<DIR, true>(rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul,
                                           ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3, f_eng,
-                                          v1face, v2face, v3face, riemann_vel, dvn, dvt);
+                                          v1face, v2face, v3face, riemann_vel, th);
 }
 //----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::lr_to_flux_chllc
@@ -308,11 +306,11 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_chllc(
     Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
     const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
     const Real Pr, const Real cl, const Real cr, Real &f_v1, Real &f_v2, Real &f_v3,
-    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel, Real &dvn,
-    Real &dvt) {
+    Real &f_eng, Real &v1face, Real &v2face, Real &v3face, Real &riemann_vel,
+    const Real th = 1.0) {
   return lr_to_flux_lhllc_base<DIR, false>(rhol, rhor, v1l, v1r, v2l, v2r, v3l, v3r, ul,
                                            ur, Pl, Pr, cl, cr, f_v1, f_v2, f_v3, f_eng,
-                                           v1face, v2face, v3face, riemann_vel, dvn, dvt);
+                                           v1face, v2face, v3face, riemann_vel, th);
 }
 
 //----------------------------------------------------------------------------------------
@@ -471,7 +469,8 @@ KOKKOS_INLINE_FUNCTION Real lr_to_flux_strength(
   // In the supersonic case, vp == ss, so rhos/rho = 1
   const Real rhos_rho = (s - vp) / (s - ss);
   const Real frho = rho * (vp + s * (rhos_rho - 1.0));
-  riemann_vel = frho / rho;
+  const Real rho_upwind = (frho >= 0.0) * rhol + (frho < 0.0) * rhor;
+  riemann_vel = frho / rho_upwind;
 
   const Real E = u + 0.5 * rho * (v1 * v1 + v2 * v2 + v3 * v3);
   const Real ircs = 1.0 / rcs;
