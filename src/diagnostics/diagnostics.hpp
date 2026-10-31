@@ -22,6 +22,8 @@
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
 using parthenon::Packages_t;
+#include <parthenon/driver.hpp>
+using namespace parthenon::driver::prelude;
 
 #include "variables.hpp"
 
@@ -29,7 +31,8 @@ using parthenon::Packages_t;
   DIAG(dsplanar)                                                                         \
   DIAG(doubleshell)                                                                      \
   DIAG(masses)                                                                           \
-  DIAG(energies)
+  DIAG(energies)                                                                         \
+  DIAG(riot_viz)
 
 #define DIAG(name)                                                                       \
   namespace name {                                                                       \
@@ -45,6 +48,8 @@ static std::unordered_map<std::string, ppkg_t> diagnostics_init({FOREACH_DIAG});
 #undef DIAG
 
 void AddDiagnostics(ParameterInput *pin, Packages_t &packages);
+void PostStepDiagnosticsInLoop(Mesh *pm, ParameterInput *pin,
+                               const parthenon::SimTime &tm);
 
 } // namespace diagnostics
 

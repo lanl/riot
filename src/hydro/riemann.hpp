@@ -264,9 +264,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   if constexpr (DIR == X3DIR) frIVZ += Pr;
 
   // Compute HLLC flux weights
-  const Real wl = (am >= 0.0) * am / (am - bm);
-  const Real wr = (am < 0.0) * -am / (bp - am);
-  const Real sm = (am >= 0.0) * (-bm / (am - bm)) + (am < 0.0) * (bp / (bp - am));
+  const bool am_pos = (am >= 0.0);
+  const Real wl = am_pos ? am / (am - bm) : 0.0;
+  const Real wr = am_pos ? 0.0 : -am / (bp - am);
+  const Real sm = am_pos ? -bm / (am - bm) : bp / (bp - am);
 
   // Compute the HLLC momentum and total energy fluxes
   f_v1 = wl * flIVX + wr * frIVX;

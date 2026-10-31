@@ -38,7 +38,8 @@ LatLonGrid::LatLonGrid(int ntheta, int nphi, bool fv_fix)
       ind_neighbors_edges("ind_neighbors_edges", 1, 1), weights("weights", 1),
       arc_weights("arc_weights", 1, 1), cart_pos("cart_pos", 1, 1),
       cart_pos_unit("cart_pos_unit", 1, 1), cart_pos_mid("cart_pos_mid", 1, 1, 1),
-      gflux("gflux", 1, 1) {
+      gflux("gflux", 1, 1), num_reflect("num_reflect", 3, 1),
+      ind_reflect("ind_reflect", 3, 1, 1), wgt_reflect("wgt_reflect", 3, 1, 1) {
 
   nangles = ntheta * nphi;
 
@@ -157,7 +158,7 @@ void LatLonGrid::ComputeThetaLevels(ParArrayHost<Real> &theta_v,
                                     ParArrayHost<Real> &theta_f,
                                     ParArrayHost<Real> &costheta_v,
                                     ParArrayHost<Real> &costheta_f) {
-  const Real dcostheta = 2.0 / ntheta_;
+  const Real dcostheta = DCosTheta();
   for (int i = 0; i <= ntheta_; ++i) {
     costheta_f(i) = 1.0 - i * dcostheta;
     theta_f(i) = std::acos(costheta_f(i));
@@ -173,10 +174,7 @@ void LatLonGrid::ComputeThetaLevels(ParArrayHost<Real> &theta_v,
 
 //----------------------------------------------------------------------------------------
 void LatLonGrid::ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> &phi_f) {
-  // In RZ each stored cell represents both signs of the azimuthal direction cosine.
-  const Real extent =
-      parthenon::IsCoord<parthenon::UniformCylindrical>() ? M_PI : 2.0 * M_PI;
-  const Real dphi = extent / nphi_;
+  const Real dphi = DPhi();
   for (int i = 0; i <= nphi_; ++i)
     phi_f(i) = i * dphi;
   for (int i = 0; i < nphi_; ++i)
@@ -397,4 +395,41 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
           std::copysign(gflx_avg, ngflx);
     }
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn void LatLonGrid::BuildReflectionMaps
+//! \brief Build the reflecting-BC angle maps for the requested direction components.
+//! The lat-lon grid is symmetric under each mirror, so every map is the one-to-one
+//! permutation (it, ip) -> (ntheta-1-it, ip) for n_z, phi -> pi-phi for n_x, and
+//! phi -> -phi for n_y (the identity in RZ, where cells represent both signs of n_y).
+void LatLonGrid::BuildReflectionMaps(const std::array<bool, 3> &comps) {
+  constexpr bool folded = parthenon::IsCoord<parthenon::UniformCylindrical>();
+  const int nhalf = folded ? nphi_ : nphi_ / 2;
+  PARTHENON_REQUIRE(!comps[0] || folded || nphi_ % 2 == 0,
+                    "Lat-lon reflection about n_x requires an even nphi.");
+
+  num_reflect.Resize(3, nangles);
+  ind_reflect.Resize(3, nangles, 1);
+  wgt_reflect.Resize(3, nangles, 1);
+  ParArrayHost<int> num_reflect_h("num_reflect_h", 3, nangles);
+  ParArrayHost<int> ind_reflect_h("ind_reflect_h", 3, nangles, 1);
+  ParArrayHost<Real> wgt_reflect_h("wgt_reflect_h", 3, nangles, 1);
+  for (int c = 0; c < 3; ++c) {
+    for (int it = 0; it < ntheta_; ++it) {
+      for (int ip = 0; ip < nphi_; ++ip) {
+        const int jt = (c == 2) ? ntheta_ - 1 - it : it;
+        const int jp = (c == 0)              ? (nhalf - 1 - ip + nphi_) % nphi_
+                       : (c == 1 && !folded) ? nphi_ - 1 - ip
+                                             : ip;
+        const int idx = it * nphi_ + ip;
+        num_reflect_h(c, idx) = comps[c];
+        ind_reflect_h(c, idx, 0) = jt * nphi_ + jp;
+        wgt_reflect_h(c, idx, 0) = 1.0;
+      }
+    }
+  }
+  Kokkos::deep_copy(num_reflect, num_reflect_h);
+  Kokkos::deep_copy(ind_reflect, ind_reflect_h);
+  Kokkos::deep_copy(wgt_reflect, wgt_reflect_h);
 }

@@ -32,6 +32,7 @@
 #include "riot_pgen/regions.hpp"
 #include "scalars/scalars.hpp"
 #include "strength/strength.hpp"
+#include "thinc/thinc.hpp"
 #include "tnburn/tnburn.hpp"
 #include "tracers/tracers.hpp"
 #include "variables.hpp"
@@ -39,12 +40,12 @@
 namespace riot {
 
 // need this because it's static
-std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
+// std::vector<TaskCollectionFnPtr> RiotDriver::OperatorSplitTasks;
 
 //----------------------------------------------------------------------------------------
 //! \fn  void RiotDriver::RegisterPgens
 //  \brief Pgen registration
-void RiotDriver::RegisterPgens() {
+void RegisterPgens() {
   riot::RegisterAllRiotProblems();
   // Add more registration calls below if needed. e.g.,
   // RIOT_PROBLEM(my_cool_pgen);
@@ -53,7 +54,7 @@ void RiotDriver::RegisterPgens() {
 //----------------------------------------------------------------------------------------
 //! \fn  Packages_t RiotDriver::ProcessPackages
 //  \brief Package initializer for Parthenon
-Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
+Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   Packages_t packages;
 
@@ -63,6 +64,8 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   // Custom Metadata flags
   parthenon::MetadataFlag MetadataOperatorSplit =
       parthenon::Metadata::GetOrAddFlag(riot::metadata::OperatorSplit);
+  parthenon::MetadataFlag MetadataKinematicAdvected =
+      parthenon::Metadata::GetOrAddFlag(riot::metadata::KinematicAdvected);
 
   // riot StateDescriptor
   packages.Add(std::make_shared<StateDescriptor>("riot"));
@@ -71,6 +74,8 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   // determine input file specified physics
   const bool do_hydro =
       pin->GetOrAddBoolean("physics", "hydro", true, "Enable hydrodynamics");
+  const bool do_thinc = pin->GetOrAddBoolean("physics", "thinc", false,
+                                             "Enable equilibrium THINC/BVD interfaces");
   const bool do_strength =
       pin->GetOrAddBoolean("physics", "strength", false, "Enable material strength");
   const bool do_mix =
@@ -81,6 +86,9 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
       pin->GetOrAddBoolean("physics", "scalars", false, "enable passive scalars");
   const bool fixed_fluid = pin->GetOrAddBoolean("physics", "fixed_fluid", false,
                                                 "Freeze the fluid background");
+  const bool kinematic_advection = pin->GetOrAddBoolean(
+      "physics", "kinematic_advection", false,
+      "Advect material densities and passive scalars while freezing the bulk state");
   const bool do_lasers = pin->GetOrAddBoolean("physics", "lasers", false,
                                               "Laser ray tracing and energy deposition");
   const bool do_multigroup_diffusion =
@@ -100,11 +108,17 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
       pin->GetOrAddBoolean("physics", "tracers", false, "Enable tracer particles");
 
   // check for compatibility
+  if (do_thinc) PARTHENON_REQUIRE(do_hydro, "THINC requires hydro.");
   if (do_strength) PARTHENON_REQUIRE(do_hydro, "Strength requires hydro.")
   if (do_mix) PARTHENON_REQUIRE(do_hydro, "Mix requires hydro.")
   if (do_tn) PARTHENON_REQUIRE(do_hydro, "TN requires hydro.")
   if (do_scalars) PARTHENON_REQUIRE(do_hydro, "Scalars currently require hydro.")
   if (fixed_fluid) PARTHENON_REQUIRE(do_hydro, "Fixed fluid config. requires hydro.")
+  if (kinematic_advection) {
+    PARTHENON_REQUIRE(do_hydro, "Kinematic advection requires hydro.");
+    PARTHENON_REQUIRE(!fixed_fluid,
+                      "Kinematic advection and fixed fluid are mutually exclusive.");
+  }
   if (do_multigroup_diffusion)
     PARTHENON_REQUIRE(do_hydro, "Multigroup diffusion requires hydro.")
   if (do_radiation_transport)
@@ -123,6 +137,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
 
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
+  riot->AddParam("do_thinc", do_thinc);
   riot->AddParam("do_strength", do_strength);
   riot->AddParam("do_mix", do_mix);
   riot->AddParam("do_tn", do_tn);
@@ -133,6 +148,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("curvilinear", parthenon::IsCoord<parthenon::UniformSpherical>() ||
                                     parthenon::IsCoord<parthenon::UniformCylindrical>());
   riot->AddParam("fixed_fluid", fixed_fluid);
+  riot->AddParam("kinematic_advection", kinematic_advection);
   riot->AddParam("do_multigroup_diffusion", do_multigroup_diffusion);
   riot->AddParam("do_radiation_transport", do_radiation_transport);
   riot->AddParam("do_ionization", do_ionization);
@@ -175,6 +191,7 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_hydro) {
     auto mat_pkg = Materials::Initialize(pin.get());
     packages.Add(mat_pkg);
+    if (do_thinc) packages.Add(THINC::Initialize(pin.get()));
     packages.Add(Hydro::Initialize(pin.get(), mat_pkg.get()));
   }
   if (do_strength)
@@ -192,13 +209,9 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
       packages.Add(
           RadiationDiffusion::MultiGroup<ccbulk::electron_temperature>::Initialize(
               pin.get(), materials));
-      OperatorSplitTasks.push_back(
-          RadiationDiffusion::MultiGroup<ccbulk::electron_temperature>::Step);
     } else {
       packages.Add(RadiationDiffusion::MultiGroup<ccbulk::temperature>::Initialize(
           pin.get(), materials));
-      OperatorSplitTasks.push_back(
-          RadiationDiffusion::MultiGroup<ccbulk::temperature>::Step);
     }
   }
   if (do_radiation_transport) {
@@ -215,35 +228,26 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     riot->AddParam("do_jacobi", do_jacobi);
     if (do_explicit) {
       packages.Add(Explicit::Initialize(pin.get(), materials));
-      OperatorSplitTasks.push_back(&Explicit::ExplicitTasks);
     } else if (do_jacobi) {
       packages.Add(Jacobi::Initialize(pin.get(), materials));
-      OperatorSplitTasks.push_back(&Jacobi::JacobiTasks);
     }
   }
   if (do_levelsets) {
     packages.Add(Levelsets::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(Levelsets::Reinitialize);
   }
   if (do_lasers) packages.Add(Laser::Initialize(pin.get()));
   if (do_ionization) {
     packages.Add(Ionization::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(Ionization::ElectronIonCouplingStep);
-    OperatorSplitTasks.push_back(
-        Ionization::ConductionStep<Ionization::TransportSpecies::Electron>);
-    OperatorSplitTasks.push_back(
-        Ionization::ConductionStep<Ionization::TransportSpecies::Ion>);
   }
   if (do_prescribed_sources) {
     packages.Add(PrescribedSources::Initialize(pin.get()));
-    OperatorSplitTasks.push_back(PrescribedSources::Step);
   }
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);
 
   // Problem-specific package object
-  packages.Add(ProblemPackage(pin.get()));
+  // packages.Add(ProblemPackage(pin.get()));
 
   // sparse deallocation
   bool sparse_dealloc = pin->GetOrAddBoolean("materials", "sparse_dealloc", true);
@@ -255,9 +259,11 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     riot->PreFillDerivedMesh = Multiphysics::PostCommsFillDerived;
   }
 
-  // setup regions for initialization
-  riot->AddParam("BlockInitData",
-                 std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  // setup regions for initialization (not needed when only post-processing dumps)
+  if (!pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false)) {
+    riot->AddParam("BlockInitData",
+                   std::make_shared<region_pgen::BlockInitData>(pin.get()));
+  }
 
   // add any diagnostic packages
   diagnostics::AddDiagnostics(pin.get(), packages);
@@ -265,7 +271,6 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   // Tracers must be added AFTER all other packages so it can introspect their fields
   if (do_tracers) {
     packages.Add(Tracers::Initialize(pin.get(), packages));
-    OperatorSplitTasks.push_back(Tracers::PushTracers);
   }
 
   return packages;

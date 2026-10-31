@@ -13,6 +13,7 @@
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
 
+#include "analysis_driver.hpp"
 #include "riot_driver.hpp"
 #include "template_main.hpp"
 
@@ -21,5 +22,25 @@
 //! \brief
 int main(int argc, char *argv[]) {
   using namespace riot;
-  return main<RiotDriver>(argc, argv);
+  parthenon::ParthenonManager pman;
+
+  // Set up kokkos and read pin
+  auto manager_status = pman.ParthenonInitEnv(argc, argv);
+  if (manager_status == ParthenonStatus::complete) {
+    pman.ParthenonFinalize();
+    return 0;
+  }
+  if (manager_status == ParthenonStatus::error) {
+    pman.ParthenonFinalize();
+    return 1;
+  }
+
+  int main_status;
+  if (pman.IsAnalysis()) {
+    main_status = main<AnalysisDriver>(pman);
+  } else {
+    main_status = main<RiotDriver>(pman);
+  }
+
+  return main_status;
 }

@@ -13,3 +13,9 @@
 [submodule "external/parthenon"]
 	path = external/parthenon
 	url = https://github.com/parthenon-hpc-lab/parthenon
+[submodule "external/stb"]
+	path = external/stb
+	url = https://github.com/nothings/stb
+[submodule "external/font8x8"]
+	path = external/font8x8
+	url = https://github.com/daveythacher/font8x8

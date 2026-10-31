@@ -11,25 +11,26 @@
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
 
-#include "ray_trace.hpp"
+#include "analysis_driver.hpp"
+#include "diagnostics/riot_viz.hpp"
 
-namespace RayTrace {
+namespace riot {
 
-TaskStatus Trace(MeshData<Real> *md, StateDescriptor *pkg) {
-
-  auto pm = md->GetMeshPointer();
-  auto &mesh_xmin = pm->mesh_size.xmin_;
-  auto &mesh_xmax = pm->mesh_size.xmax_;
-  const int ndim = pm->ndim;
-  int dj = ndim > 1 ? 1 : 0;
-  int dk = ndim > 2 ? 1 : 0;
-
-  auto &vars = pkg->Param<std::vector<std::string>>("ray_trace_vars");
-
-  // don't use the riot::MakePack/GetPack because we want *all* blocks
-  auto resolved_pkgs = pm->resolved_packages.get();
-  auto desc =
-      parthenon::MakePackDescriptor<parthenon::variable_names::any>(resolved_pkgs, vars);
+AnalysisDriver::AnalysisDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
+    : Driver(pin, app_in, pm) {
+  auto &pkgs = pm->packages.AllPackages();
+  do_viz = pkgs.contains("riot_viz");
+  // Current time was put into pin upon "restart"
+  current_time = pin->GetReal("parthenon/time", "start_time");
 }
 
-} // namespace RayTrace
+DriverStatus AnalysisDriver::Execute() {
+  TaskListStatus task_status;
+  if (do_viz) task_status = riot_viz::Render(pmesh, current_time).Execute();
+
+  DriverStatus status = (task_status == TaskListStatus::complete ? DriverStatus::complete
+                                                                 : DriverStatus::failed);
+  return status;
+}
+
+} // namespace riot

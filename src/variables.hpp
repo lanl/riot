@@ -159,7 +159,6 @@ VARIABLE_VECTOR(c.c.rad, s1, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s2, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s3, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, divfa, false, 1);     // ngroups
-VARIABLE_VECTOR(c.c.rad, tauw, false, 1);      // ngroups
 VARIABLE_SCALAR(c.c.rad, temperature, false);
 } // namespace rad
 
@@ -169,8 +168,10 @@ namespace material_averaged {
 VARIABLE_SCALAR(c.m, rho, true);
 VARIABLE_SCALAR(c.m, phase_fraction, true);
 VARIABLE_SCALAR(c.m, sie, true);
-VARIABLE_SCALAR(c.m., specific_heat, true); // TODO(JMM): Electrons?
+VARIABLE_SCALAR(c.m, internal_energy, true);
+VARIABLE_SCALAR(c.m, specific_heat, true); // TODO(JMM): Electrons?
 VARIABLE_SCALAR(c.m, electron_sie, true);
+VARIABLE_SCALAR(c.m, electron_internal_energy, true);
 VARIABLE_SCALAR(c.m, temperature, true);
 VARIABLE_SCALAR(c.m, pressure, true);
 VARIABLE_SCALAR(c.m, bulk_modulus, true);
@@ -213,6 +214,22 @@ PARTICLE_VARIABLE(Real, p.l, vy);
 PARTICLE_VARIABLE(Real, p.l, vz);
 PARTICLE_VARIABLE(Real, p.l, wavelength);
 } // namespace laser
+
+namespace ray_tracer {
+PARTICLE_VARIABLE(Real, p.rt, vx);
+PARTICLE_VARIABLE(Real, p.rt, vy);
+PARTICLE_VARIABLE(Real, p.rt, vz);
+} // namespace ray_tracer
+
+namespace riot_viz {
+VARIABLE_SCALAR(p.vr, particles, false);
+PARTICLE_VARIABLE(int, p.vr, camera_id);
+PARTICLE_VARIABLE(int, p.vr, pixel_id);
+PARTICLE_VARIABLE(Real, p.vr, r);
+PARTICLE_VARIABLE(Real, p.vr, g);
+PARTICLE_VARIABLE(Real, p.vr, b);
+PARTICLE_VARIABLE(Real, p.vr, a);
+} // namespace riot_viz
 } // namespace particles
 
 // PTE diagnostics
@@ -295,6 +312,7 @@ DNAME(u1);
 
 namespace metadata {
 constexpr char OperatorSplit[] = "OperatorSplit";
+constexpr char KinematicAdvected[] = "KinematicAdvected";
 
 // Some variables need to be tagged with the package they are relevant
 // for for the purpose of anonymous advection.

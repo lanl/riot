@@ -19,6 +19,7 @@ import os, inspect, ast
 from datetime import date
 import singularity_eos
 from math import pi
+import numpy as np
 
 # The singularity_eos extension module carries its own Kokkos runtime.  Any
 # array-based EOS call (e.g. PressureFromDensityInternalEnergy on numpy arrays,
@@ -287,7 +288,7 @@ class input:
     def _input_format():
         # Process auto_swarm_sample_fields before generating output
         input._process_auto_swarm_sample_fields()
-
+        nparray_t = type(np.array([]))
         s = ""
         for bkey, bval in input.blocks.items():
             s += f"<{bkey}>\n"
@@ -295,7 +296,7 @@ class input:
                 # Skip Python-only parameters that should not appear in .rin files
                 if key == "auto_swarm_sample_fields":
                     continue
-                if type(val) == list:
+                if type(val) == list or type(val) == nparray_t:
                     vec = ""
                     for elem in val:
                         vec += f"{elem},"
@@ -310,14 +311,15 @@ class input:
     def _cmd_format():
         # Process auto_swarm_sample_fields before generating output
         input._process_auto_swarm_sample_fields()
-
+        nparray_t = type(np.array([]))
         s = ""
         for bkey, bval in input.blocks.items():
             for key, val in bval.items():
                 # Skip Python-only parameters that should not appear in command format
                 if key == "auto_swarm_sample_fields":
                     continue
-                if type(val) == list:
+                if type(val) == list or type(val) == nparray_t:
+                    print("Got numpy array")
                     vec = ""
                     for elem in val:
                         vec += f"{elem},"
