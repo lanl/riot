@@ -271,7 +271,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                           Metadata::Intensive, Metadata::Conserved, MetadataJacobi,
                           MetadataOperatorSplit},
                          std::vector<int>({ngroups * nangles}));
-  mi.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  mi.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::intensity>(mi);
 
   // Jacobi iterate, which holds the previous intensity between solves and is carried
@@ -281,7 +281,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
       std::vector<int>({ngroups * nangles}));
   if (params.Get<bool>("extrapolate_guess")) {
     mr.Set(Metadata::ForceRemeshComm);
-    mr.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+    mr.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   }
   jacobi_pkg->AddField<ccrad::intensity_iterate>(mr);
 
@@ -289,7 +289,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   Metadata mo = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy,
                           Metadata::FillGhost, MetadataJacobi, MetadataOperatorSplit},
                          std::vector<int>({ngroups}));
-  mo.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  mo.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::aa>(mo);
   jacobi_pkg->AddField<ccrad::ss>(mo);
 
