@@ -353,6 +353,7 @@ KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
 
         // Store per-material electron sie and internal energy
         pv_n(cm::electron_sie(), kji) = sie_e_m;
+        pv_n(cm::electron_internal_energy(), kji) = rho_i * sie_e_m;
         pv_n(ccmat::electron_internal_energy(), kji) = vfrac * rho_i * sie_e_m;
       });
     };
