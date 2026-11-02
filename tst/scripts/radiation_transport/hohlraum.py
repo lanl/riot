@@ -60,8 +60,8 @@ def run(**kwargs):
         "parthenon/output1/dt=1.0",
         "radiation_transport/cfl=0.5",
         "radiation_transport/coupling=false",
-        "radiation_transport/drive/ix1_bc=drive",
-        "radiation_transport/drive/ix2_bc=default",
+        "radiation_transport/bc/ix1_bc=drive",
+        "radiation_transport/bc/ix2_bc=default",
         "physics/hydro=true",
         "physics/fixed_fluid=true",
     ]

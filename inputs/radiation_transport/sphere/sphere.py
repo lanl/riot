@@ -218,9 +218,13 @@ def generate_input():
     )
 
     riot.input(
+        "radiation_transport/bc",
+        ix1_bc="drive",
+    )
+
+    riot.input(
         "radiation_transport/drive",
         trad_bc=1.0,  # uniform boundary source
-        ix1_bc="drive",
     )
 
     riot.input(
