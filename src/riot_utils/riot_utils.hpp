@@ -164,6 +164,12 @@ VarNamePairList GetAssociatedVars(parthenon::MeshData<parthenon::Real> *md,
 VarNamePairList GetAssociatedVars(parthenon::MeshBlockData<parthenon::Real> *bd,
                                   const parthenon::Metadata::FlagCollection &flags);
 
+// As GetAssociatedVars, but only the pairs whose conserved var (rho*q) is associated with
+// a separate primitive q; self-associated vars are dropped.
+VarNamePairList
+GetPrimitiveAssociatedVars(parthenon::MeshData<parthenon::Real> *md,
+                           const parthenon::Metadata::FlagCollection &flags);
+
 std::vector<std::string> GetUnsplitVarNames(Mesh *pmesh);
 
 //----------------------------------------------------------------------------------------
