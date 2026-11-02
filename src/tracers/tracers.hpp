@@ -31,30 +31,27 @@ namespace Tracers {
 
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin, Packages_t &packages);
 TaskCollection PushTracers(Mesh *pm, parthenon::SimTime &tm, Real dt);
-TaskStatus TransportParticles(MeshData<Real> *md, const std::string &swarm_name,
+TaskStatus TransportParticles(MeshData<Real> *md, const std::string &lukewarm_name,
                               const Real dt);
-template <typename T>
-TaskStatus SampleFieldsAtTracers(T *data, const std::string &swarm_name);
-void PostAMRInitialization(MeshBlock *pmb, ParameterInput *pin);
+TaskStatus SampleFieldsAtTracers(MeshData<Real> *md, const std::string &lukewarm_name);
+void SeedTracers(Mesh *pm, ParameterInput *pin, MeshData<Real> *md);
 
 //----------------------------------------------------------------------------------------
-//! \fn  void AddSamplingSwarmValues
-//  \brief Register swarm variables and create device arrays for field metadata
-inline void AddSamplingSwarmValues(const std::vector<std::string> &sample_fields,
-                                   const Packages_t &packages, StateDescriptor *tracers,
-                                   const std::string &swarm_name, Params &params) {
+//! \fn  void AddSamplingLukewarmFields
+//  \brief Register lukewarm fields and create device arrays for field metadata
+inline void AddSamplingLukewarmFields(const std::vector<std::string> &sample_fields,
+                                      const Packages_t &packages,
+                                      StateDescriptor *tracers,
+                                      const std::string &lukewarm_name, Params &params) {
   const int n_fields = sample_fields.size();
-  parthenon::ParArray1D<bool> is_sparse_d("is_sparse_" + swarm_name, n_fields);
-  parthenon::ParArray1D<int> ncomps_d("ncomps_" + swarm_name, n_fields);
-  parthenon::ParArray1D<int> swarm_offset_d("swarm_offset_" + swarm_name, n_fields);
-  parthenon::ParArray1D<int> total_size_d("total_size_" + swarm_name, n_fields);
-  std::vector<std::string> all_fields, all_swarm_vars;
+  parthenon::ParArray1D<bool> is_sparse_d("is_sparse_" + lukewarm_name, n_fields);
+  parthenon::ParArray1D<int> ncomps_d("ncomps_" + lukewarm_name, n_fields);
+  parthenon::ParArray1D<int> total_size_d("total_size_" + lukewarm_name, n_fields);
+  std::vector<std::string> all_fields, all_sample_vars;
   auto is_sparse_h = is_sparse_d.GetHostMirror();
   auto ncomps_h = ncomps_d.GetHostMirror();
-  auto swarm_offset_h = swarm_offset_d.GetHostMirror();
   auto total_size_h = total_size_d.GetHostMirror();
 
-  int swarm_offset = 0;
   int max_sparse_id = 0;
   std::vector<std::map<int, int>> sparse_cumulative_offsets;
   for (int f = 0; f < n_fields; f++) {
@@ -94,11 +91,11 @@ inline void AddSamplingSwarmValues(const std::vector<std::string> &sample_fields
         }
         ncomps = max_ncomps;
 
-        // Add swarm variable with flat allocation
-        std::string swarm_var_name = "particle.sample." + field_name;
+        // Add lukewarm field with flat allocation
+        std::string sample_var_name = "particle.sample." + field_name;
         std::vector<int> shape_flat = {total_size};
         parthenon::Metadata m_vec = parthenon::Metadata({Metadata::Real}, shape_flat);
-        tracers->AddSwarmValue(swarm_var_name, swarm_name, m_vec);
+        tracers->AddLukewarmField(lukewarm_name, sample_var_name, m_vec);
         break;
       }
     }
@@ -129,39 +126,36 @@ inline void AddSamplingSwarmValues(const std::vector<std::string> &sample_fields
         }
       }
 
-      // Add swarm variable
+      // Add lukewarm field
       total_size = ncomps;
-      std::string swarm_var_name = "particle.sample." + field_name;
+      std::string sample_var_name = "particle.sample." + field_name;
       if (ncomps == 1) {
         parthenon::Metadata m_real = parthenon::Metadata({Metadata::Real});
-        tracers->AddSwarmValue(swarm_var_name, swarm_name, m_real);
+        tracers->AddLukewarmField(lukewarm_name, sample_var_name, m_real);
       } else {
         std::vector<int> shape_vec = {ncomps};
         parthenon::Metadata m_vec = parthenon::Metadata({Metadata::Real}, shape_vec);
-        tracers->AddSwarmValue(swarm_var_name, swarm_name, m_vec);
+        tracers->AddLukewarmField(lukewarm_name, sample_var_name, m_vec);
       }
     }
 
     // Fill output arrays
     all_fields.push_back(field_name);
-    all_swarm_vars.push_back("particle.sample." + field_name);
+    all_sample_vars.push_back("particle.sample." + field_name);
     sparse_cumulative_offsets.push_back(cumulative_offset);
     is_sparse_h(f) = is_sparse;
     ncomps_h(f) = ncomps;
-    swarm_offset_h(f) = swarm_offset;
     total_size_h(f) = total_size;
-    swarm_offset += total_size;
   }
 
   // Copy 1D arrays to device
   is_sparse_d.DeepCopy(is_sparse_h);
   ncomps_d.DeepCopy(ncomps_h);
-  swarm_offset_d.DeepCopy(swarm_offset_h);
   total_size_d.DeepCopy(total_size_h);
 
   // Create and fill 2D sparse offset array
   parthenon::ParArray2D<int> sparse_cumulative_offset_d(
-      "sparse_cumulative_offset_" + swarm_name, n_fields, max_sparse_id + 1);
+      "sparse_cumulative_offset_" + lukewarm_name, n_fields, max_sparse_id + 1);
   auto sparse_cumulative_offset_h = sparse_cumulative_offset_d.GetHostMirror();
   for (int f = 0; f < n_fields; f++) {
     for (int s = 0; s <= max_sparse_id; s++) {
@@ -172,16 +166,14 @@ inline void AddSamplingSwarmValues(const std::vector<std::string> &sample_fields
     }
   }
   sparse_cumulative_offset_d.DeepCopy(sparse_cumulative_offset_h);
-  sparse_cumulative_offset_d.DeepCopy(sparse_cumulative_offset_h);
 
-  params.Add(swarm_name + "_all_fields", all_fields);
-  params.Add(swarm_name + "_all_swarm_vars", all_swarm_vars);
-  params.Add(swarm_name + "_n_fields", n_fields);
-  params.Add(swarm_name + "_is_sparse_d", is_sparse_d);
-  params.Add(swarm_name + "_ncomps_d", ncomps_d);
-  params.Add(swarm_name + "_swarm_offset_d", swarm_offset_d);
-  params.Add(swarm_name + "_total_size_d", total_size_d);
-  params.Add(swarm_name + "_sparse_cumulative_offset_d", sparse_cumulative_offset_d);
+  params.Add(lukewarm_name + "_all_fields", all_fields);
+  params.Add(lukewarm_name + "_all_sample_vars", all_sample_vars);
+  params.Add(lukewarm_name + "_n_fields", n_fields);
+  params.Add(lukewarm_name + "_is_sparse_d", is_sparse_d);
+  params.Add(lukewarm_name + "_ncomps_d", ncomps_d);
+  params.Add(lukewarm_name + "_total_size_d", total_size_d);
+  params.Add(lukewarm_name + "_sparse_cumulative_offset_d", sparse_cumulative_offset_d);
 }
 
 //----------------------------------------------------------------------------------------

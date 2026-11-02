@@ -576,38 +576,36 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   using RayTrace::IntegratorBase<VarPack_t>::coord_to_cart;
   using RayTrace::IntegratorBase<VarPack_t>::sync_cart_to_coord;
   using RayTrace::IntegratorBase<VarPack_t>::transform_coord_to_cart;
-  using RayTrace::IntegratorBase<VarPack_t>::context;
+  using RayTrace::IntegratorBase<VarPack_t>::bounds;
   using RayTrace::IntegratorBase<VarPack_t>::pidx;
   using RayTrace::IntegratorBase<VarPack_t>::push_to_block_boundary;
 
-  template <typename SwarmPack_t, typename SwarmPackInt_t>
+  template <typename Pack_t>
   KOKKOS_INLINE_FUNCTION static bool
-  Filter(SwarmPack_t &ps, const int b, const int pidx,
-                           SwarmPackInt_t &ps_int,
+  Filter(Pack_t &ps, const int pidx,
                            const RenderingParams &rp,
                            const parthenon::ParArray1D<parthenon::PackIdx> &idx_map,
                            const parthenon::ParArray2D<Real> &max_value,
                            const parthenon::ParArray2D<Real> &min_value) {
-    const Real a = ps(b, vr::a(), pidx);
+    const Real a = ps(vr::a(), pidx);
     if (a < 0.0) return false;
-    int camera_id = ps_int(b, vr::camera_id(), pidx);
+    int camera_id = ps(vr::camera_id(), pidx);
     if ((1 - a) < rp.alpha_tol(camera_id)) return false; 
     return true;
   }
 
-  template <typename SwarmPack_t, typename SwarmPackInt_t>
-  KOKKOS_FUNCTION Composer(VarPack_t &vp, SwarmPack_t &ps, const int blk, const int pidx,
-                           const int ndim, const parthenon::SwarmDeviceContext &context,
-                           SwarmPackInt_t &ps_int,
+  template <typename Pack_t>
+  KOKKOS_FUNCTION Composer(VarPack_t &vp, Pack_t &ps, const int blk, const int pidx,
+                           const int ndim, const RayTrace::BlockBounds &bounds,
                            const RenderingParams &rp,
                            const parthenon::ParArray1D<parthenon::PackIdx> &idx_map,
                            const parthenon::ParArray2D<Real> &max_value,
                            const parthenon::ParArray2D<Real> &min_value,
                            const parthenon::ParArrayND<uint8_t> &images)
-      : RayTrace::IntegratorBase<VarPack_t>(vp, ps, blk, pidx, ndim, context), rp(rp),
-        cam_id(ps_int(blk, vr::camera_id(), pidx)), pix_id(ps_int(blk, vr::pixel_id(), pidx)),
-        r(ps(blk, vr::r(), pidx)), g(ps(blk, vr::g(), pidx)), b(ps(blk, vr::b(), pidx)),
-        a(ps(blk, vr::a(), pidx)), idx_map(idx_map), images(images) {
+      : RayTrace::IntegratorBase<VarPack_t>(vp, ps, blk, pidx, ndim, bounds), rp(rp),
+        cam_id(ps(vr::camera_id(), pidx)), pix_id(ps(vr::pixel_id(), pidx)),
+        r(ps(vr::r(), pidx)), g(ps(vr::g(), pidx)), b(ps(vr::b(), pidx)),
+        a(ps(vr::a(), pidx)), idx_map(idx_map), images(images) {
     PARTHENON_REQUIRE(rp.nlayers(cam_id) <= max_layers,
                       "Too many viz layers requested. Must recompile after setting "
                       "max_layers large enough");
@@ -684,9 +682,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   bool on_block_fuzzy(std::array<Real, 3> &xc) const {
     PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::UniformCartesian>(), "on_block_fuzzy only for Cartesian");
     constexpr Real tol = RayTrace::kFaceEps;
-    if (xc[0] < context.x_min_ - tol || xc[0] > context.x_max_ + tol) return false;
-    if (xc[1] < context.y_min_ - tol || xc[1] > context.y_max_ + tol) return false;
-    if (xc[2] < context.z_min_ - tol || xc[2] > context.z_max_ + tol) return false;
+    if (xc[0] < bounds.x_min - tol || xc[0] > bounds.x_max + tol) return false;
+    if (xc[1] < bounds.y_min - tol || xc[1] > bounds.y_max + tol) return false;
+    if (xc[2] < bounds.z_min - tol || xc[2] > bounds.z_max + tol) return false;
     return true;
   }
 
@@ -713,9 +711,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       // make alpha negative as a sentinel
       // move particle back on mesh so it doesn't get removed
       a = -(a + kMarchTiny);
-      xc[0] = 0.5 * (context.x_min_ + context.x_max_);
-      xc[1] = 0.5 * (context.y_min_ + context.y_max_);
-      xc[2] = 0.5 * (context.z_min_ + context.z_max_);
+      xc[0] = 0.5 * (bounds.x_min + bounds.x_max);
+      xc[1] = 0.5 * (bounds.y_min + bounds.y_max);
+      xc[2] = 0.5 * (bounds.z_min + bounds.z_max);
     }
   }
 
@@ -803,10 +801,10 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     return h;
   }
 
-  template <typename SwarmPack_t>
+  template <typename Pack_t>
   KOKKOS_FORCEINLINE_FUNCTION
-  void commit(SwarmPack_t &ps, const int blk) {
-    RayTrace::IntegratorBase<VarPack_t>::commit(ps, blk);
+  void commit(Pack_t &ps) {
+    RayTrace::IntegratorBase<VarPack_t>::commit(ps);
     if (!is_active()) {
       Real alpha = std::abs(a);
       // replace this if check with rp.flatten
@@ -819,7 +817,7 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
       images(cam_id, 4 * pix_id + 1) = real_to_uint8_t(green);
       images(cam_id, 4 * pix_id + 2) = real_to_uint8_t(blue);
       images(cam_id, 4 * pix_id + 3) = real_to_uint8_t(alpha);
-      context.MarkParticleForRemoval(pidx);
+      RayTrace::IntegratorBase<VarPack_t>::remove(ps);
     }
   }
 
@@ -1074,27 +1072,67 @@ namespace vr = particles::riot_viz;
 struct NodalBounds {
   parthenon::ParArray2D<Real> max_value, min_value;
 };
-struct TracerInfo {
-  using DescriptorType = decltype(
-      parthenon::MakeSwarmPackDescriptor<
-          swarm_position::x, swarm_position::y, swarm_position::z,
-          rt::vx, rt::vy, rt::vz,
-          vr::r, vr::g, vr::b, vr::a>(
-              vr::particles::name()));
+// Whether camera point p lies on the part of the mesh boundary covered by block b. Points
+// on a face shared by two blocks lie on both.
+struct CameraPointOnBlock {
+  parthenon::LukewarmGeometry geom;
+  parthenon::ParArray2D<Real> pts;
+  // camera id, pixel id, and mesh face of each point
+  parthenon::ParArray2D<int> idx;
+  int ndim;
+  Kokkos::Array<Real, 3> mesh_xmin, mesh_xmax;
 
-  using IntDescriptorType = decltype(
-    parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(
-        vr::particles::name()));
+  KOKKOS_INLINE_FUNCTION
+  bool Inside(const int b, const int d, const Real x) const {
+    const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+    return x >= geom.Xmin(b, dir) && x <= geom.Xmax(b, dir);
+  }
+
+  KOKKOS_INLINE_FUNCTION
+  bool operator()(const int b, const int p) const {
+    const int face = idx(p, 2);
+    const int d = face / 2;
+    // the block has to reach the mesh face along an active direction
+    if (face < 2 * ndim) {
+      const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+      if (face % 2 == 0 ? geom.Xmin(b, dir) != mesh_xmin[d]
+                        : geom.Xmax(b, dir) != mesh_xmax[d])
+        return false;
+    }
+    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+      const Real x[3] = {pts(p, sample::x), pts(p, sample::y), pts(p, sample::z)};
+      for (int t = 0; t < 3; t++) {
+        if (t != d && !Inside(b, t, x[t])) return false;
+      }
+      return true;
+    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+      if (face < 2) return Inside(b, 1, pts(p, sample::z));
+      if (face < 4) {
+        const Real r = std::sqrt(pts(p, sample::x) * pts(p, sample::x) +
+                                 pts(p, sample::y) * pts(p, sample::y));
+        return Inside(b, 0, r);
+      }
+      return false;
+    } else {
+      return true;
+    }
+  }
+};
+struct TracerInfo {
+  using DescriptorType = parthenon::LukewarmPack<
+      lukewarm::x, lukewarm::y, lukewarm::z, rt::vx, rt::vy, rt::vz, rt::source_block,
+      vr::r, vr::g, vr::b, vr::a, vr::camera_id, vr::pixel_id>::Descriptor;
 
   TracerInfo(const std::vector<std::string> &fields, RenderingParams &&rp)
-  : fields(fields), render_params(std::move(rp)), initialized(false),
-    desc_ps(parthenon::MakeSwarmPackDescriptor<swarm_position::x, swarm_position::y,
-                                          swarm_position::z, rt::vx, rt::vy, rt::vz, vr::r,
-                                          vr::g, vr::b, vr::a>(vr::particles::name())),
-    desc_ps_int(parthenon::MakeSwarmPackDescriptor<vr::camera_id, vr::pixel_id>(vr::particles::name())) {}
+  : fields(fields), render_params(std::move(rp)), initialized(false) {}
 
   void initialize(MeshData<Real> *md) {
     desc.emplace(parthenon::MakePackDescriptor(md, fields));
+    desc_ps.emplace(
+        parthenon::MakeLukewarmPackDescriptor<
+            lukewarm::x, lukewarm::y, lukewarm::z, rt::vx, rt::vy, rt::vz,
+            rt::source_block, vr::r, vr::g, vr::b, vr::a, vr::camera_id, vr::pixel_id>(
+            md, vr::particles::name()));
     auto pack_idx_map = desc->GetMap();
     std::vector<parthenon::PackIdx> pack_idx;
     for (auto &key : fields)
@@ -1105,17 +1143,14 @@ struct TracerInfo {
   }
 
   auto GetPacks(MeshData<Real> *md) const {
-    return std::make_tuple(desc->GetPack(md),
-                           desc_ps.GetPack(md),
-                           desc_ps_int.GetPack(md));
+    return std::make_tuple(desc->GetPack(md), desc_ps->GetPack(md));
   }
 
   std::vector<std::string> fields;
   RenderingParams render_params;
   bool initialized;
   std::optional<parthenon::SparsePack<>::Descriptor> desc;
-  DescriptorType desc_ps;
-  IntDescriptorType desc_ps_int;
+  std::optional<DescriptorType> desc_ps;
   parthenon::ParArray1D<parthenon::PackIdx> pack_idx_view;
 };
 }

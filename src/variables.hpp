@@ -13,7 +13,6 @@
 // This file was made in part with generative AI.
 #ifndef VARIABLES_HPP_
 #define VARIABLES_HPP_
-// This file was made in part with generative AI.
 
 #include <map>
 #include <set>
@@ -75,14 +74,6 @@ constexpr char block_active_flag[] = CELL_DELTA_NAME;
               std::forward<Ts>(args)...) {}                                              \
     static std::string name() { return #ns "." #varname; }                               \
     static constexpr bool is_sparse() { return sparse; }                                 \
-  }
-
-#define PARTICLE_VARIABLE(type, ns, varname)                                             \
-  struct varname : public parthenon::swarm_variable_names::base_t<type> {                \
-    template <class... Ts>                                                               \
-    KOKKOS_INLINE_FUNCTION varname(Ts &&...args)                                         \
-        : parthenon::swarm_variable_names::base_t<type>(std::forward<Ts>(args)...) {}    \
-    static std::string name() { return #ns "." #varname; }                               \
   }
 
 namespace cell_variables {
@@ -205,30 +196,35 @@ VARIABLE_SCALAR(n, electron_number_density, false);
 
 namespace particles {
 namespace laser {
-// this is not a scalar variable, it's the swarm variable
+// this is not a scalar variable, it's the name of the lukewarm
 VARIABLE_SCALAR(p.l, particles, false);
-PARTICLE_VARIABLE(Real, p.l, t);
-PARTICLE_VARIABLE(Real, p.l, energy);
-PARTICLE_VARIABLE(Real, p.l, vx);
-PARTICLE_VARIABLE(Real, p.l, vy);
-PARTICLE_VARIABLE(Real, p.l, vz);
-PARTICLE_VARIABLE(Real, p.l, wavelength);
+PAR_VAR(p.l, t);
+PAR_VAR(p.l, energy);
+PAR_VAR(p.l, vx);
+PAR_VAR(p.l, vy);
+PAR_VAR(p.l, vz);
+PAR_VAR(p.l, wavelength);
+// Local index of the block that created a particle, which it is pushed from first
+PAR_TYPED_VAR(int, p.l, source_block);
 } // namespace laser
 
 namespace ray_tracer {
-PARTICLE_VARIABLE(Real, p.rt, vx);
-PARTICLE_VARIABLE(Real, p.rt, vy);
-PARTICLE_VARIABLE(Real, p.rt, vz);
+PAR_VAR(p.rt, vx);
+PAR_VAR(p.rt, vy);
+PAR_VAR(p.rt, vz);
+// Local index of the block that created a ray, which it is traced from first
+PAR_TYPED_VAR(int, p.rt, source_block);
 } // namespace ray_tracer
 
 namespace riot_viz {
+// this is not a scalar variable, it's the name of the lukewarm
 VARIABLE_SCALAR(p.vr, particles, false);
-PARTICLE_VARIABLE(int, p.vr, camera_id);
-PARTICLE_VARIABLE(int, p.vr, pixel_id);
-PARTICLE_VARIABLE(Real, p.vr, r);
-PARTICLE_VARIABLE(Real, p.vr, g);
-PARTICLE_VARIABLE(Real, p.vr, b);
-PARTICLE_VARIABLE(Real, p.vr, a);
+PAR_TYPED_VAR(int, p.vr, camera_id);
+PAR_TYPED_VAR(int, p.vr, pixel_id);
+PAR_VAR(p.vr, r);
+PAR_VAR(p.vr, g);
+PAR_VAR(p.vr, b);
+PAR_VAR(p.vr, a);
 } // namespace riot_viz
 } // namespace particles
 

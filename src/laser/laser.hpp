@@ -10,6 +10,7 @@
 // license in this material to reproduce, prepare derivative works, distribute copies to
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
+// This file was made in part with generative AI.
 #ifndef LASER_LASER_HPP_
 #define LASER_LASER_HPP_
 
@@ -59,24 +60,46 @@ struct LaserParticle : public PhaseArray {
   LaserParticle() = default;
 
   template <typename T>
-  KOKKOS_FUNCTION LaserParticle(T &s, const int b, const int n)
-      : PhaseArray(s(b, particles::laser::t(), n), s(b, swarm_position::x(), n),
-                   s(b, swarm_position::y(), n), s(b, swarm_position::z(), n),
-                   s(b, particles::laser::vx(), n), s(b, particles::laser::vy(), n),
-                   s(b, particles::laser::vz(), n)),
-        energy(s(b, particles::laser::energy(), n)),
-        lambda(s(b, particles::laser::wavelength(), n)) {}
+  KOKKOS_FUNCTION LaserParticle(T &s, const int n)
+      : PhaseArray(s(particles::laser::t(), n), 0.0, 0.0, 0.0,
+                   s(particles::laser::vx(), n), s(particles::laser::vy(), n),
+                   s(particles::laser::vz(), n)),
+        energy(s(particles::laser::energy(), n)),
+        lambda(s(particles::laser::wavelength(), n)) {
+    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+      // the lukewarm holds (r, z, phi), while particles move in Cartesian coordinates
+      const Real r = s(lukewarm::x(), n);
+      const Real phi = s(lukewarm::z(), n);
+      x = {r * std::cos(phi), r * std::sin(phi), s(lukewarm::y(), n)};
+    } else {
+      x = {s(lukewarm::x(), n), s(lukewarm::y(), n), s(lukewarm::z(), n)};
+    }
+  }
 
+  // Store the position in the mesh's coordinates, as the lukewarm needs to locate it
   template <typename T>
-  KOKKOS_INLINE_FUNCTION void apply_update(T &p, const int b, const int n) {
-    p(b, particles::laser::t(), n) = t;
-    p(b, swarm_position::x(), n) = x[0];
-    p(b, swarm_position::y(), n) = x[1];
-    p(b, swarm_position::z(), n) = x[2];
-    p(b, particles::laser::vx(), n) = v[0];
-    p(b, particles::laser::vy(), n) = v[1];
-    p(b, particles::laser::vz(), n) = v[2];
-    p(b, particles::laser::energy(), n) = energy;
+  KOKKOS_INLINE_FUNCTION void store_position(T &s, const int n) const {
+    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+      Real phi = std::atan2(x[1], x[0]);
+      phi += (phi < 0.0) * 2.0 * M_PI;
+      s(lukewarm::x(), n) = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+      s(lukewarm::y(), n) = x[2];
+      s(lukewarm::z(), n) = phi;
+    } else {
+      s(lukewarm::x(), n) = x[0];
+      s(lukewarm::y(), n) = x[1];
+      s(lukewarm::z(), n) = x[2];
+    }
+  }
+
+  // Store everything but the position, which store_position() keeps up to date
+  template <typename T>
+  KOKKOS_INLINE_FUNCTION void apply_update(T &p, const int n) const {
+    p(particles::laser::t(), n) = t;
+    p(particles::laser::vx(), n) = v[0];
+    p(particles::laser::vy(), n) = v[1];
+    p(particles::laser::vz(), n) = v[2];
+    p(particles::laser::energy(), n) = energy;
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -523,9 +546,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
 TaskCollection LaserUpdateTasks(Mesh *pmesh, const Real t0, const Real dt);
 TaskCollection LaserDepositionTasks(Mesh *pm, const Real dt);
 TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
-                                const Real t0, const Real dt);
-TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
-                  const Real dt); //, AllReduce<int> &num_active);
+                                const Real t0, const Real dt, int *iteration);
+TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
+                  int *iteration);
 TaskStatus SetElectrons(MeshData<Real> *md);
 TaskStatus UpdateMatEnergy(MeshData<Real> *md, const Real dt);
 bool CheckDt(Mesh *pm, Real *dt);

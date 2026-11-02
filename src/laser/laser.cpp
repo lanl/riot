@@ -10,6 +10,7 @@
 // license in this material to reproduce, prepare derivative works, distribute copies to
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
+// This file was made in part with generative AI.
 
 #include "laser.hpp"
 #include "riot_utils/riot_utils.hpp"
@@ -292,7 +293,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   Kokkos::deep_copy(lambda_d, lambda_h);
   params.Add("laser_wavelength", lambda_d);
 
+  // Shared by the task lists of LaserUpdateTasks, so it must outlive them
   params.Add("num_active", AllReduce<int>(), true);
+  params.Add("push_iterations", std::vector<int>(), true);
   params.Add("laser_dt", 1.e300, true);
 
   Metadata m({Metadata::Cell, Metadata::OneCopy});
@@ -304,15 +307,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                                                     Metadata::CellMemAligned});
   laser->AddField<nv::electron_number_density>(m);
 
-  Metadata mswarm({Metadata::Provides, Metadata::None});
-  laser->AddSwarm(pl::particles::name(), mswarm);
+  // In cylindrical coordinates the lukewarm positions are (r, z, phi), while particles
+  // move in Cartesian coordinates
+  laser->AddLukewarm(pl::particles::name(), Metadata({Metadata::Provides}));
   Metadata m_real({Metadata::Real});
-  laser->AddSwarmValue<pl::t, pl::particles>(m_real);
-  laser->AddSwarmValue<pl::energy, pl::particles>(m_real);
-  laser->AddSwarmValue<pl::vx, pl::particles>(m_real);
-  laser->AddSwarmValue<pl::vy, pl::particles>(m_real);
-  laser->AddSwarmValue<pl::vz, pl::particles>(m_real);
-  laser->AddSwarmValue<pl::wavelength, pl::particles>(m_real);
+  laser->AddLukewarmField<pl::t>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::energy>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::vx>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::vy>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::vz>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::wavelength>(pl::particles::name(), m_real);
+  laser->AddLukewarmField<pl::source_block>(pl::particles::name(),
+                                            Metadata({Metadata::Integer}));
 
   laser->EstimateTimestepMesh = EstimateTimestepMesh;
 
@@ -389,35 +395,37 @@ bool CheckDt(Mesh *pm, Real *dt) {
 
 TaskCollection LaserUpdateTasks(Mesh *pm, const Real t0, const Real dt) {
   namespace PL = particles::laser;
-  using namespace ::parthenon::Update;
-  using TQ = TaskQualifier;
   TaskCollection tc;
   TaskID none;
 
-  auto fixed_fluid = pm->packages.Get("riot")->Param<bool>("fixed_fluid");
   auto laser = pm->packages.Get("laser").get();
   auto num_active = laser->MutableParam<AllReduce<int>>("num_active");
-  num_active->val = 0;
+  auto iterations = laser->MutableParam<std::vector<int>>("push_iterations");
 
   const int num_partitions = pm->DefaultNumPartitions();
+  iterations->resize(num_partitions);
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
-    auto md_sp = pm->mesh_data.GetOrAdd("base", i);
-    auto md = md_sp.get();
+    auto md = pm->mesh_data.GetOrAdd("base", i).get();
     auto md_dudt = laser->GetOrAddMeshDataSubset(pm, "dudt", i).get();
+    int *iteration = &(*iterations)[i];
 
     auto ne_gradne = tl.AddTask(none, SetElectrons, md);
     auto init_particles =
-        tl.AddTask(ne_gradne, InitializeLaserSweep, md, md_dudt, t0, dt);
+        tl.AddTask(ne_gradne, InitializeLaserSweep, md, md_dudt, t0, dt, iteration);
 
-    // keep pushing particles until there are none left
-    auto [itl, push] = tl.AddSublist(init_particles | ne_gradne, {1, 100000});
-    auto transport =
-        itl.AddTask(TQ::completion | TQ::global_sync, none, Update, md, md_dudt, t0, dt);
-    auto reset_comms = itl.AddTask(none, parthenon::ResetSwarmsCommunicationMesh, md_sp);
-    auto send = itl.AddTask(reset_comms, parthenon::SendSwarmsMesh, md_sp);
-    auto recv = itl.AddTask(reset_comms, parthenon::ReceiveSwarmsMesh, md_sp);
+    // Push every particle until it is absorbed or leaves this MeshData, and exchange,
+    // until no particle on any MeshData of any rank is left to push
+    auto [itl, push] = tl.AddSublist(init_particles, {1, 100000});
+    auto transport = itl.AddTask(none, Update, md, md_dudt, dt, iteration);
+    auto exchange =
+        parthenon::AddLukewarmExchangeTasks(transport, itl, md, PL::particles::name());
+    // Every particle an exchange delivers still has to be pushed
+    auto complete = parthenon::AddLukewarmCompletionTasks(
+        exchange, itl, md, num_active, [](MeshData<Real> *md) {
+          return GetLastReceived(md, PL::particles::name()).size();
+        });
   }
   return tc;
 }
@@ -483,7 +491,7 @@ TaskStatus UpdateMatEnergy(MeshData<Real> *md, const Real dt) {
 }
 
 TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
-                                const Real t0, const Real dt) {
+                                const Real t0, const Real dt, int *iteration) {
   namespace PL = particles::laser;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using ne_t = ccbulk::electron_number_density;
@@ -511,31 +519,41 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
 
   auto v = riot::MakePack<ne_t, nen_t>(md);
 
-  for (int b = 0; b < md->NumBlocks(); b++) {
-    auto &mbd = md->GetBlockData(b);
-    auto &mbd_dudt = md_dudt->GetBlockData(b);
-    auto *pmb = mbd->GetBlockPointer();
+  // Every particle of the last sweep was absorbed or left the mesh, so the particles
+  // created here are all there are
+  *iteration = 0;
+  auto &lukewarm = md->GetLukewarm(PL::particles::name());
+  lukewarm.Clear();
+
+  // Zero the laser fields of every block at once
+  auto zero = riot::MakePack<ccbulk::laser_energy_density, ccbulk::laser_deposition,
+                             ccbulk::laser_tau_max>(md);
+  auto zero_dudt =
+      riot::MakePack<ccbulk::total_material_energy, ccbulk::electron_internal_energy>(
+          md_dudt);
+  const IndexRange ib_md = md->GetBoundsI(IndexDomain::interior);
+  const IndexRange jb_md = md->GetBoundsJ(IndexDomain::interior);
+  const IndexRange kb_md = md->GetBoundsK(IndexDomain::interior);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, md->NumBlocks() - 1,
+      kb_md.s, kb_md.e, jb_md.s, jb_md.e, ib_md.s, ib_md.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        zero_dudt(b, ccbulk::total_material_energy(), k, j, i) = 0.0;
+        zero_dudt(b, ccbulk::electron_internal_energy(), k, j, i) = 0.0;
+        zero(b, ccbulk::laser_energy_density(), k, j, i) = 0.0;
+        zero(b, ccbulk::laser_deposition(), k, j, i) = 0.0;
+        zero(b, ccbulk::laser_tau_max(), k, j, i) = 0.0;
+      });
+
+  // The laser points every block creates particles at, in block order
+  std::vector<Real> pts_host;
+  std::vector<int> id_host, block_host;
+  for (int b = 0; b < md->NumBlocks() && adding_laser_energy; b++) {
+    auto *pmb = md->GetBlockData(b)->GetBlockPointer();
 
     const IndexRange &ib = pmb->cellbounds.GetBoundsI(IndexDomain::interior);
     const IndexRange &jb = pmb->cellbounds.GetBoundsJ(IndexDomain::interior);
     const IndexRange &kb = pmb->cellbounds.GetBoundsK(IndexDomain::interior);
-    auto ldep_tot = mbd_dudt->Get(ccbulk::total_material_energy::name()).data;
-    auto ldep_ue = mbd_dudt->Get(ccbulk::electron_internal_energy::name()).data;
-
-    auto edens = mbd->Get(ccbulk::laser_energy_density::name()).data;
-    auto ldep_src = mbd->Get(ccbulk::laser_deposition::name()).data;
-    auto tau_max = mbd->Get(ccbulk::laser_tau_max::name()).data;
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), kb.s, kb.e, jb.s,
-        jb.e, ib.s, ib.e, KOKKOS_LAMBDA(const int k, const int j, const int i) {
-          ldep_tot(k, j, i) = 0.0;
-          ldep_ue(k, j, i) = 0.0;
-          edens(k, j, i) = 0.0;
-          ldep_src(k, j, i) = 0.0;
-          tau_max(k, j, i) = 0.0;
-        });
-
-    if (!adding_laser_energy) continue;
 
     // skip if not a boundary block
     bool is_boundary = false;
@@ -563,7 +581,6 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
 
     // figure out which points are on this block boundary
     std::array<std::vector<int>, 6> ind;
-    int total_number = 0;
     for (int i = 0; i < 2 * ndim; i++) {
       if (!bound_flag[i]) continue;
       for (int j = 0; j < li.face_pts[i][sample::x].size(); j++) {
@@ -604,89 +621,96 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
           ind[i].push_back(j);
         }
       }
-      total_number += ind[i].size();
     }
 
-    // now make a device side array that lists the included laser points
-    parthenon::ParArray2D<Real> laser_pts("laser points", total_number,
-                                          static_cast<int>(sample::nvalues));
-    auto lhost = Kokkos::create_mirror_view(Kokkos::HostSpace(), laser_pts);
-    parthenon::ParArray1D<int> laser_id("laser_id", total_number);
-    auto lid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), laser_id);
-    int idx = 0;
     for (int i = 0; i < 2 * ndim; i++) {
       if (!bound_flag[i]) continue;
       for (int j = 0; j < ind[i].size(); j++) {
         int k = ind[i][j];
         for (int n = 0; n < sample::nvalues; n++) {
-          lhost(idx, n) = li.face_pts[i][n][k];
+          pts_host.push_back(li.face_pts[i][n][k]);
         }
-        lid_host(idx) = li.id[i][k];
-        idx++;
+        id_host.push_back(li.id[i][k]);
+        block_host.push_back(b);
       }
     }
-    Kokkos::deep_copy(laser_pts, lhost);
-    Kokkos::deep_copy(laser_id, lid_host);
-
-    // make space for the particles
-    auto *swarm = md->GetSwarmData(b)->Get(PL::particles::name()).get();
-    parthenon::ParArray1D<parthenon::NewParticlesContext> new_context("New context", 1);
-    auto new_context_h = new_context.GetHostMirror();
-    new_context_h(0) = swarm->AddEmptyParticles(total_number);
-    new_context.DeepCopy(new_context_h);
-    Kokkos::fence();
-
-    auto &t = swarm->Get<Real>(PL::t::name()).Get();
-    auto &x = swarm->Get<Real>(swarm_position::x::name()).Get();
-    auto &y = swarm->Get<Real>(swarm_position::y::name()).Get();
-    auto &z = swarm->Get<Real>(swarm_position::z::name()).Get();
-    auto &vx = swarm->Get<Real>(PL::vx::name()).Get();
-    auto &vy = swarm->Get<Real>(PL::vy::name()).Get();
-    auto &vz = swarm->Get<Real>(PL::vz::name()).Get();
-    auto &energy = swarm->Get<Real>(PL::energy::name()).Get();
-    auto &lambda = swarm->Get<Real>(PL::wavelength::name()).Get();
-    const int nghost = parthenon::Globals::nghost;
-
-    // set the particle properties
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
-        KOKKOS_LAMBDA(const int n) {
-          const int pidx = new_context(0).GetNewParticleIndex(n);
-          t(pidx) = t0;
-          x(pidx) = laser_pts(n, sample::x);
-          y(pidx) = laser_pts(n, sample::y);
-          z(pidx) = laser_pts(n, sample::z);
-          vx(pidx) = laser_pts(n, sample::nx);
-          vy(pidx) = laser_pts(n, sample::ny);
-          vz(pidx) = laser_pts(n, sample::nz);
-          lambda(pidx) = laser_wavelength(laser_id(n));
-
-          auto &bcoords = v.GetCoordinates(b);
-          CellInfo ci(v, b, x(pidx), y(pidx), z(pidx), vx(pidx), vy(pidx), vz(pidx), dj,
-                      dk, nghost);
-
-          // interpolate ne to the initial location to determine initial speed
-          const Real ne = ci.ne(x(pidx), y(pidx), z(pidx));
-
-          // compute the critical density
-          Real ncrit = ne_crit(lambda(pidx));
-
-          // don't allow NaNs when ne > ne_crit.  this particle will just immediately get
-          // absorbed when transported
-          const Real speed = (ne < ncrit ? pc::c * std::sqrt(1.0 - ne / ncrit) : 1.0);
-          vx(pidx) *= speed;
-          vy(pidx) *= speed;
-          vz(pidx) *= speed;
-
-          energy(pidx) = laser_pts(n, sample::wgt) * laser_energy(laser_id(n));
-        });
-
   } // loop over blocks in MeshData
+
+  const int total_number = block_host.size();
+  if (total_number == 0) return TaskStatus::complete;
+
+  // now make device side arrays that list the included laser points
+  parthenon::ParArray2D<Real> laser_pts("laser points", total_number,
+                                        static_cast<int>(sample::nvalues));
+  parthenon::ParArray1D<int> laser_id("laser_id", total_number);
+  parthenon::ParArray1D<int> laser_block("laser_block", total_number);
+  auto lhost = Kokkos::create_mirror_view(Kokkos::HostSpace(), laser_pts);
+  auto lid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), laser_id);
+  auto lblock_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), laser_block);
+  for (int idx = 0; idx < total_number; idx++) {
+    for (int n = 0; n < sample::nvalues; n++) {
+      lhost(idx, n) = pts_host[idx * sample::nvalues + n];
+    }
+    lid_host(idx) = id_host[idx];
+    lblock_host(idx) = block_host[idx];
+  }
+  Kokkos::deep_copy(laser_pts, lhost);
+  Kokkos::deep_copy(laser_id, lid_host);
+  Kokkos::deep_copy(laser_block, lblock_host);
+
+  // make space for the particles, and get the pack after
+  const IndexRange range = lukewarm.Create(total_number);
+  static auto desc =
+      parthenon::MakeLukewarmPackDescriptor<lukewarm::x, lukewarm::y, lukewarm::z, PL::t,
+                                            PL::vx, PL::vy, PL::vz, PL::energy,
+                                            PL::wavelength, PL::source_block>(
+          md, PL::particles::name());
+  auto pack = desc.GetPack(md);
+  const int nghost = parthenon::Globals::nghost;
+
+  // set the particle properties
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
+      KOKKOS_LAMBDA(const int n) {
+        const int pidx = range.s + n;
+        const int b = laser_block(n);
+        LaserParticle p;
+        p.t = t0;
+        p.x = {laser_pts(n, sample::x), laser_pts(n, sample::y), laser_pts(n, sample::z)};
+        p.v = {laser_pts(n, sample::nx), laser_pts(n, sample::ny),
+               laser_pts(n, sample::nz)};
+        p.lambda = laser_wavelength(laser_id(n));
+
+        // The particle starts on a face of the mesh, which may be the upper face of
+        // block b, so it is not located until it has moved into the mesh
+        pack(PL::source_block(), pidx) = b;
+        CellInfo ci(v, b, p.x[0], p.x[1], p.x[2], p.v[0], p.v[1], p.v[2], dj, dk,
+                    nghost);
+
+        // interpolate ne to the initial location to determine initial speed
+        const Real ne = ci.ne(p.x[0], p.x[1], p.x[2]);
+
+        // compute the critical density
+        Real ncrit = ne_crit(p.lambda);
+
+        // don't allow NaNs when ne > ne_crit.  this particle will just immediately get
+        // absorbed when transported
+        const Real speed = (ne < ncrit ? pc::c * std::sqrt(1.0 - ne / ncrit) : 1.0);
+        for (int d = 0; d < 3; d++)
+          p.v[d] *= speed;
+
+        p.energy = laser_pts(n, sample::wgt) * laser_energy(laser_id(n));
+
+        p.store_position(pack, pidx);
+        p.apply_update(pack, pidx);
+        pack(PL::wavelength(), pidx) = p.lambda;
+      });
+
   return TaskStatus::complete;
 }
 
-TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
-                  const Real dt) {
+TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
+                  int *iteration) {
   namespace PL = particles::laser;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using ne_t = ccbulk::electron_number_density;
@@ -694,9 +718,17 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
   // using nen_d_t = node_variables::grad_ne;
   using TE = parthenon::TopologicalElement;
 
+  // First push every particle the sweep created, and after that only the ones the last
+  // exchange delivered, since every other particle is done
+  const bool first = (*iteration)++ == 0;
+  const IndexRange range =
+      first ? IndexRange{0, md->GetLukewarm(PL::particles::name()).NumParticles() - 1}
+            : parthenon::GetLastReceived(md, PL::particles::name());
+  if (range.size() <= 0) return TaskStatus::complete;
+
   auto pm = md->GetMeshPointer();
-  auto &mesh_xmin = pm->mesh_size.xmin_;
-  auto &mesh_xmax = pm->mesh_size.xmax_;
+  const std::array<Real, 3> mesh_xmin = pm->mesh_size.xmin_;
+  const std::array<Real, 3> mesh_xmax = pm->mesh_size.xmax_;
   const int ndim = pm->ndim;
   int dj = ndim > 1 ? 1 : 0;
   int dk = ndim > 2 ? 1 : 0;
@@ -711,12 +743,12 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
       riot::MakePack<ccbulk::total_material_energy, ccbulk::electron_internal_energy>(
           md_dudt);
 
-  static auto desc_ps =
-      parthenon::MakeSwarmPackDescriptor<swarm_position::x, swarm_position::y,
-                                         swarm_position::z, PL::t, PL::vx, PL::vy, PL::vz,
-                                         PL::energy, PL::wavelength>(
-          PL::particles::name());
-  auto ps = desc_ps.GetPack(md);
+  static auto desc =
+      parthenon::MakeLukewarmPackDescriptor<lukewarm::x, lukewarm::y, lukewarm::z, PL::t,
+                                            PL::vx, PL::vy, PL::vz, PL::energy,
+                                            PL::wavelength, PL::source_block>(
+          md, PL::particles::name());
+  auto pack = desc.GetPack(md);
 
   const auto enable_laser_deposition =
       pm->packages.Get("laser")->Param<Real>("enable_laser_deposition");
@@ -731,21 +763,16 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
 
   const int nghost = parthenon::Globals::nghost;
 
-  int num_not_done = 0;
-  parthenon::par_reduce(
-      parthenon::loop_pattern_flatrange_tag, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
-      ps.GetMaxFlatIndex(),
-      KOKKOS_LAMBDA(const int idx, int &num_unfinished) {
-        auto [b, n] = ps.GetBlockParticleIndices(idx);
-        const auto swarm_d = ps.GetContext(b);
-        if (!swarm_d.IsActive(n)) return;
-
-        LaserParticle p(ps, b, n);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), range.s, range.e,
+      KOKKOS_LAMBDA(const int n) {
+        LaserParticle p(pack, n);
+        // A new particle starts on a face of the mesh, where it may not be located yet
+        int b = first ? pack(PL::source_block(), n) : pack.GetBlockIndex(n);
 
         Real ncrit = ne_crit(p.lambda);
 
-        bool on_current_block = true;
-        while (p.t < tstop && on_current_block) {
+        while (p.t < tstop) {
           CellInfo ci(v, b, p.x[0], p.x[1], p.x[2], p.v[0], p.v[1], p.v[2], dj, dk,
                       nghost);
 
@@ -755,7 +782,7 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
                 &dudt(b, ccbulk::total_material_energy(), ci.k, ci.j, ci.i),
                 enable_laser_deposition * p.energy / (ci.volume() * dt));
             p.energy = 0.0;
-            swarm_d.MarkParticleForRemoval(n);
+            pack.MarkForRemoval(n);
             break;
           }
 
@@ -790,32 +817,31 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real t0,
                              (p.energy + 0.5 * delta_energy) / (speed * dt) *
                                  path_length / ci.volume());
 
-          swarm_d.GetNeighborBlockIndex(n, p.x[0], p.x[1], p.x[2], on_current_block);
-        }
-
-        bool outside_domain = false;
-        for (int d = 0; d < ndim; d++) {
-          if (p.x[d] < mesh_xmin[d] || p.x[d] > mesh_xmax[d]) {
-            outside_domain = true;
+          // A particle that leaves the domain is done, even through a periodic boundary
+          p.store_position(pack, n);
+          const Real xm[3] = {pack(lukewarm::x(), n), pack(lukewarm::y(), n),
+                              pack(lukewarm::z(), n)};
+          bool outside_domain = false;
+          for (int d = 0; d < ndim; d++) {
+            outside_domain =
+                outside_domain || xm[d] < mesh_xmin[d] || xm[d] > mesh_xmax[d];
+          }
+          if (outside_domain) {
+            pack.MarkForRemoval(n);
             break;
           }
-        }
-        if (outside_domain) {
-          swarm_d.MarkParticleForRemoval(n);
-        } else if (p.energy > 0) {
-          num_unfinished += (p.t < tstop);
+
+          // Keep going while the particle is in this MeshData. Otherwise the exchange
+          // delivers it to its block.
+          const auto loc = pack.Locate(n);
+          if (!loc.InMeshData()) break;
+          b = loc.Block();
         }
 
         // copy back out updated state
-        p.apply_update(ps, b, n);
-      },
-      Kokkos::Sum<int>(num_not_done));
+        p.apply_update(pack, n);
+      });
 
-  for (int b = 0; b < md->NumBlocks(); b++) {
-    md->GetSwarmData(b)->Get(PL::particles::name())->RemoveMarkedParticles();
-  }
-
-  if (num_not_done) return TaskStatus::iterate;
   return TaskStatus::complete;
 }
 

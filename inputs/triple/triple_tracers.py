@@ -14,7 +14,7 @@
 # This file was made in part with generative AI.
 
 """
-Generate triple-point problem with both lagrangian and eulerian swarms.
+Generate triple-point problem with both lagrangian and eulerian tracer lukewarms.
 """
 
 import riot
@@ -26,7 +26,8 @@ def make_input():
     riot.input("riot", problem="region_pgen")
     riot.input("parthenon/job", problem_id="triple_tracers")
 
-    # Output configuration - separate outputs for each swarm to avoid warnings
+    # Output configuration - a separate output for each lukewarm. Positions and ids are
+    # always written, and auto_lukewarm_sample_fields adds the sampled fields.
     riot.input(
         "parthenon/output1",
         variables=[
@@ -36,10 +37,9 @@ def make_input():
             "c.c.mat.rho",
             "c.c.bulk.pressure",
         ],
-        swarms=["lagrangian"],
-        swarm_variables=["swarm.id"],
-        auto_swarm_sample_fields=True,
-        write_swarm_xdmf=True,
+        lukewarms=["lagrangian"],
+        auto_lukewarm_sample_fields=True,
+        write_lukewarm_xdmf=True,
         file_type="hdf5",
         dt=0.01,
     )
@@ -53,10 +53,9 @@ def make_input():
             "c.c.mat.rho",
             "c.c.bulk.pressure",
         ],
-        swarms=["eulerian"],
-        swarm_variables=["swarm.id"],
-        auto_swarm_sample_fields=True,
-        write_swarm_xdmf=True,
+        lukewarms=["eulerian"],
+        auto_lukewarm_sample_fields=True,
+        write_lukewarm_xdmf=True,
         file_type="hdf5",
         dt=0.01,
     )
@@ -130,7 +129,7 @@ def make_input():
     # Hydro configuration
     riot.input("hydro", recon="plm", cfl=0.9, amr_interface=True)
 
-    # Tracer configuration - two swarms
+    # Tracer configuration - two lukewarms
     import numpy as np
 
     n_particles = 100000
@@ -146,7 +145,7 @@ def make_input():
     x2_eul = rng.uniform(0.0, 3.0, n_particles).tolist()
     x3_eul = [0.0] * n_particles
 
-    # Lagrangian swarm - moves with flow, samples velocity
+    # Lagrangian lukewarm - moves with flow, samples velocity
     riot.input(
         "tracers/lagrangian",
         x1=x1_lag,
@@ -156,7 +155,7 @@ def make_input():
         sample_fields=["c.c.bulk.velocity"],
     )
 
-    # Eulerian swarm - stays fixed, samples rho and pressure
+    # Eulerian lukewarm - stays fixed, samples rho and pressure
     riot.input(
         "tracers/eulerian",
         x1=x1_eul,

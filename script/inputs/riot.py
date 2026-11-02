@@ -285,16 +285,49 @@ class input:
                 input.blocks[bkey]["swarm_variables"] = swarm_variables
 
     @staticmethod
+    def _process_auto_lukewarm_sample_fields():
+        """Process output blocks with auto_lukewarm_sample_fields flag.
+
+        The lukewarm counterpart of auto_swarm_sample_fields. For each lukewarm listed
+        in the output block, the sample_fields of its tracers/{lukewarm_name} block are
+        appended, as "particle.sample.<field>", to {lukewarm_name}_variables. The
+        per-lukewarm key (rather than lukewarm_variables) keeps each lukewarm's fields
+        separate when one output block lists several lukewarms.
+        """
+        for bkey, bval in input.blocks.items():
+            if not bkey.startswith("parthenon/output") or not bval.get(
+                "auto_lukewarm_sample_fields", False
+            ):
+                continue
+            lukewarms = bval.get("lukewarms", [])
+            if not isinstance(lukewarms, list):
+                lukewarms = [lukewarms]
+            for lukewarm_name in lukewarms:
+                key = f"{lukewarm_name}_variables"
+                variables = bval.get(key, [])
+                if not isinstance(variables, list):
+                    variables = [variables]
+                else:
+                    variables = variables.copy()
+                for field in input._get_swarm_sample_fields(lukewarm_name):
+                    transformed = f"particle.sample.{field}"
+                    if transformed not in variables:
+                        variables.append(transformed)
+                if variables:
+                    input.blocks[bkey][key] = variables
+
+    @staticmethod
     def _input_format():
-        # Process auto_swarm_sample_fields before generating output
+        # Process auto_*_sample_fields before generating output
         input._process_auto_swarm_sample_fields()
+        input._process_auto_lukewarm_sample_fields()
         nparray_t = type(np.array([]))
         s = ""
         for bkey, bval in input.blocks.items():
             s += f"<{bkey}>\n"
             for key, val in bval.items():
                 # Skip Python-only parameters that should not appear in .rin files
-                if key == "auto_swarm_sample_fields":
+                if key in ("auto_swarm_sample_fields", "auto_lukewarm_sample_fields"):
                     continue
                 if type(val) == list or type(val) == nparray_t:
                     vec = ""
@@ -309,14 +342,15 @@ class input:
 
     @staticmethod
     def _cmd_format():
-        # Process auto_swarm_sample_fields before generating output
+        # Process auto_*_sample_fields before generating output
         input._process_auto_swarm_sample_fields()
+        input._process_auto_lukewarm_sample_fields()
         nparray_t = type(np.array([]))
         s = ""
         for bkey, bval in input.blocks.items():
             for key, val in bval.items():
                 # Skip Python-only parameters that should not appear in command format
-                if key == "auto_swarm_sample_fields":
+                if key in ("auto_swarm_sample_fields", "auto_lukewarm_sample_fields"):
                     continue
                 if type(val) == list or type(val) == nparray_t:
                     print("Got numpy array")

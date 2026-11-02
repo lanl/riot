@@ -1,3 +1,5 @@
+.. This file was made in part with generative AI.
+
 .. _`chap:laser`:
 
 Laser Ray Tracing
@@ -30,10 +32,10 @@ set its centerline and focusing), a wavelength, a transverse power
 profile, and a power-versus-time history. Each beam is sampled into
 many *rays* on an equal-area polar grid over its spot, each ray
 carrying a fraction of the beam power set by the profile weight. Rays
-are tracked as Lagrangian particles (Parthenon swarm particles) that
+are tracked as Lagrangian particles (a Parthenon lukewarm) that
 carry a position, direction, energy, and wavelength, and are
-communicated between mesh blocks and MPI ranks as they cross the
-domain.
+communicated between ``MeshData`` partitions and MPI ranks as they
+cross the domain.
 
 Ray Refraction
 ~~~~~~~~~~~~~~
@@ -116,9 +118,13 @@ The laser update runs at the top of each cycle, before the
 hydrodynamic step. It interpolates the electron density to mesh nodes,
 spawns rays on the boundary blocks where each beam enters the domain,
 and then traces every ray to completion: rays are pushed cell by cell,
-depositing energy as they go, and those that cross a block or rank
-boundary are handed to Parthenon’s swarm communication and continued
-on the next iteration until no rays remain active. Ray tracing uses a
+depositing energy as they go. A ray moves from block to block within
+one kernel for as long as it stays in its ``MeshData`` partition (set
+by ``parthenon/mesh/pack_size``). Rays that reach another partition,
+on this rank or another, are handed to Parthenon’s lukewarm exchange
+and continued on the next iteration, until no ray on any partition is
+left to push. A ray is removed once it is absorbed or leaves the
+domain, including through a periodic boundary. Ray tracing uses a
 *fast-light* approximation — each ray crosses the whole mesh within a
 single cycle, so there is no finite ray transit time.
 
@@ -262,7 +268,7 @@ Registered Fields
 
 The package registers the diagnostic and coupling fields in the table
 below (all single-copy), plus the node-centered electron density used
-by the ray push and a swarm of ray particles. The deposited energy is
+by the ray push and a lukewarm of ray particles. The deposited energy is
 carried by ``ccbulk::laser_deposition`` (a rate), integrated into the
 electron and total energy each step.
 
@@ -295,7 +301,7 @@ electron and total energy each step.
    * - particles::laser
      - —
      - —
-     - Swarm of ray particles carrying position, direction, energy, and wavelength.
+     - Lukewarm of ray particles carrying position, direction, energy, and wavelength.
 
 Example
 -------

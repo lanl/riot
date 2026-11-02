@@ -500,14 +500,14 @@ def build_parser():
         "--do_tracers",
         action="store_true",
         default=False,
-        help="Enroll Lagrangian + Eulerian tracer swarms, uniformly sampled in radius "
+        help="Enroll Lagrangian + Eulerian tracer lukewarms, uniformly sampled in radius "
         "(1-D only), each sampling rho, pressure, and temperature",
     )
     tracers.add_argument(
         "--tracers_per_cell",
         type=int,
         default=10,
-        help="Number of tracers per radial cell for each swarm (--do_tracers)",
+        help="Number of tracers per radial cell for each lukewarm (--do_tracers)",
     )
 
     return parser
@@ -1170,7 +1170,7 @@ def make_input(args):
         riot.input("tnburn", reaction0="d+t->n+a")
 
     # --- tracers (1-D) -----------------------------------------------------------------
-    # Lagrangian (advected) + Eulerian (fixed) swarms, uniformly spaced in radius at
+    # Lagrangian (advected) + Eulerian (fixed) lukewarms, uniformly spaced in radius at
     # tracers_per_cell per base-grid radial cell, each sampling rho, pressure, and
     # temperature.
     if args.do_tracers:
@@ -1203,13 +1203,12 @@ def make_input(args):
             sample_fields=sample_fields,
         )
 
-        for n, swarm in ((3, "lagrangian"), (4, "eulerian")):
+        for n, lukewarm in ((3, "lagrangian"), (4, "eulerian")):
             riot.input(
                 f"parthenon/output{n}",
-                swarms=[swarm],
-                swarm_variables=["swarm.id"],
-                auto_swarm_sample_fields=True,
-                write_swarm_xdmf=True,
+                lukewarms=[lukewarm],
+                auto_lukewarm_sample_fields=True,
+                write_lukewarm_xdmf=True,
                 file_type="hdf5",
                 dt=5.0e-12,
             )
