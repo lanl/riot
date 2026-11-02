@@ -1793,6 +1793,73 @@ Real MaxDiffusionEigenvalue(const Real *K, const int n, const int max_iter = 100
   return lambda_old;
 }
 
+template <std::size_t MaxSpecies>
+KOKKOS_INLINE_FUNCTION int ImposeBarycentricFluxConstraint(
+    parthenon::batched_linear_algebra::matrix_wrapper_t<Real> &M,
+    std::array<Real, MaxSpecies> &rhs, const int nactive) {
+  int constraint_row = 0;
+  Real min_row_norm = std::numeric_limits<Real>::max();
+  Real row_scale = 0.0;
+
+  for (int a = 0; a < nactive; ++a) {
+    Real row_norm = 0.0;
+
+    for (int bb = 0; bb < nactive; ++bb) {
+      row_norm += fabs(M(a, bb));
+    }
+
+    if (row_norm < min_row_norm) {
+      min_row_norm = row_norm;
+      constraint_row = a;
+    }
+
+    row_scale = std::max(row_scale, row_norm);
+  }
+
+  // Replace one dependent momentum-exchange equation with
+  //
+  //   row_scale * sum_s J_s = 0.
+  //
+  // This selects the unique zero-net-mass-flux Stefan-Maxwell solution.
+  for (int a = 0; a < nactive; ++a) {
+    M(constraint_row, a) = row_scale;
+  }
+  rhs[constraint_row] = 0.0;
+
+  return constraint_row;
+}
+
+template <std::size_t MaxSpecies>
+KOKKOS_INLINE_FUNCTION Real LimitFluxByCellKnudsenNumber(
+    const int nactive, const std::array<int, MaxSpecies> &active_species,
+    const std::array<Real, MaxSpecies> &species_mass_inv, const Real Ti, const Real dx,
+    const Real lambda_raw, const Real cell_knudsen_limit,
+    std::array<Real, MaxSpecies> &mass_flux) {
+  constexpr Real tiny = 1e-300;
+  using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+
+  Real vth_max = 0.0;
+  for (int a = 0; a < nactive; ++a) {
+    const int s = active_species[a];
+    const Real vth = sqrt(unit_system::kb * Ti * species_mass_inv[s]);
+    vth_max = std::max(vth_max, vth);
+  }
+
+  // lambda_raw is the largest diffusion eigenvalue, with units of D.
+  // Interpret D = vth_max * lambda_mfp,mode.
+  const Real mfp_mode = lambda_raw / (vth_max + tiny);
+  const Real Kn_cell = mfp_mode / (dx + tiny);
+
+  const Real factor = std::min(1.0, cell_knudsen_limit / (Kn_cell + tiny));
+
+  // A common factor preserves sum_s J_s = 0.
+  for (int a = 0; a < nactive; ++a) {
+    mass_flux[a] *= factor;
+  }
+
+  return factor * lambda_raw;
+}
+
 void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
   using parthenon::batched_linear_algebra::matrix_wrapper_t;
@@ -1881,41 +1948,16 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
         // Effective species list:
         //   material with isotopes -> each isotope is a species
         //   material without isotopes -> whole material is one species
-        std::array<int, MAX_DIFFUSION_SPECIES> species_mat;
-        std::array<int, MAX_DIFFUSION_SPECIES> species_iso;
-        std::array<Real, MAX_DIFFUSION_SPECIES> species_A;
-        std::array<Real, MAX_DIFFUSION_SPECIES> species_Z;
-        std::array<Real, MAX_DIFFUSION_SPECIES> species_mass;
-        std::array<Real, MAX_DIFFUSION_SPECIES> species_mass_inv;
-        int nspecies = 0;
-        int offset_iso = 0;
+        std::array<int, MAX_MATERIALS> material_ids{};
         for (int m = 0; m < nmat; ++m) {
-          const int mat_id = v(b, ccmat::rho(m)).sparse_id;
-          const int niso = num_iso_per_mat(mat_id);
-          if (niso > 0) {
-            for (int iso = 0; iso < niso; ++iso) {
-              const int iso_idx = offset_iso + iso;
-              species_mat[nspecies] = m;
-              species_iso[nspecies] = iso_idx;
-              species_A[nspecies] = iso_A(iso_idx);
-              species_Z[nspecies] = iso_Z(iso_idx); // nuclear charge (fixed)
-              species_mass[nspecies] = iso_A(iso_idx) * unit_system::amu;
-              species_mass_inv[nspecies] = 1.0 / (species_mass[nspecies] + 1e-30);
-              ++nspecies;
-            }
-          } else {
-            species_mat[nspecies] = m;
-            species_iso[nspecies] = -1;
-            species_A[nspecies] = ion_eos(eos_map[m]).MeanAtomicMass();
-            species_Z[nspecies] =
-                ion_eos(eos_map[m]).MeanAtomicNumber(); // nuclear charge (fixed)
-            species_mass[nspecies] =
-                ion_eos(eos_map[m]).MeanAtomicMass() * unit_system::amu;
-            species_mass_inv[nspecies] = 1.0 / (species_mass[nspecies] + 1e-30);
-            ++nspecies;
-          }
-          offset_iso += niso;
+          material_ids[m] = v(b, ccmat::rho(m)).sparse_id;
         }
+
+        PlasmaDiffusionSpeciesList<MAX_DIFFUSION_SPECIES> species{};
+        BuildPlasmaDiffusionSpeciesList<MAX_DIFFUSION_SPECIES, MAX_MATERIALS>(
+            nmat, material_ids, num_iso_per_mat, ion_eos, eos_map, iso_A, iso_Z, species);
+
+        const int nspecies = species.count;
 
         auto ccbulk_ne =
             RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
@@ -1951,8 +1993,8 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             Real rhoTotF = 0.0;
             Real nTotL = 0.0, nTotR = 0.0;
             for (int s = 0; s < nspecies; ++s) {
-              const int m = species_mat[s];
-              const int iso = species_iso[s];
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
               if (iso >= 0) {
                 auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
                 // Keep tiny negative isotope densities from
@@ -1970,12 +2012,12 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               }
               rhoF[s] = 0.5 * (rhoL[s] + rhoR[s]);
               rhoTotF += rhoF[s];
-              nTotL += rhoL[s] * species_mass_inv[s];
-              nTotR += rhoR[s] * species_mass_inv[s];
+              nTotL += rhoL[s] * species.mass_inv[s];
+              nTotR += rhoR[s] * species.mass_inv[s];
             }
             for (int s = 0; s < nspecies; ++s) {
-              YL[s] = (rhoL[s] * species_mass_inv[s]) / (nTotL + 1e-30);
-              YR[s] = (rhoR[s] * species_mass_inv[s]) / (nTotR + 1e-30);
+              YL[s] = (rhoL[s] * species.mass_inv[s]) / (nTotL + 1e-30);
+              YR[s] = (rhoR[s] * species.mass_inv[s]) / (nTotR + 1e-30);
             }
             const Real NeL = ccbulk_ne(kji - dl);
             const Real NeR = ccbulk_ne(kji);
@@ -1992,9 +2034,9 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // mass_flux is indexed by the full species index in this branch.
               for (int s = 0; s < nspecies; ++s) {
                 mass_flux[s] = -diffusion_coefficient * (rhoR[s] - rhoL[s]) * dxinv;
-                const int m = species_mat[s];
-                nMatL[m] += rhoL[s] * species_mass_inv[s];
-                nMatR[m] += rhoR[s] * species_mass_inv[s];
+                const int m = species.material[s];
+                nMatL[m] += rhoL[s] * species.mass_inv[s];
+                nMatR[m] += rhoR[s] * species.mass_inv[s];
               }
               if (nspecies > 0) {
                 cell_rate += diffusion_coefficient / (dx * dx + 1e-30);
@@ -2003,8 +2045,8 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // Restrict Coulomb diffusion to the charged-ion subsystem.
               std::array<Real, MAX_DIFFUSION_SPECIES> species_zbarF{};
               for (int s = 0; s < nspecies; ++s) {
-                const int m = species_mat[s];
-                const int iso = species_iso[s];
+                const int m = species.material[s];
+                const int iso = species.isotope[s];
                 Real zbarF;
                 if (iso >= 0) {
                   auto zbar =
@@ -2015,7 +2057,8 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                       RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
                   zbarF = 0.5 * (zbar(kji - dl) + zbar(kji));
                 }
-                species_zbarF[s] = std::max(0.0, std::min(zbarF, species_Z[s]));
+                species_zbarF[s] =
+                    std::max(0.0, std::min(zbarF, species.nuclear_charge[s]));
                 if (rhoF[s] > rhoTotF * mass_fraction_floor &&
                     species_zbarF[s] > zbar_floor) {
                   active_species[nactive++] = s;
@@ -2049,10 +2092,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 const int s = active_species[a];
                 rhoCL += rhoL[s];
                 rhoCR += rhoR[s];
-                nCLL += rhoLL[s] * species_mass_inv[s];
-                nCL += rhoL[s] * species_mass_inv[s];
-                nCR += rhoR[s] * species_mass_inv[s];
-                nCRR += rhoRR[s] * species_mass_inv[s];
+                nCLL += rhoLL[s] * species.mass_inv[s];
+                nCL += rhoL[s] * species.mass_inv[s];
+                nCR += rhoR[s] * species.mass_inv[s];
+                nCRR += rhoRR[s] * species.mass_inv[s];
                 rhoCF += rhoF[active_species[a]];
               }
 
@@ -2143,11 +2186,11 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real nChargeF = 0.0, nZ2F = 0.0, sumZ2OverM = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
-                const Real ns = rhoF[s] * species_mass_inv[s];
+                const Real ns = rhoF[s] * species.mass_inv[s];
                 const Real Zs = species_zbarF[s];
                 nChargeF += ns * Zs;
                 nZ2F += ns * Zs * Zs;
-                sumZ2OverM += rhoF[s] * Zs * Zs * species_mass_inv[s];
+                sumZ2OverM += rhoF[s] * Zs * Zs * species.mass_inv[s];
               }
               const Real Zeff = nZ2F / (nChargeF + 1e-30);
               sumZ2OverM /= (rhoCF + 1e-30);
@@ -2168,13 +2211,13 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // Build Stefan-Maxwell mass-flux matrix.
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
-                const Real ns = rhoF[s] * species_mass_inv[s];
+                const Real ns = rhoF[s] * species.mass_inv[s];
                 for (int bb = a + 1; bb < nactive; ++bb) {
                   const int q = active_species[bb];
-                  const Real nq = rhoF[q] * species_mass_inv[q];
+                  const Real nq = rhoF[q] * species.mass_inv[q];
 
                   const Real nu_sq = IonIonMomentumExchangeRate(
-                      TeF, TiF, NeF, ns, nq, species_mass[s], species_mass[q],
+                      TeF, TiF, NeF, ns, nq, species.mass[s], species.mass[q],
                       species_zbarF[s], species_zbarF[q], zbar_floor,
                       ion_number_density_floor);
 
@@ -2194,7 +2237,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 }
                 // Self collisions for Knudsen diagnostic and heuristic timestep
                 const Real nu_sq = IonIonMomentumExchangeRate(
-                    TeF, TiF, NeF, ns, ns, species_mass[s], species_mass[s],
+                    TeF, TiF, NeF, ns, ns, species.mass[s], species.mass[s],
                     species_zbarF[s], species_zbarF[s], zbar_floor,
                     ion_number_density_floor);
                 nu_total[a] += nu_sq;
@@ -2206,8 +2249,8 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real D_est = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
-                const Real YCL = rhoL[s] * species_mass_inv[s] / (nCL + 1e-30);
-                const Real YCR = rhoR[s] * species_mass_inv[s] / (nCR + 1e-30);
+                const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + 1e-30);
+                const Real YCR = rhoR[s] * species.mass_inv[s] / (nCR + 1e-30);
                 const Real XCL = rhoL[s] / (rhoCL + 1e-30);
                 const Real XCR = rhoR[s] / (rhoCR + 1e-30);
                 const Real gradYC = (YCR - YCL) * dxinv;
@@ -2220,7 +2263,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
 
                 // add electron ambipolar diffusion thermodynamic driving force
                 // ("electrodiffusion")
-                const Real nsF = rhoF[s] * species_mass_inv[s];
+                const Real nsF = rhoF[s] * species.mass_inv[s];
                 const Real charge_fraction = nsF * species_zbarF[s] / (nChargeF + 1e-30);
                 rhs[a] -= (charge_fraction - XCF) * gradPe;
 
@@ -2234,16 +2277,16 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 // electrodiffusion contribution.
                 const Real thermal_force =
                     -XCF * rhoCF * unit_system::kb *
-                    (species_zbarF[s] * species_zbarF[s] * species_mass_inv[s] -
+                    (species_zbarF[s] * species_zbarF[s] * species.mass_inv[s] -
                      sumZ2OverM) *
                     thermal_coeff * gradTe;
 
                 rhs[a] += thermal_force;
 
                 // Heuristic timestep estimate, including self-collisions.
-                const Real vth = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
+                const Real vth = sqrt(unit_system::kb * TiF * species.mass_inv[s]);
                 const Real mfp = vth / (nu_total[a] + 1e-300);
-                D_est = std::max(D_est, unit_system::kb * TiF * species_mass_inv[s] /
+                D_est = std::max(D_est, unit_system::kb * TiF * species.mass_inv[s] /
                                             (nu_total[a] + 1e-300));
                 const Real invLY =
                     fabs(gradYC) /
@@ -2261,35 +2304,9 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
 
               // Replace the minimum-norm friction row with a scaled
               // barycentric constraint.
-              int replace_row = 0;
-              Real min_row_norm = std::numeric_limits<Real>::max();
-              Real row_scale = 0.0;
-              for (int a = 0; a < nactive; ++a) {
-                Real row_norm = 0.0;
-                for (int bb = 0; bb < nactive; ++bb)
-                  row_norm += fabs(M(a, bb));
-                if (row_norm < min_row_norm) {
-                  min_row_norm = row_norm;
-                  replace_row = a;
-                }
-                row_scale = std::max(row_scale, row_norm);
-              }
-              for (int a = 0; a < nactive; ++a)
-                M(replace_row, a) = row_scale;
-              rhs[replace_row] = 0.0;
-
-              // Row-equilibrate the constrained system before QR. Retain the
-              // inverse scales for the timestep basis solves below.
-              // std::array<Real, MAX_DIFFUSION_SPECIES> row_inv_scale{};
-              // for (int a = 0; a < nactive; ++a) {
-              //   Real scale = 0.0;
-              //   for (int bb = 0; bb < nactive; ++bb)
-              //     scale = std::max(scale, fabs(M(a, bb)));
-              //   row_inv_scale[a] = (scale > 0.0) ? 1.0 / scale : 1.0;
-              //   for (int bb = 0; bb < nactive; ++bb)
-              //     M(a, bb) *= row_inv_scale[a];
-              //   rhs[a] *= row_inv_scale[a];
-              // }
+              const int constraint_row =
+                  ImposeBarycentricFluxConstraint<MAX_DIFFUSION_SPECIES>(M, rhs, nactive);
+              rhs[constraint_row] = 0.0;
 
               // QR decomposition; M_original = Q R. On return M contains R.
               const int qr_status = QRDecomposition::execute(&M, &Q, qr_scratch.data());
@@ -2302,59 +2319,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               if (QRDecomposition::solve(M, Q, rhs, mass_flux) != 0) {
                 PARTHENON_FAIL("Failed to solve plasma diffusion system");
               }
-
-              // Smooth Knudsen-number limitation of the Stefan-Maxwell fluxes.
-              // Apply one common factor to all active species to preserve
-              // the barycentric zero-net-mass-flux constraint.
-              if (limit_diffusion_knudsen) {
-                const Real kn = max_kn_face;
-                const Real factor = 1.0 / (1.0 + kn / knudsen_limit);
-
-                for (int a = 0; a < nactive; ++a) {
-                  mass_flux[a] *= factor;
-                }
-              }
-
-              if (limit_diffusion_drift) {
-                Real max_drift_ratio = 0.0;
-
-                for (int a = 0; a < nactive; ++a) {
-                  const int s = active_species[a];
-
-                  const Real vth = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
-
-                  const Real drift = fabs(mass_flux[a]) / (rhoF[s] + 1e-300);
-
-                  max_drift_ratio = std::max(max_drift_ratio, drift / (vth + 1e-300));
-                }
-
-                // Common face-wise limiter preserves zero net mass flux.
-                const Real factor =
-                    std::min(1.0, max_drift_fraction / (max_drift_ratio + 1e-300));
-
-                for (int a = 0; a < nactive; ++a) {
-                  mass_flux[a] *= factor;
-                }
-              }
-
-              Real max_ratio_after = 0.0;
-
-              for (int a = 0; a < nactive; ++a) {
-                const int s = active_species[a];
-
-                const Real vth = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
-
-                const Real ratio =
-                    fabs(mass_flux[a]) / ((rhoF[s] + 1e-300) * (vth + 1e-300));
-
-                max_ratio_after = std::max(max_ratio_after, ratio);
-              }
-
-              // if (max_ratio_after > 0.100001) {
-              //   printf("DRIFT LIMIT FAILED: b=%d j=%d i=%d DIR=%d "
-              //          "ratio=%e\n",
-              //          b, j, i, DIR, max_ratio_after);
-              // }
 
               // Frozen-T charged-ion diffusion matrix for all N species-density
               // gradient modes. Reuse the existing QR factorization.
@@ -2372,22 +2336,22 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                   // apply effective limiter for gradP
                   Real limiter = (use_gradP_limiter_in_timestep) ? thetaP : 1.0;
                   const Real gradPC_basis =
-                      limiter * unit_system::kb * TiF * species_mass_inv[s_q];
+                      limiter * unit_system::kb * TiF * species.mass_inv[s_q];
                   // apply effective limiter for gradPe
                   limiter = (use_gradP_limiter_in_timestep) ? thetaPe : 1.0;
                   const Real gradPe_basis = limiter * unit_system::kb * TeF *
-                                            species_zbarF[s_q] * species_mass_inv[s_q];
+                                            species_zbarF[s_q] * species.mass_inv[s_q];
 
                   for (int a = 0; a < nactive; ++a) {
                     const int s = active_species[a];
-                    const Real Ys = (rhoF[s] * species_mass_inv[s]) / (nCF + 1e-30);
+                    const Real Ys = (rhoF[s] * species.mass_inv[s]) / (nCF + 1e-30);
                     const Real Xs = rhoF[s] / (rhoCF + 1e-30);
 
                     // Derivative of charged-ion mole fraction with respect to rho_q.
-                    const Real dYq = (((s == s_q) ? 1.0 * species_mass_inv[s] : 0.0) -
-                                      Ys * species_mass_inv[s_q]) /
+                    const Real dYq = (((s == s_q) ? 1.0 * species.mass_inv[s] : 0.0) -
+                                      Ys * species.mass_inv[s_q]) /
                                      (nCF + 1e-30);
-                    const Real ns = rhoF[s] * species_mass_inv[s];
+                    const Real ns = rhoF[s] * species.mass_inv[s];
                     const Real Qs = ns * species_zbarF[s] / (nChargeF + 1e-30);
 
                     rhs_basis[a] = -(PCF * dYq + (Ys - Xs) * gradPC_basis +
@@ -2398,7 +2362,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                     J_basis[a] = 0.0;
                   }
 
-                  rhs_basis[replace_row] = 0.0;
+                  rhs_basis[constraint_row] = 0.0;
                   // Apply the same row scaling as the factored matrix.
                   // for (int a = 0; a < nactive; ++a)
                   //   rhs_basis[a] *= row_inv_scale[a];
@@ -2420,28 +2384,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 // cell_knudsen_limit = 1 means lambda_mfp,eff <= one cell width.
                 constexpr Real cell_knudsen_limit = 1.0;
 
-                Real vth_max = 0.0;
-                for (int a = 0; a < nactive; ++a) {
-                  const int s = active_species[a];
-                  const Real vth_s = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
-                  vth_max = std::max(vth_max, vth_s);
-                }
+                const Real lambda_eff = LimitFluxByCellKnudsenNumber(
+                    nactive, active_species, species.mass_inv, TiF, dx, lambda_raw,
+                    cell_knudsen_limit, mass_flux);
 
-                // lambda_raw has units of a diffusion coefficient. Interpret its fastest
-                // mode as D = vth_max * lambda_mfp,mode.
-                const Real mfp_mode = lambda_raw / (vth_max + 1e-300);
-                const Real Kn_cell = mfp_mode / (dx + 1e-300);
-
-                // Enforce lambda_mfp,mode <= cell_knudsen_limit * dx.
-                const Real transport_factor =
-                    std::min(1.0, cell_knudsen_limit / (Kn_cell + 1e-300));
-
-                // A common factor preserves the barycentric constraint sum_s J_s = 0.
-                for (int a = 0; a < nactive; ++a) {
-                  mass_flux[a] *= transport_factor;
-                }
-
-                const Real lambda_eff = transport_factor * lambda_raw;
                 cell_rate += lambda_eff / (dx * dx + 1e-30);
 
               } else {
@@ -2452,104 +2398,23 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
 
             Real Fe = 0.0, Fp = 0.0;
 
-            ////////////////////////////////////////////////////////////////
-            // debugging enthalpy flux
             std::array<Real, MAX_MATERIALS> Jmat{};
             for (int m = 0; m < nmat; ++m)
               Jmat[m] = 0.0;
             for (int a = 0; a < nactive; ++a) {
               const int s = constant_diffusion ? a : active_species[a];
-              const int m = species_mat[s];
-              const int iso = species_iso[s];
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
               // add the species mass flux.
               Jmat[m] += mass_flux[a];
             }
-            for (int m = 0; m < nmat; ++m) {
-              auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
-              auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
-              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-
-              const Real rhoL = rhom(kji - dl);
-              const Real rhoR = rhom(kji);
-
-              const Real eF =
-                  0.5 * (Em(kji - dl) / (rhoL + 1e-30) + Em(kji) / (rhoR + 1e-30));
-
-              const Real pF = 0.5 * (fv(kji - dl) * PL / (rhoL + 1e-30) +
-                                     fv(kji) * PR / (rhoR + 1e-30));
-
-              Fe += Jmat[m] * eF;
-              Fp += Jmat[m] * pF;
-
-              const Real alphaL = fv(kji - dl);
-              const Real alphaR = fv(kji);
-              const Real EL = Em(kji - dl);
-              const Real ER = Em(kji);
-
-              const Real ratioL = alphaL * PL / (EL + 1e-30);
-              const Real ratioR = alphaR * PR / (ER + 1e-30);
-
-              // Check ideal-gas thermodynamic consistency in mixed cells.
-              // if (((alphaL > 0.01 && alphaL < 0.99) && fabs(ratioL - 2.0 / 3.0) > 0.05)
-              // ||
-              //     ((alphaR > 0.01 && alphaR < 0.99) && fabs(ratioR - 2.0 / 3.0) >
-              //     0.05)) {
-              //   printf("BAD MATERIAL EOS: b=%d j=%d i=%d DIR=%d m=%d "
-              //          "alphaL=%e alphaR=%e rhoL=%e rhoR=%e "
-              //          "EL=%e ER=%e PL=%e PR=%e "
-              //          "ratioL=%e ratioR=%e\n",
-              //          b, j, i, DIR, m, alphaL, alphaR, rhom(kji - dl), rhom(kji), EL,
-              //          ER, PL, PR, ratioL, ratioR);
-              // }
-
-              auto Ee = RiotLoop::make_var_view(idx_range, v,
-                                                ccmat::electron_internal_energy(m));
-
-              const Real alpha = fv(kji);
-              const Real Etot = Em(kji);
-              const Real Eele = Ee(kji);
-              const Real Eion = Etot - Eele;
-            }
-
-            // if (fabs(Fp) > 1e8) {
-            //   printf("PRESSURE FLUX: b=%d j=%d i=%d DIR=%d "
-            //          "nactive=%d J0=%e J1=%e Fp=%e\n",
-            //          b, j, i, DIR, nactive, Jmat[0], Jmat[1], Fp);
-            // }
-
-            Real Jsum = 0.0;
-            Real Jabs = 0.0;
-
-            int nflux = constant_diffusion ? nspecies : nactive;
-
-            for (int a = 0; a < nflux; ++a) {
-              Jsum += mass_flux[a];
-              Jabs += fabs(mass_flux[a]);
-            }
-
-            const Real Jrel = fabs(Jsum) / (Jabs + 1e-300);
-
-            // Check conservation relative to the actual species flux magnitudes.
-            if (!constant_diffusion && Jabs > 1e-20 && Jrel > 1e-10) {
-              printf("BAD MASS FLUX SUM: b=%d j=%d i=%d DIR=%d "
-                     "Jsum=%e Jabs=%e Jrel=%e nactive=%d\n",
-                     b, j, i, DIR, Jsum, Jabs, Jrel, nactive);
-
-              for (int a = 0; a < nactive; ++a) {
-                const int s = active_species[a];
-                printf("  s=%d m=%d J=%e\n", s, species_mat[s], mass_flux[a]);
-              }
-            }
-
-            /////////////////////////////////////////////////////////////////////////////////////////
-            // end debugging enthalpy flux
 
             // Scatter diffusion fluxes.
-            nflux = constant_diffusion ? nspecies : nactive;
+            const int nflux = constant_diffusion ? nspecies : nactive;
             for (int a = 0; a < nflux; ++a) {
               const int s = constant_diffusion ? a : active_species[a];
-              const int m = species_mat[s];
-              const int iso = species_iso[s];
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
               // Already the species mass flux.
               const Real J = mass_flux[a];
               // Isotope conserved flux.

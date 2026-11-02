@@ -411,6 +411,66 @@ KOKKOS_INLINE_FUNCTION
 Real MaxDiffusionEigenvalue(const Real *K, const int n, const int max_iter,
                             const Real tol);
 
+template <int MaxSpecies>
+struct PlasmaDiffusionSpeciesList {
+  int count = 0;
+
+  // For species s:
+  //   material[s] is its parent RIOT material index;
+  //   isotope[s] is its global isotope index, or -1 for an aggregate material.
+  std::array<int, MaxSpecies> material{};
+  std::array<int, MaxSpecies> isotope{};
+
+  // Nuclear charge and physical mass used by the collision model.
+  std::array<Real, MaxSpecies> nuclear_charge{};
+  std::array<Real, MaxSpecies> mass{};
+  std::array<Real, MaxSpecies> mass_inv{};
+};
+
+template <int MaxSpecies, int MaxMaterials>
+KOKKOS_INLINE_FUNCTION void BuildPlasmaDiffusionSpeciesList(
+    const int nmat, const std::array<int, MaxMaterials> &material_ids,
+    const parthenon::ParArray1D<int> &num_iso_per_mat,
+    const RiotEOS::EOS_Array_t &ion_eos, const std::array<int, MaxMaterials> &eos_map,
+    const parthenon::ParArray1D<Real> &iso_A, const parthenon::ParArray1D<Real> &iso_Z,
+    PlasmaDiffusionSpeciesList<MaxSpecies> &species) {
+  using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+
+  species.count = 0;
+  int isotope_offset = 0;
+
+  for (int m = 0; m < nmat; ++m) {
+    const int mat_id = material_ids[m];
+    const int niso = num_iso_per_mat(mat_id);
+
+    if (niso > 0) {
+      for (int local_iso = 0; local_iso < niso; ++local_iso) {
+        const int isotope = isotope_offset + local_iso;
+        const int s = species.count++;
+
+        species.material[s] = m;
+        species.isotope[s] = isotope;
+        species.nuclear_charge[s] = iso_Z(isotope);
+        species.mass[s] = iso_A(isotope) * unit_system::amu;
+        species.mass_inv[s] = 1.0 / species.mass[s];
+      }
+    } else {
+      const int s = species.count++;
+      const auto &eos = ion_eos(eos_map[m]);
+
+      species.material[s] = m;
+      species.isotope[s] = -1;
+      species.nuclear_charge[s] = eos.MeanAtomicNumber();
+      species.mass[s] = eos.MeanAtomicMass() * unit_system::amu;
+      species.mass_inv[s] = 1.0 / species.mass[s];
+    }
+
+    // Isotope indices are global across materials.
+    isotope_offset += niso;
+  }
+}
+
+
 } // namespace Ionization
 
 #endif // IONIZATION_IONIZATION_HPP_
