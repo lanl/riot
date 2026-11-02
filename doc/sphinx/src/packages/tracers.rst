@@ -16,12 +16,12 @@ Each group of particles is a named swarm, defined by a ``<tracers/>``\ *name* bl
 Transport
 ~~~~~~~~~
 
-A Lagrangian swarm (``advect`` ``= true``) is pushed each step by the bulk velocity (``ccbulk::velocity``) with a second-order Runge–Kutta (midpoint) integrator: the velocity is reconstructed to the particle position with an MC-limited slope, a half-step midpoint position is formed, and the velocity there advances the particle over the full step. A swarm with ``advect`` ``= false`` is never moved — its particles act as fixed Eulerian probes.
+A Lagrangian swarm (``advect`` ``= true``) is pushed each step by the bulk velocity (``ccbulk::velocity``) with a second-order Runge–Kutta (midpoint) integrator: the velocity is reconstructed to the particle position with a minmod-limited slope, a half-step midpoint position is formed, and the velocity there advances the particle over the full step. A swarm with ``advect`` ``= false`` is never moved — its particles act as fixed Eulerian probes.
 
 Field Sampling
 ~~~~~~~~~~~~~~
 
-After transport (and once at initialization), each swarm samples its ``sample_fields`` at every particle. The value is reconstructed from the containing cell with a second-order, MC-limited slope in each dimension, so the sampled value reflects the particle’s position within the cell rather than the plain cell average. Any registered field may be sampled, including multi-component and sparse per-material fields; the package resolves each field’s component layout automatically and stores the result in a matching per-particle swarm variable. Because the sampling reads other packages’ fields, the tracers package is initialized last, after every field it might sample has been registered.
+After transport (and once at initialization), each swarm samples its ``sample_fields`` at every particle. The value is reconstructed from the containing cell with a second-order, minmod-limited slope in each dimension, so the sampled value reflects the particle’s position within the cell rather than the plain cell average. Any registered field may be sampled, including multi-component and sparse per-material fields; the package resolves each field’s component layout automatically and stores the result in a matching per-particle swarm variable. Because the sampling reads other packages’ fields, the tracers package is initialized last, after every field it might sample has been registered.
 
 Input Parameters
 ----------------

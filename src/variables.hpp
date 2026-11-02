@@ -107,6 +107,7 @@ VARIABLE_SCALAR(c.c.bulk, ionization_zbar, false);
 VARIABLE_FACE(c.c.bulk, face_signal, false);
 VARIABLE_VECTOR(c.c.bulk, max_signal, false, 3);
 VARIABLE_VECTOR(c.c.bulk, face_velocity, false, 9);
+VARIABLE_FACE(c.c.bulk, face_pressure, false);
 VARIABLE_VECTOR(c.c.bulk, strain_rate, false, 6);
 VARIABLE_SCALAR(c.c.bulk, shear_modulus, false);
 // NOTE(@chadmeyer): Distinguish b/w bulk prim/cons?
@@ -160,6 +161,7 @@ VARIABLE_VECTOR(c.c.rad, s2, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s3, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, divfa, false, 1);     // ngroups
 VARIABLE_SCALAR(c.c.rad, temperature, false);
+VARIABLE_VECTOR(c.c.rad, intensity_iterate, false, 1); // ngroups * nangles
 } // namespace rad
 
 } // namespace cell_averaged
