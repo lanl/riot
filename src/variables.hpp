@@ -169,7 +169,8 @@ namespace material_averaged {
 VARIABLE_SCALAR(c.m, rho, true);
 VARIABLE_SCALAR(c.m, phase_fraction, true);
 VARIABLE_SCALAR(c.m, sie, true);
-VARIABLE_SCALAR(c.m., specific_heat, true); // TODO(JMM): Electrons?
+VARIABLE_SCALAR(c.m, internal_energy, true);
+VARIABLE_SCALAR(c.m, specific_heat, true); // TODO(JMM): Electrons?
 VARIABLE_SCALAR(c.m, electron_sie, true);
 VARIABLE_SCALAR(c.m, temperature, true);
 VARIABLE_SCALAR(c.m, pressure, true);
