@@ -874,7 +874,8 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
               temp[d] = x[d] + ht * v[d];
             Real alpha = 1.0;//rp.ac(cam_id, ilay, 0);
             if (rp.slice_transparent_outside(cam_id, ilay, 0)) {
-              Real val = get_alpha(ilay, temp[0], temp[1], temp[2]);
+              auto tc = cart_to_coord(temp);
+              Real val = get_alpha(ilay, tc[0], tc[1], tc[2]);
               if (val < rp.alpha_range_min(cam_id, ilay)) alpha = 0.0;
             }
             if (alpha > 0.0 && (mask[ilay] || rp.masks(cam_id, ilay, temp[0], temp[1], temp[2]))) {
