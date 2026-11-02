@@ -1845,8 +1845,9 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   constexpr bool eigensystem_timestep_estimate = true;
   constexpr bool limit_diffusion_knudsen = false;
   constexpr Real knudsen_limit = 0.01;
-  constexpr bool limit_diffusion_drift = true;
+  constexpr bool limit_diffusion_drift = false;
   constexpr Real max_drift_fraction = 0.1;
+  constexpr bool debug_timestep = false;
 
   // Pull isotope information.
   const auto &iso_zaids =
@@ -2075,7 +2076,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real dPC0 = (PCR - PCL) * dxinv;
               const Real dPCp1 = (PCRR - PCR) * dxinv;
               Real gradPC = 0.5 * (RiotReconstruction::minmod(dPCm1, dPC0) +
-                                         RiotReconstruction::minmod(dPC0, dPCp1));
+                                   RiotReconstruction::minmod(dPC0, dPCp1));
               // unlimited centered gradPC
               const Real gradPC_center = (PCR - PCL) * dxinv;
               // effective limiter (used in time step estimate for linear perturbation of
@@ -2091,7 +2092,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real dPep1 = (prese(kji + dl) - prese(kji)) * dxinv;
 
               Real gradPe = 0.5 * (RiotReconstruction::minmod(dPem1, dPe0) +
-                                         RiotReconstruction::minmod(dPe0, dPep1));
+                                   RiotReconstruction::minmod(dPe0, dPep1));
               // unlimited centered gradPe
               const Real gradPe_center = (prese(kji) - prese(kji - dl)) * dxinv;
               // effective limiter (used in time step estimate for linear perturbation of
@@ -2111,7 +2112,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real dTi0 = (TiR - TiL) * dxinv;
               const Real dTip1 = (TiRR - TiR) * dxinv;
               Real gradTi = 0.5 * (RiotReconstruction::minmod(dTim1, dTi0) +
-                                         RiotReconstruction::minmod(dTi0, dTip1));
+                                   RiotReconstruction::minmod(dTi0, dTip1));
               const Real gradTi_center = (tion(kji) - tion(kji - dl)) * dxinv;
               gradTi = (!use_limiters) ? gradTi_center : gradTi;
               const Real invLT = fabs(gradTi) / (TiF + 1e-30);
@@ -2126,7 +2127,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real dTe0 = (TeR - TeL) * dxinv;
               const Real dTep1 = (TeRR - TeR) * dxinv;
               Real gradTe = 0.5 * (RiotReconstruction::minmod(dTem1, dTe0) +
-                                         RiotReconstruction::minmod(dTe0, dTep1));
+                                   RiotReconstruction::minmod(dTe0, dTep1));
               const Real gradTe_center = (tele(kji) - tele(kji - dl)) * dxinv;
               gradTe = (!use_limiters) ? gradTe_center : gradTe;
               const Real invLTe = fabs(gradTe) / (TeF + 1e-30);
@@ -2412,9 +2413,36 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                   }
                 }
 
-                // max. eigenvalue of full NxN diffusion matrix
-                const Real lambda_max = MaxDiffusionEigenvalue(K_data.data(), nactive);
-                cell_rate += lambda_max / (dx * dx + 1e-30);
+                const Real lambda_raw = MaxDiffusionEigenvalue(K_data.data(), nactive);
+
+                // Cell-Knudsen limiter for the fastest Stefan-Maxwell diffusion
+                // eigenmode.
+                // cell_knudsen_limit = 1 means lambda_mfp,eff <= one cell width.
+                constexpr Real cell_knudsen_limit = 1.0;
+
+                Real vth_max = 0.0;
+                for (int a = 0; a < nactive; ++a) {
+                  const int s = active_species[a];
+                  const Real vth_s = sqrt(unit_system::kb * TiF * species_mass_inv[s]);
+                  vth_max = std::max(vth_max, vth_s);
+                }
+
+                // lambda_raw has units of a diffusion coefficient. Interpret its fastest
+                // mode as D = vth_max * lambda_mfp,mode.
+                const Real mfp_mode = lambda_raw / (vth_max + 1e-300);
+                const Real Kn_cell = mfp_mode / (dx + 1e-300);
+
+                // Enforce lambda_mfp,mode <= cell_knudsen_limit * dx.
+                const Real transport_factor =
+                    std::min(1.0, cell_knudsen_limit / (Kn_cell + 1e-300));
+
+                // A common factor preserves the barycentric constraint sum_s J_s = 0.
+                for (int a = 0; a < nactive; ++a) {
+                  mass_flux[a] *= transport_factor;
+                }
+
+                const Real lambda_eff = transport_factor * lambda_raw;
+                cell_rate += lambda_eff / (dx * dx + 1e-30);
 
               } else {
                 cell_rate += D_est / (dx * dx + 1e-30);
