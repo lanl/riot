@@ -155,6 +155,9 @@ set (SRC_LIST
 
   template_main.hpp
 
+  thinc/thinc.hpp
+  thinc/thinc.cpp
+
   variables.hpp
 )
 

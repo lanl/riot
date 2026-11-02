@@ -38,6 +38,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   auto physics = std::make_shared<StateDescriptor>("scalars");
   Params &params = physics->AllParams();
+  auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
 
   std::string base_name("scalars");
   int numscalar = 0;
@@ -60,9 +61,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         PARTHENON_THROW("Scalar var " + label +
                         " registered as both bulk- and mass-tied");
       }
-      Metadata m =
-          Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
-                    Metadata::FillGhost, Metadata::Advected, Metadata::WithFluxes});
+      Metadata m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
+                             Metadata::FillGhost, Metadata::Advected,
+                             Metadata::WithFluxes, MetadataKinematicAdvected});
       physics->AddField(label, m);
       bulkscalars.insert(label);
     } else {
@@ -81,7 +82,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   std::string control_field = ccmat::rho::name();
   Metadata ms_cons = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
                                Metadata::Sparse, Metadata::FillGhost, Metadata::Advected,
-                               Metadata::WithFluxes});
+                               Metadata::WithFluxes, MetadataKinematicAdvected});
   Metadata ms_prim =
       Metadata({Metadata::Cell, Metadata::Sparse, Metadata::Derived, Metadata::OneCopy});
   for (auto &s : sparse_scalars) {
