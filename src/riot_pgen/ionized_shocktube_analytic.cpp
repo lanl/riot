@@ -26,27 +26,23 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void ionized_shocktube_analytic::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
 
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   static auto desc = MakePackDescriptor<
       ccmat::rho, ccmat::internal_energy, ccbulk::total_material_energy, ccbulk::momentum,
       ccbulk::temperature, ccbulk::electron_temperature, ccbulk::electron_internal_energy,
       ccbulk::electron_pressure, ccbulk::pressure, ccbulk::electron_number_density,
-      ccmat::ionization_zbar>((pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+      ccmat::ionization_zbar>(md);
+  auto v = desc.GetPack(md);
 
   // Adiabatic index (assuming single material)
-  auto hydro_pkg = pmb->packages.Get("hydro");
-  auto mat_pkg = pmb->packages.Get("materials");
+  auto hydro_pkg = pmesh->packages.Get("hydro");
+  auto mat_pkg = pmesh->packages.Get("materials");
   auto eos_vec = mat_pkg->Param<std::vector<RiotEOS::EOS>>("h.h.EOS");
   Real gm1 = eos_vec[0].GruneisenParamFromDensityTemperature(1., 1.);
   Real gamma = gm1 + 1.0;
@@ -58,13 +54,9 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
          gm1);
 
   // Indexing
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
-
-  auto &coords = pmb->coords;
-
-  const Mesh *pmesh = pmb->pmy_mesh;
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   const parthenon::RegionSize &mesh_size = pmesh->mesh_size;
   const Real dx1_mesh = (mesh_size.xmax(X1DIR) - mesh_size.xmin(X1DIR));
@@ -75,9 +67,11 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real Tl = 1e6;
   const Real Tr = 5e5;
 
-  pmb->par_for(
-      "ProblemGenerator::ionized_shocktube_analytic", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::ionized_shocktube_analytic",
+      DevExecSpace(), 0, md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         Real x = coords.Xc<parthenon::X1DIR>(i);
         Real y = coords.Xc<parthenon::X2DIR>(j);
         Real z = coords.Xc<parthenon::X3DIR>(k);
@@ -87,37 +81,37 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real right = 1. - left;
 
         const Real rho = left * rhol + right * rhor;
-        v(0, ccmat::rho(0), k, j, i) = rho;
+        v(b, ccmat::rho(0), k, j, i) = rho;
 
         const Real isplit = 1. / (1.0 + zbar);
         const Real esplit = zbar * isplit;
 
         // electron temperature
         const Real Te = left * Tl + right * Tr;
-        v(0, ccbulk::electron_temperature(), k, j, i) = Te;
+        v(b, ccbulk::electron_temperature(), k, j, i) = Te;
 
         // ion temperature
         const Real Ti = left * Tl + right * Tr;
-        v(0, ccbulk::temperature(), k, j, i) = Ti;
+        v(b, ccbulk::temperature(), k, j, i) = Ti;
 
         // internal energy density
         const Real ue = esplit * rho * cv * Te;
         const Real ui = isplit * rho * cv * Ti;
 
         // electron and total material energy
-        v(0, ccbulk::electron_internal_energy(), k, j, i) = ue;
-        v(0, ccbulk::total_material_energy(), k, j, i) = ui + ue;
-        // v(0, ccmat::internal_energy(0), k, j, i) = ui + ue;
+        v(b, ccbulk::electron_internal_energy(), k, j, i) = ue;
+        v(b, ccbulk::total_material_energy(), k, j, i) = ui + ue;
+        // v(b, ccmat::internal_energy(0), k, j, i) = ui + ue;
 
         const Real ne = rho / abar / 1.66054e-24 * zbar;
-        v(0, ccbulk::electron_number_density(), k, j, i) = ne;
-        v(0, ccmat::ionization_zbar(0), k, j, i) = rho * zbar;
+        v(b, ccbulk::electron_number_density(), k, j, i) = ne;
+        v(b, ccmat::ionization_zbar(0), k, j, i) = rho * zbar;
 
         // electron and total pressure
         const Real pe = ue * gm1;
         const Real pi = ui * gm1;
-        v(0, ccbulk::electron_pressure(), k, j, i) = pe;
-        v(0, ccbulk::pressure(), k, j, i) = pi + pe;
+        v(b, ccbulk::electron_pressure(), k, j, i) = pe;
+        v(b, ccbulk::pressure(), k, j, i) = pi + pe;
       });
 
   return;

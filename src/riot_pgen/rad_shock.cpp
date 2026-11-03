@@ -50,7 +50,7 @@ ShockParams shock_params;
 //----------------------------------------------------------------------------------------
 //! \fn void ProblemGenerator
 //! \brief Sets initial conditions for a radiating L/R interface
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -76,60 +76,59 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   shock_params.pres_r = shock_params.gm1 * shock_params.u_r;
 
   // Capture variables for kernel
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   // Prep setting MeshBlockData
-  auto &rc = pmb->meshblock_data.Get();
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   // Packing
-  static auto desc = MakePackDescriptor<ccmat::rho, ccmat::volume_fraction,
-                                        ccbulk::total_material_energy, ccbulk::momentum>(
-      (pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+  static auto desc =
+      MakePackDescriptor<ccmat::rho, ccmat::volume_fraction,
+                         ccbulk::total_material_energy, ccbulk::momentum>(md);
+  auto v = desc.GetPack(md);
 
   // Set initial condition
   auto sp = shock_params;
-  auto &coords = pmb->coords;
-  pmb->par_for(
-      "ProblemGenerator::shock1", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::shock1", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         const Real x1v = coords.Xc<X1DIR>(i);
         const Real rho = (x1v >= sp.xd) ? sp.rho_r : sp.rho_l;
         const Real vx = (x1v >= sp.xd) ? sp.vx_r : sp.vx_l;
         const Real u_bulk = (x1v >= sp.xd) ? sp.u_r : sp.u_l;
-        v(0, ccmat::rho(0), k, j, i) = rho;
-        v(0, ccmat::volume_fraction(0), k, j, i) = 1.0;
-        v(0, ccbulk::momentum(0), k, j, i) = rho * vx;
-        v(0, ccbulk::momentum(1), k, j, i) = 0.0;
-        v(0, ccbulk::momentum(2), k, j, i) = 0.0;
-        v(0, ccbulk::total_material_energy(), k, j, i) = u_bulk + 0.5 * rho * SQR(vx);
+        v(b, ccmat::rho(0), k, j, i) = rho;
+        v(b, ccmat::volume_fraction(0), k, j, i) = 1.0;
+        v(b, ccbulk::momentum(0), k, j, i) = rho * vx;
+        v(b, ccbulk::momentum(1), k, j, i) = 0.0;
+        v(b, ccbulk::momentum(2), k, j, i) = 0.0;
+        v(b, ccbulk::total_material_energy(), k, j, i) = u_bulk + 0.5 * rho * SQR(vx);
       });
 
   // Now initialize intensity field
-  if (pmb->packages.Get("riot")->Param<bool>("do_radiation_transport")) {
-    const auto rad_pkg = GetRadPackage(pmb->packages);
+  if (pmesh->packages.Get("riot")->Param<bool>("do_radiation_transport")) {
+    const auto rad_pkg = GetRadPackage(pmesh->packages);
     const int ngroups = rad_pkg->Param<int>("ngroups");
     const int nangles = rad_pkg->Param<int>("nangles");
     const auto unit_utils = rad_pkg->Param<UnitUtils>("unit_utils");
     const auto fbnd = *(rad_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
-    static auto descr =
-        MakePackDescriptor<ccrad::intensity>((pmb->resolved_packages).get());
-    auto vr = descr.GetPack(rc.get());
+    static auto descr = MakePackDescriptor<ccrad::intensity>(md);
+    auto vr = descr.GetPack(md);
     auto spr = shock_params;
-    pmb->par_for(
-        "ProblemGenerator::shock2", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+    parthenon::par_for(
+        DEFAULT_LOOP_PATTERN, "ProblemGenerator::shock2", DevExecSpace(), 0,
+        md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+          const auto &coords = vr.GetCoordinates(b);
           const Real x1v = coords.Xc<X1DIR>(i);
           const Real trad = (x1v >= spr.xd) ? spr.temp_r : spr.temp_l;
           for (int gg = 0; gg < ngroups; ++gg) {
             const Real ee = Emissivity(gg, trad, fbnd, ngroups, unit_utils);
             for (int aa = 0; aa < nangles; ++aa) {
-              vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ee;
+              vr(b, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ee;
             }
           }
         });

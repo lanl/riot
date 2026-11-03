@@ -29,21 +29,16 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void taylor_green::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   static auto desc =
       MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
-                         ccbulk::total_material_energy, ccbulk::momentum>(
-          (pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+                         ccbulk::total_material_energy, ccbulk::momentum>(md);
+  auto v = desc.GetPack(md);
 
   const Real rho0 = pin->GetOrAddReal("taylor_green", "rho0", 1);
   const Real P0 = pin->GetOrAddReal("taylor_green", "P0", 1);
@@ -54,18 +49,15 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real Ay = pin->GetOrAddReal("taylor_green", "amplitude_y", -0.5);
   const Real Az = pin->GetOrAddReal("taylor_green", "amplitude_z", -0.5);
 
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   const int nummat =
       v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
   PARTHENON_REQUIRE(nummat == 1, "Taylor-Green vortex is only for one mat");
 
-  auto eos_vec = pmb->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
-  auto &coords = pmb->coords;
-
-  const Mesh *pmesh = pmb->pmy_mesh;
+  auto eos_vec = pmesh->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
 
   const parthenon::RegionSize &mesh_size = pmesh->mesh_size;
   const Real dx1_mesh = (mesh_size.xmax(X1DIR) - mesh_size.xmin(X1DIR));
@@ -76,10 +68,12 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real fz = 2 * M_PI * kz / dx3_mesh;
   PARTHENON_REQUIRE(std::abs(Ax * fx + Ay * fy + Az * fz) <= 1e-5, "div(momentum) == 0");
 
-  pmb->par_for(
-      "ProblemGenerator::taylor_green", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        v(0, ccmat::volume_fraction(), k, j, i) = 1.0;
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::taylor_green", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
+        v(b, ccmat::volume_fraction(), k, j, i) = 1.0;
 
         const Real x = coords.Xc<parthenon::X1DIR>(i);
         const Real y = coords.Xc<parthenon::X2DIR>(j);
@@ -90,19 +84,19 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
                                          (std::cos(2 * fz * z) + 2) -
                                      2);
         const Real u = energy_from_rho_P(eos_vec(0), rho0, p);
-        v(0, ccmat::rho(), k, j, i) = rho0;
-        v(0, ccmat::internal_energy(), k, j, i) = u;
+        v(b, ccmat::rho(), k, j, i) = rho0;
+        v(b, ccmat::internal_energy(), k, j, i) = u;
         // Momenta
         const Real vx = Ax * std::sin(fx * x) * std::cos(fy * y) * std::cos(fz * z);
         const Real vy = Ay * std::cos(fx * x) * std::sin(fy * y) * std::cos(fz * z);
         const Real vz = Az * std::cos(fx * x) * std::cos(fy * y) * std::sin(fz * z);
-        v(0, ccbulk::momentum(0), k, j, i) = rho0 * vx;
-        v(0, ccbulk::momentum(1), k, j, i) = rho0 * vy;
-        v(0, ccbulk::momentum(2), k, j, i) = rho0 * vz;
+        v(b, ccbulk::momentum(0), k, j, i) = rho0 * vx;
+        v(b, ccbulk::momentum(1), k, j, i) = rho0 * vy;
+        v(b, ccbulk::momentum(2), k, j, i) = rho0 * vz;
 
         // Total energy
         const Real ekin = 0.5 * rho0 * (vx * vx + vy * vy + vz * vz);
-        v(0, ccbulk::total_material_energy(), k, j, i) = u + ekin;
+        v(b, ccbulk::total_material_energy(), k, j, i) = u + ekin;
       });
   return;
 }

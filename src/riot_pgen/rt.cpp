@@ -28,27 +28,23 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void rt::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   using RiotEOS::EOS_Array_t;
 
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   auto v = riot::MakePack<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
-                          ccbulk::total_material_energy, ccbulk::momentum>(rc.get());
+                          ccbulk::total_material_energy, ccbulk::momentum>(md);
 
   // Adiabatic index (assuming single material)
-  auto gravity_pkg = pmb->packages.Get("gravity");
-  auto mat_pkg = pmb->packages.Get("materials");
+  auto gravity_pkg = pmesh->packages.Get("gravity");
+  auto mat_pkg = pmesh->packages.Get("materials");
   const auto &eos = mat_pkg->Param<EOS_Array_t>("d.d.EOS");
   auto gdim = gravity_pkg->Param<int>("gravity_dim");
   auto gacc = gravity_pkg->Param<Real>("gravity_g");
-  const int ndim = pmb->pmy_mesh->ndim;
+  const int ndim = pmesh->ndim;
 
   // Problem Parameters
   const Real mx = 4.;
@@ -60,17 +56,17 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real rhoh = pin->GetOrAddReal("rayleightaylor", "rho_high", 2.0 * rhol);
 
   // Indexing
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
-
-  auto &coords = pmb->coords;
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   PARTHENON_REQUIRE_THROWS(gdim < 2, "Cannot accelerate in z direction");
 
-  pmb->par_for(
-      "ProblemGenerator::rt", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::rt", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         Real x = coords.Xc<parthenon::X1DIR>(i);
         Real y = coords.Xc<parthenon::X2DIR>(j);
         Real z = coords.Xc<parthenon::X3DIR>(k);
@@ -78,11 +74,11 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real cond_coord = (gdim == 0) ? x : y;
         const Real orthog_coord = (gdim == 0) ? y : x;
         Real rho = (cond_coord < 0.) ? rhol : rhoh;
-        v(0, ccmat::rho(0), k, j, i) = (cond_coord < 0.) ? rho : 0.;
-        v(0, ccmat::rho(1), k, j, i) = (cond_coord < 0.) ? 0. : rho;
-        v(0, ccmat::volume_fraction(0), k, j, i) = (cond_coord < 0.) ? 1.0 : 0.;
-        v(0, ccmat::volume_fraction(1), k, j, i) =
-            1.0 - v(0, ccmat::volume_fraction(0), k, j, i);
+        v(b, ccmat::rho(0), k, j, i) = (cond_coord < 0.) ? rho : 0.;
+        v(b, ccmat::rho(1), k, j, i) = (cond_coord < 0.) ? 0. : rho;
+        v(b, ccmat::volume_fraction(0), k, j, i) = (cond_coord < 0.) ? 1.0 : 0.;
+        v(b, ccmat::volume_fraction(1), k, j, i) =
+            1.0 - v(b, ccmat::volume_fraction(0), k, j, i);
 
         // hydrostatic pressure
         Real p = P0 + gacc * rho * cond_coord;
@@ -93,17 +89,17 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
 
         // zero out velocities
         for (int dim = 0; dim < ndim; dim++) {
-          v(0, ccbulk::momentum(dim), k, j, i) = 0.;
+          v(b, ccbulk::momentum(dim), k, j, i) = 0.;
         }
 
         // perturbation to y momentum
         Real vmod = amplitude * (1 + std::cos(mx * M_PI * orthog_coord)) *
                     (1 + std::cos(my * M_PI * cond_coord)) / 4.;
-        v(0, ccbulk::momentum(gdim), k, j, i) = rho * vmod;
+        v(b, ccbulk::momentum(gdim), k, j, i) = rho * vmod;
 
         // total material energy perturbation
         Real ekin = 0.5 * rho * vmod * vmod;
-        v(0, ccbulk::total_material_energy(), k, j, i) = u + ekin;
+        v(b, ccbulk::total_material_energy(), k, j, i) = u + ekin;
       });
 
   return;

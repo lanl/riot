@@ -52,7 +52,7 @@ int main(parthenon::ParthenonManager &pman) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   pman.app_input->ProcessPackages = ProcessPackages;
   if constexpr (std::is_same_v<T, RiotDriver>) {
-    pman.app_input->ProblemGenerator = ProblemGenerator;
+    pman.app_input->MeshProblemGenerator = ProblemGenerator;
   }
   pman.app_input->PostStepDiagnosticsInLoop = diagnostics::PostStepDiagnosticsInLoop;
 

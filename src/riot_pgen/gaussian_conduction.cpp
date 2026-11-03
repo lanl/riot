@@ -21,7 +21,7 @@ namespace gaussian_conduction {
 //----------------------------------------------------------------------------------------
 //! \fn  void gaussian_conduction::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   /* radiation_diffusion is not ported to the new loop abstractions; disabled for now.
   using namespace RadiationDiffusion;
   */
@@ -31,18 +31,14 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
 
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   const Real T0 = pin->GetOrAddReal("gaussian_conduction", "T0", 1.0);
   const Real rho0 = pin->GetOrAddReal("gaussian_conduction", "rho0", 1.0);
   const Real Te0 = pin->GetOrAddReal("gaussian_conduction", "Te0", 1.0);
   const double t0 = 0.001;
 
-  const auto &ionization = pmb->packages.Get("ionization");
+  const auto &ionization = pmesh->packages.Get("ionization");
   const Real Ke = ionization->Param<Real>("electron_conductivity");
   const auto conductivity_model =
       ionization->Param<std::string>("electron_conductivity_model");
@@ -50,7 +46,7 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
       conductivity_model == "constant",
       "Problem 'gaussian_conduction' requires constant conductivity model!");
 
-  auto &materials = pmb->pmy_mesh->packages.Get("materials");
+  auto &materials = pmesh->packages.Get("materials");
   const auto &ion_eos = materials->Param<parthenon::ParArray1D<RiotEOS::EOS>>("d.d.EOS");
   const auto &electron_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.electron_EOS");
   const auto &eos_from_matid =
@@ -58,23 +54,24 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
 
   using TE = parthenon::TopologicalElement;
   constexpr TE te = TE::CC;
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire, te);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire, te);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire, te);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire, te);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire, te);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire, te);
   static auto desc = MakePackDescriptor<
       cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccmat::internal_energy,
       ccmat::volume_fraction, ccbulk::total_material_energy, ccbulk::momentum,
       ccbulk::temperature, ccbulk::electron_temperature, ccbulk::electron_internal_energy,
       ccbulk::electron_pressure, ccbulk::pressure, ccbulk::electron_number_density,
-      cm::ionization_zbar>((pmb->resolved_packages).get());
-  auto pack = desc.GetPack(rc.get());
+      cm::ionization_zbar>(md);
+  auto pack = desc.GetPack(md);
 
   constexpr int mat_id = 0;
 
-  pmb->par_for(
-      "ProblemGenerator::conduction_analytic", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        const auto &coords = pack.GetCoordinates(0);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::conduction_analytic", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = pack.GetCoordinates(b);
         Real x1 = coords.X<1, te>(i);
 
         // EoS parameters, lambdas and electron specific heat
@@ -93,20 +90,20 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real D = Ke / (rho0 * cve);
 
         // density and vol frac
-        pack(0, ccmat::rho(0), k, j, i) = rho0;
-        pack(0, ccmat::volume_fraction(mat_id), k, j, i) = 1.0;
+        pack(b, ccmat::rho(0), k, j, i) = rho0;
+        pack(b, ccmat::volume_fraction(mat_id), k, j, i) = 1.0;
 
         const double c = 0.0;
         const Real Te = 0.1 + std::exp(-(x1 - c) * (x1 - c) / (4.0 * D * t0));
         const double Ti = Te;
-        pack(0, ccbulk::electron_temperature(), k, j, i) = Te;
-        pack(0, ccbulk::temperature(), k, j, i) = Ti;
-        pack(0, cm::rho(), k, j, i) = rho0;
+        pack(b, ccbulk::electron_temperature(), k, j, i) = Te;
+        pack(b, ccbulk::temperature(), k, j, i) = Ti;
+        pack(b, cm::rho(), k, j, i) = rho0;
 
         // assume fully ionized
         const Real ne = rho0 / abar / 1.66054e-24 * zbar;
-        pack(0, ccbulk::electron_number_density(), k, j, i) = ne;
-        pack(0, cm::ionization_zbar(mat_id), k, j, i) = zbar;
+        pack(b, ccbulk::electron_number_density(), k, j, i) = ne;
+        pack(b, cm::ionization_zbar(mat_id), k, j, i) = zbar;
 
         // internal energy density
         const Real sie_e =
@@ -115,14 +112,14 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
             eosi.InternalEnergyFromDensityTemperature(rho0, Ti, lambda[mat_id]);
         const Real ue = sie_e * rho0;
         const Real ui = sie_i * rho0;
-        pack(0, ccbulk::electron_internal_energy(), k, j, i) = ue;
-        pack(0, ccbulk::total_material_energy(), k, j, i) = ui + ue;
+        pack(b, ccbulk::electron_internal_energy(), k, j, i) = ue;
+        pack(b, ccbulk::total_material_energy(), k, j, i) = ui + ue;
 
         // electron and total pressure
         const Real pe = eose.PressureFromDensityTemperature(rho0, Te, lambda[mat_id]);
         const Real pi = eosi.PressureFromDensityTemperature(rho0, Ti, lambda[mat_id]);
-        pack(0, ccbulk::electron_pressure(), k, j, i) = pe;
-        pack(0, ccbulk::pressure(), k, j, i) = pi + pe;
+        pack(b, ccbulk::electron_pressure(), k, j, i) = pe;
+        pack(b, ccbulk::pressure(), k, j, i) = pi + pe;
       });
 
   return;

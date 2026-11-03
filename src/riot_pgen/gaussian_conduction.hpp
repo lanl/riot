@@ -17,7 +17,7 @@
 #include <parthenon/package.hpp>
 namespace gaussian_conduction {
 using namespace parthenon::package::prelude;
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin);
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md);
 std::shared_ptr<StateDescriptor> ProblemPackage(ParameterInput *pin);
 } // namespace gaussian_conduction
 #endif // RIOT_PGEN_GAUSSIAN_CONDUCTION_HPP_

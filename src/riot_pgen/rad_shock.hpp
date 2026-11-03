@@ -23,7 +23,7 @@
 
 namespace rad_shock {
 using namespace parthenon::package::prelude;
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin);
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md);
 void ProblemModifier(parthenon::ParthenonManager *pman);
 void ShockInnerX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse);
 void ShockOuterX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse);

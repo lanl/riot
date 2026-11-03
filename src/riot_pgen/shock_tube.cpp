@@ -23,21 +23,16 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void shock_tube::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   static auto desc =
       MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
-                         ccbulk::total_material_energy, ccbulk::momentum>(
-          (pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+                         ccbulk::total_material_energy, ccbulk::momentum>(md);
+  auto v = desc.GetPack(md);
 
   const Real rhol = pin->GetOrAddReal("shock_tube", "rho_l", 1.0);
   const Real Pl = pin->GetOrAddReal("shock_tube", "P_l", 1.0);
@@ -46,20 +41,21 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real Pr = pin->GetOrAddReal("shock_tube", "P_r", 0.1);
   const Real vr = pin->GetOrAddReal("shock_tube", "v_r", 0.0);
 
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   const int nummat =
       v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
   PARTHENON_REQUIRE(nummat == 1, "shock_tube setup is only for one mat");
 
-  auto eos_vec = pmb->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
+  auto eos_vec = pmesh->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
 
-  auto &coords = pmb->coords;
-  pmb->par_for(
-      "ProblemGenerator::shock_tube", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::shock_tube", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         // assume this is single material for now
         const Real x1c = coords.Xc<parthenon::X1DIR>(i);
         const bool lhs = x1c < 0.5;
@@ -70,13 +66,13 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real pres = (lhs) ? Pl : Pr;
         const Real uu = energy_from_rho_P(eos_vec(0), rho, pres);
 
-        v(0, ccmat::volume_fraction(0), k, j, i) = vfrac;
-        v(0, ccmat::rho(0), k, j, i) = rho;
-        v(0, ccbulk::momentum(0), k, j, i) = rho * vel;
-        v(0, ccbulk::momentum(1), k, j, i) = 0.0;
-        v(0, ccbulk::momentum(2), k, j, i) = 0.0;
-        v(0, ccmat::internal_energy(0), k, j, i) = uu;
-        v(0, ccbulk::total_material_energy(), k, j, i) = uu + 0.5 * rho * SQR(vel);
+        v(b, ccmat::volume_fraction(0), k, j, i) = vfrac;
+        v(b, ccmat::rho(0), k, j, i) = rho;
+        v(b, ccbulk::momentum(0), k, j, i) = rho * vel;
+        v(b, ccbulk::momentum(1), k, j, i) = 0.0;
+        v(b, ccbulk::momentum(2), k, j, i) = 0.0;
+        v(b, ccmat::internal_energy(0), k, j, i) = uu;
+        v(b, ccbulk::total_material_energy(), k, j, i) = uu + 0.5 * rho * SQR(vel);
       });
 
   return;
