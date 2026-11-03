@@ -26,49 +26,45 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void hse::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
 
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   auto v = riot::MakePack<ccmat::rho, ccmat::internal_energy,
-                          ccbulk::total_material_energy, ccbulk::momentum>(rc.get());
+                          ccbulk::total_material_energy, ccbulk::momentum>(md);
 
   // Adiabatic index (assuming single material)
-  auto gravity_pkg = pmb->packages.Get("gravity");
-  auto mat_pkg = pmb->packages.Get("materials");
+  auto gravity_pkg = pmesh->packages.Get("gravity");
+  auto mat_pkg = pmesh->packages.Get("materials");
   auto eos_vec = mat_pkg->Param<std::vector<RiotEOS::EOS>>("h.h.EOS");
   const Real gm1 = eos_vec[0].GruneisenParamFromDensityTemperature(1., 1.);
   auto gdim = gravity_pkg->Param<int>("gravity_dim");
   auto gacc = gravity_pkg->Param<Real>("gravity_g");
-  const int ndim = pmb->pmy_mesh->ndim;
+  const int ndim = pmesh->ndim;
 
   // Problem Parameters
   const Real rho0 = pin->GetOrAddReal("problem", "rho0", 1.0); // background density
   const Real P0 = pin->GetOrAddReal("problem", "P0", 2.5);     // background pressure
 
   // Indexing
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
-  auto &coords = pmb->coords;
-
-  pmb->par_for(
-      "ProblemGenerator::hse", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::hse", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         const Real x2 = coords.Xc<parthenon::X2DIR>(j);
 
-        v(0, ccmat::rho(0), k, j, i) = rho0;
+        v(b, ccmat::rho(0), k, j, i) = rho0;
 
         // zero out momenta
         for (int dim = 0; dim < ndim; dim++) {
-          v(0, ccbulk::momentum(dim), k, j, i) = 0.;
+          v(b, ccbulk::momentum(dim), k, j, i) = 0.;
         }
 
         // internal energy density
@@ -76,7 +72,7 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real uu = pres / gm1;
 
         // total material energy
-        v(0, ccbulk::total_material_energy(), k, j, i) = uu;
+        v(b, ccbulk::total_material_energy(), k, j, i) = uu;
       });
 
   return;

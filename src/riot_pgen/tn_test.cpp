@@ -35,7 +35,7 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void tn_test::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
   constexpr Real ergs_per_MeV{1.0e6 * unit_system::eV};
   constexpr Real MeV_to_kelvin = ergs_per_MeV / unit_system::boltzmann;
@@ -44,21 +44,16 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   static auto desc =
       MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
-                         ccbulk::total_material_energy, ccbulk::momentum, ccmat::iso>(
-          (pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+                         ccbulk::total_material_energy, ccbulk::momentum, ccmat::iso>(md);
+  auto v = desc.GetPack(md);
 
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   const int nummat =
       v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
@@ -67,18 +62,18 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   PARTHENON_REQUIRE(nummat == 1, "This TN test is only set-up for one mat.");
   PARTHENON_REQUIRE(numiso >= 2, "This TN test requires at least two isotopes.");
 
-  auto eos_vec = pmb->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
+  auto eos_vec = pmesh->packages.Get("materials")->Param<ParArray1D<EOS>>("d.d.EOS");
 
-  auto materials = pmb->packages.Get("materials");
+  auto materials = pmesh->packages.Get("materials");
   materials->PostInitializationMesh = nullptr;
 
   // Get the masses of D and T from the isotope data if TN is active, otherwise use
   // approximate values
-  auto do_tn = pmb->packages.Get("riot")->Param<bool>("do_tn");
+  auto do_tn = pmesh->packages.Get("riot")->Param<bool>("do_tn");
   const std::array<int, 2> d_and_t{1002, 1003};
   std::array<Real, 2> masses{0.0, 0.0};
   if (do_tn) {
-    auto const &tnburn = pmb->packages.Get("TNBurn"); // for isotope masses
+    auto const &tnburn = pmesh->packages.Get("TNBurn"); // for isotope masses
     // get masses of D and T for input parameters
     auto const isotopes = tnburn->Param<std::vector<int>>("all_isotopes");
     auto const isotope_masses = tnburn->Param<std::vector<Real>>("isotope_masses");
@@ -99,7 +94,7 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   }
 
   // We also have to figure out which materials are d and t
-  auto const &iso_names = pmb->packages.Get("materials")
+  auto const &iso_names = pmesh->packages.Get("materials")
                               ->Param<std::vector<std::vector<int>>>("Isotope Zaids");
   std::array<int, 2> DT_iso_inx = {-1, -1};
   for (int iso_num = 0; iso_num < 2; iso_num++) {
@@ -121,31 +116,32 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   // initial conditions
   const Real density = D_mass + T_mass; // ~ 5 g/cc
 
-  pmb->par_for(
-      "ProblemGenerator::tn_test", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
-        v(0, ccmat::volume_fraction(), k, j, i) = 1.0;
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::tn_test", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        v(b, ccmat::volume_fraction(), k, j, i) = 1.0;
 
         // rho, u
         const Real u =
             eos_vec(0).InternalEnergyFromDensityTemperature(density, temperature);
-        v(0, ccmat::rho(), k, j, i) = density;
-        v(0, ccmat::internal_energy(), k, j, i) = density * u;
+        v(b, ccmat::rho(), k, j, i) = density;
+        v(b, ccmat::internal_energy(), k, j, i) = density * u;
 
         // Momenta
-        v(0, ccbulk::momentum(0), k, j, i) = 0.0;
-        v(0, ccbulk::momentum(1), k, j, i) = 0.0;
-        v(0, ccbulk::momentum(2), k, j, i) = 0.0;
+        v(b, ccbulk::momentum(0), k, j, i) = 0.0;
+        v(b, ccbulk::momentum(1), k, j, i) = 0.0;
+        v(b, ccbulk::momentum(2), k, j, i) = 0.0;
 
         // Total energy
-        v(0, ccbulk::total_material_energy(), k, j, i) = density * u;
+        v(b, ccbulk::total_material_energy(), k, j, i) = density * u;
 
         // Isotopics
         for (int p = 0; p < numiso; p++) {
-          v(0, ccmat::iso(p), k, j, i) = 0.0;
+          v(b, ccmat::iso(p), k, j, i) = 0.0;
         }
-        v(0, ccmat::iso(DT_iso_inx[0]), k, j, i) = D_mass;
-        v(0, ccmat::iso(DT_iso_inx[1]), k, j, i) = T_mass;
+        v(b, ccmat::iso(DT_iso_inx[0]), k, j, i) = D_mass;
+        v(b, ccmat::iso(DT_iso_inx[1]), k, j, i) = T_mass;
       });
   return;
 }

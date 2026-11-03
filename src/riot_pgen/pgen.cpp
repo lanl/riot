@@ -24,20 +24,13 @@
 namespace riot {
 
 namespace internal {
+// A problem holds exactly one of ProblemGenerator (per block) or
+// MeshProblemGenerator. The modifier and package are optional.
 struct RiotProblem {
- public:
-  RiotProblem() = default;
-  RiotProblem(pgen_t &p)
-      : ProblemGenerator(p), ProblemModifier(nullptr), ProblemPackage(nullptr) {}
-  RiotProblem(pgen_t &pgen, pmod_t &pmod)
-      : ProblemGenerator(pgen), ProblemModifier(pmod), ProblemPackage(nullptr) {}
-  RiotProblem(pgen_t &pgen, ppkg_t &ppkg)
-      : ProblemGenerator(pgen), ProblemModifier(nullptr), ProblemPackage(ppkg) {}
-  RiotProblem(pgen_t &pgen, pmod_t &pmod, ppkg_t &ppkg)
-      : ProblemGenerator(pgen), ProblemModifier(pmod), ProblemPackage(ppkg) {}
-  pgen_t ProblemGenerator;
-  pmod_t ProblemModifier;
-  ppkg_t ProblemPackage;
+  pgen_t ProblemGenerator = nullptr;
+  mesh_pgen_t MeshProblemGenerator = nullptr;
+  pmod_t ProblemModifier = nullptr;
+  ppkg_t ProblemPackage = nullptr;
 };
 std::unordered_map<std::string, RiotProblem> pgen_dict;
 
@@ -61,51 +54,61 @@ static auto &GetProb(ParameterInput *pin) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  void riot::RegisterProblem
-//! \brief
-//! JMM: I *think* I need to do these as overloads, not templates,
-//! because I need these implemented here so the pgen_dict is pgen.cpp
-//! scope.
-void RegisterProblem(const std::string &name, pgen_t pgen) {
-  internal::pgen_dict[name] = internal::RiotProblem(pgen);
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn  void riot::RegisterProblem
-//! \brief
-void RegisterProblem(const std::string &name, pgen_t pgen, pmod_t pmod) {
-  internal::RiotProblem prob(pgen, pmod);
-  internal::pgen_dict[name] = prob;
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn  void riot::RegisterProblem
-//! \brief
-void RegisterProblem(const std::string &name, pgen_t pgen, ppkg_t ppkg) {
-  internal::RiotProblem prob(pgen, ppkg);
-  internal::pgen_dict[name] = prob;
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn  void riot::RegisterProblem
-//! \brief
+//! \brief Register a per-block problem generator.
 void RegisterProblem(const std::string &name, pgen_t pgen, pmod_t pmod, ppkg_t ppkg) {
-  internal::RiotProblem prob(pgen, pmod, ppkg);
-  internal::pgen_dict[name] = prob;
+  internal::RiotProblem prob;
+  prob.ProblemGenerator = std::move(pgen);
+  prob.ProblemModifier = std::move(pmod);
+  prob.ProblemPackage = std::move(ppkg);
+  internal::pgen_dict[name] = std::move(prob);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void riot::RegisterProblem
+//! \brief Register a per-block problem generator with a package but no modifier.
+void RegisterProblem(const std::string &name, pgen_t pgen, ppkg_t ppkg) {
+  RegisterProblem(name, std::move(pgen), pmod_t(nullptr), std::move(ppkg));
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void riot::RegisterProblem
+//! \brief Register a mesh-level problem generator.
+void RegisterProblem(const std::string &name, mesh_pgen_t pgen, pmod_t pmod,
+                     ppkg_t ppkg) {
+  internal::RiotProblem prob;
+  prob.MeshProblemGenerator = std::move(pgen);
+  prob.ProblemModifier = std::move(pmod);
+  prob.ProblemPackage = std::move(ppkg);
+  internal::pgen_dict[name] = std::move(prob);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void riot::RegisterProblem
+//! \brief Register a mesh-level problem generator with a package but no modifier.
+void RegisterProblem(const std::string &name, mesh_pgen_t pgen, ppkg_t ppkg) {
+  RegisterProblem(name, std::move(pgen), pmod_t(nullptr), std::move(ppkg));
 }
 
 //----------------------------------------------------------------------------------------
 //! \fn  void riot::ProblemGenerator
-//! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+//! \brief Mesh-level entry point given to parthenon. Per-block generators are called
+//! once for each block in the partition.
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
+  if (md->NumBlocks() == 0) return;
   auto &prob = internal::GetProb(pin);
-  if (prob.ProblemGenerator == nullptr) {
+  if (prob.MeshProblemGenerator != nullptr) {
+    prob.MeshProblemGenerator(pmesh, pin, md);
+  } else if (prob.ProblemGenerator != nullptr) {
+    for (int b = 0; b < md->NumBlocks(); ++b) {
+      prob.ProblemGenerator(md->GetBlockData(b)->GetBlockPointer(), pin);
+    }
+  } else {
     PARTHENON_THROW("Problem generator is a null pointer!");
   }
-  prob.ProblemGenerator(pmb, pin);
 
-  ClipMaterials(pmb, pin);
-  ValidateTemperature(pmb);
-  ValidateVfracs(pmb);
+  ClipMaterials(md, pin);
+  ValidateTemperature(md);
+  ValidateVfracs(md);
 }
 
 //----------------------------------------------------------------------------------------
@@ -134,26 +137,37 @@ std::shared_ptr<StateDescriptor> ProblemPackage(ParameterInput *pin) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void riot::AllocateAllSparse
+//! \brief
+void AllocateAllSparse(MeshData<Real> *md) {
+  for (int b = 0; b < md->NumBlocks(); ++b) {
+    auto &rc = md->GetBlockData(b);
+    auto pmb = rc->GetBlockPointer();
+    for (auto &var : rc->GetVariableVector()) {
+      if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
+    }
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void riot::ClipMaterials
 //! \brief
-void ClipMaterials(MeshBlock *pmb, ParameterInput *pin) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
+void ClipMaterials(MeshData<Real> *md, ParameterInput *pin) {
   namespace ccmat = cell_variables::cell_averaged::mat;
 
-  auto hydro_pkg = pmb->packages.Get("hydro");
+  auto hydro_pkg = md->GetMeshPointer()->packages.Get("hydro");
   const auto mass_frac_thresh = hydro_pkg->Param<Real>("mass_frac_thresh");
   const auto vol_frac_thresh = hydro_pkg->Param<Real>("vol_frac_thresh");
 
-  auto &rc = pmb->meshblock_data.Get();
-  auto v = riot::MakePack<ccmat::rho, ccmat::volume_fraction>(rc.get());
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  auto v = riot::MakePack<ccmat::rho, ccmat::volume_fraction>(md);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
-  const int b = 0;
-  pmb->par_for(
-      "ProblemGenerator::ClipMaterials", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::ClipMaterials", DevExecSpace(), 0,
+      v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
         const int nmat = v.GetSize(b, ccmat::volume_fraction());
         Real rhotot = 0;
         for (int m = 0; m < nmat; ++m) {
@@ -180,54 +194,61 @@ void ClipMaterials(MeshBlock *pmb, ParameterInput *pin) {
       });
 }
 
-// don't let bulk temperature go unset for PTE purposes
-void ValidateTemperature(MeshBlock *pmb) {
+//----------------------------------------------------------------------------------------
+//! \fn  void riot::ValidateTemperature
+//! \brief don't let bulk temperature go unset for PTE purposes
+void ValidateTemperature(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  // don't let bulk temperature go unset for PTE purposes
-  auto &rc = pmb->meshblock_data.Get();
-  auto v = riot::MakePack<ccbulk::temperature>(rc.get());
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  auto v = riot::MakePack<ccbulk::temperature>(md);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
-  const int b = 0;
-  pmb->par_for(
-      "ProblemGenerator::SetTemp", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::SetTemp", DevExecSpace(), 0,
+      v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
         if (v(b, ccbulk::temperature(), k, j, i) < TINY_NUMBER) {
           v(b, ccbulk::temperature(), k, j, i) = 293.15;
         }
       });
 }
 
-// Check that material volume fractions sum approximately to 1.
-void ValidateVfracs(MeshBlock *pmb) {
+//----------------------------------------------------------------------------------------
+//! \fn  void riot::ValidateVfracs
+//! \brief Check that material volume fractions sum approximately to 1. The check is
+//! applied to each block separately, as it was when this ran per block.
+void ValidateVfracs(MeshData<Real> *md) {
   namespace ccmat = cell_variables::cell_averaged::mat;
-  // don't let bulk temperature go unset for PTE purposes
-  auto &rc = pmb->meshblock_data.Get();
-  auto v = riot::MakePack<ccmat::volume_fraction>(rc.get());
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::interior);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::interior);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::interior);
+  auto v = riot::MakePack<ccmat::volume_fraction>(md);
+  IndexRange ib = md->GetBoundsI(IndexDomain::interior);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::interior);
+  IndexRange kb = md->GetBoundsK(IndexDomain::interior);
+  const auto total_cells_block =
+      md->GetBlockData(0)->GetBlockPointer()->cellbounds.GetTotal(IndexDomain::interior);
 
-  Real vfrac_delta = 0;
-  parthenon::par_reduce(
-      parthenon::loop_pattern_mdrange_tag, "ProblemGenerator::ValidateVfracs",
-      DevExecSpace(), kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i, Real &delta) {
-        Real vfsum = 0;
-        const int nmat = v.GetSize(0, ccmat::volume_fraction());
-        for (int m = 0; m < nmat; ++m) {
-          vfsum += v(0, ccmat::volume_fraction(m), k, j, i);
-        }
-        delta += (1. - vfsum) * (1. - vfsum);
-      },
-      Kokkos::Sum<Real>(vfrac_delta));
+  // TODO(JMM): sqrt(sum)/N is not an RMS (that would be sqrt(sum/N)), so this
+  // threshold is very loose. Tightening it requires that hse and
+  // ionized_shocktube_analytic set volume fractions.
+  for (int b = 0; b < v.GetNBlocks(); ++b) {
+    Real vfrac_delta = 0;
+    parthenon::par_reduce(
+        parthenon::loop_pattern_mdrange_tag, "ProblemGenerator::ValidateVfracs",
+        DevExecSpace(), kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+        KOKKOS_LAMBDA(const int k, const int j, const int i, Real &delta) {
+          Real vfsum = 0;
+          const int nmat = v.GetSize(b, ccmat::volume_fraction());
+          for (int m = 0; m < nmat; ++m) {
+            vfsum += v(b, ccmat::volume_fraction(m), k, j, i);
+          }
+          delta += (1. - vfsum) * (1. - vfsum);
+        },
+        Kokkos::Sum<Real>(vfrac_delta));
 
-  const auto total_cells_block = pmb->cellbounds.GetTotal(IndexDomain::interior);
-  vfrac_delta = std::sqrt(vfrac_delta) / total_cells_block;
-  PARTHENON_REQUIRE_THROWS(vfrac_delta < 1e-1,
-                           "Volume fraction must approximately sum to 1 in all cells");
+    vfrac_delta = std::sqrt(vfrac_delta) / total_cells_block;
+    PARTHENON_REQUIRE_THROWS(vfrac_delta < 1e-1,
+                             "Volume fraction must approximately sum to 1 in all cells");
+  }
 }
 
 } // namespace riot

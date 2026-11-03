@@ -17,7 +17,7 @@
 #include <parthenon/package.hpp>
 namespace ei_relax {
 using namespace parthenon::package::prelude;
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin);
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md);
 
 } // namespace ei_relax
 #endif // RIOT_PGEN_EI_RELAX_HPP_
