@@ -2029,14 +2029,14 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             const Real dx = coords.Dxc(DIR, k, j, i);
             const Real dxinv = 1.0 / (dx + 1e-30);
             std::array<Real, MAX_DIFFUSION_SPECIES> rhoL, rhoR;
-            std::array<Real, MAX_DIFFUSION_SPECIES> rhoF;
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoF, nF;
             // Compact list of species active at this face.
             // summed collision frequencies
             std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{};
             // RHS and solution.
             std::array<Real, MAX_DIFFUSION_SPECIES> rhs{};
             std::array<Real, MAX_DIFFUSION_SPECIES> mass_flux{};
-            // Gather species densities.
+            // Gather species mass and number densities.
             Real rhoTotF = 0.0;
             for (int s = 0; s < nspecies; ++s) {
               const int m = species.material[s];
@@ -2047,6 +2047,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               rhoR[s] = std::max(rho(kji), 0.0);
               rhoF[s] = 0.5 * (rhoL[s] + rhoR[s]);
               rhoTotF += rhoF[s];
+              nF[s] = rhoF[s] * species.mass_inv[s];
             }
 
             const Real NeF = 0.5 * (ccbulk_ne(kji - dl) + ccbulk_ne(kji));
@@ -2144,31 +2145,27 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real nChargeF = 0.0, nZ2F = 0.0, sumZ2OverM = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
-                const Real ns = rhoF[s] * species.mass_inv[s];
                 const Real Zs = species_zbarF[s];
-                nChargeF += ns * Zs;
-                nZ2F += ns * Zs * Zs;
+                nChargeF += nF[s] * Zs;
+                nZ2F += nF[s] * Zs * Zs;
                 sumZ2OverM += rhoF[s] * Zs * Zs * species.mass_inv[s];
               }
               const Real Zeff = nZ2F / (nChargeF + 1e-30);
               sumZ2OverM /= (rhoCF + 1e-30);
+
               // Electron thermal-force coefficient B_e^(e).
               // Kagan & Baalrud, Eq. (58), weakly coupled plasma approximation.
               //
               // This coefficient accounts for the non-Maxwellian electron
               // distribution induced by an electron-temperature gradient.
               const Real invZeff = 1.0 / (Zeff + 1e-30);
-
               const Real Be = (0.47 + 0.94 * invZeff) /
                               (0.31 + 1.20 * invZeff + 0.41 * invZeff * invZeff);
-
-              const Real thermal_coeff = Be / (Zeff + 1e-30);
+              const Real thermal_coeff = Be * invZeff;
               ///////////////////////////////////////////////////////////////////////////////
 
-              std::array<Real, MAX_DIFFUSION_SPECIES> nF{};
 
               for (int s = 0; s < nspecies; ++s) {
-                nF[s] = rhoF[s] * species.mass_inv[s];
               }
 
               // Wrap matrix backing storage for the active system.
@@ -2294,8 +2291,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                     const Real dYq = (((s == s_q) ? 1.0 * species.mass_inv[s] : 0.0) -
                                       Ys * species.mass_inv[s_q]) /
                                      (nCF + 1e-30);
-                    const Real ns = rhoF[s] * species.mass_inv[s];
-                    const Real Qs = ns * species_zbarF[s] / (nChargeF + 1e-30);
+                    const Real Qs = nF[s] * species_zbarF[s] / (nChargeF + 1e-30);
 
                     rhs_basis[a] = -(PCF * dYq + (Ys - Xs) * gradPC_basis +
                                      (Qs - Xs) * gradPe_basis);
