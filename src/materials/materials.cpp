@@ -488,13 +488,15 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       // make this happen is to modify `InitializeEOS` so it can optionally just return an
       // empty EOS object. We use MPI to clean that up later so this
       // is safe to do.
-      const bool actually_load = (global_rank0 && !skip_eos_init) || !use_mpi_shared_memory;
+      const bool actually_load =
+          (global_rank0 && !skip_eos_init) || !use_mpi_shared_memory;
       eos_host.push_back(RiotEOS::InitializeEOS(pin, eos_block, false, actually_load));
     };
 
     // For adding electron EOS...
     auto add_electron_eos = [&](const std::string &eos_block) {
-      const bool actually_load = (global_rank0 && !skip_eos_init) || !use_mpi_shared_memory;
+      const bool actually_load =
+          (global_rank0 && !skip_eos_init) || !use_mpi_shared_memory;
       electron_eos_host.push_back(
           RiotEOS::InitializeEOS(pin, eos_block, true, actually_load));
     };

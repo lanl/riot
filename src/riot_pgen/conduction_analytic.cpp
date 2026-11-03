@@ -28,29 +28,25 @@ using namespace RiotEOS;
 //----------------------------------------------------------------------------------------
 //! \fn  void conduction_analytic::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
 
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   static auto desc = MakePackDescriptor<
       cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccmat::internal_energy,
       ccmat::volume_fraction, ccbulk::total_material_energy, ccbulk::momentum,
       ccbulk::temperature, ccbulk::electron_temperature, ccbulk::electron_internal_energy,
       ccbulk::electron_pressure, ccbulk::pressure, ccbulk::electron_number_density,
-      ccmat::ionization_zbar, cm::ionization_zbar>((pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+      ccmat::ionization_zbar, cm::ionization_zbar>(md);
+  auto v = desc.GetPack(md);
 
   // EoS (assuming single material)
-  auto hydro_pkg = pmb->packages.Get("hydro");
-  auto mat_pkg = pmb->packages.Get("materials");
+  auto hydro_pkg = pmesh->packages.Get("hydro");
+  auto mat_pkg = pmesh->packages.Get("materials");
   const auto &ion_eos = mat_pkg->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
   const auto &electron_eos = mat_pkg->Param<RiotEOS::EOS_Array_t>("d.d.electron_EOS");
   const auto &eos_from_matid =
@@ -63,10 +59,9 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const int nx = pin->GetInteger("conduction_analytic", "nx");
   const int ny = pin->GetInteger("conduction_analytic", "ny");
   const int nz = pin->GetInteger("conduction_analytic", "nz");
-  const auto &ionization_options = pmb->packages.Get("ionization");
+  const auto &ionization_options = pmesh->packages.Get("ionization");
   const Real Ke = ionization_options->Param<Real>("electron_conductivity");
 
-  const Mesh *pmesh = pmb->pmy_mesh;
   const parthenon::RegionSize &mesh_size = pmesh->mesh_size;
   const Real dx1_mesh = (mesh_size.xmax(X1DIR) - mesh_size.xmin(X1DIR));
   const Real dx2_mesh = (mesh_size.xmax(X2DIR) - mesh_size.xmin(X2DIR));
@@ -78,17 +73,17 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   const Real kz = 2.0 * M_PI * nz / dx3_mesh;
 
   // Indexing
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
-
-  auto &coords = pmb->coords;
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   const int mat_id = 0;
 
-  pmb->par_for(
-      "ProblemGenerator::conduction_analytic", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::conduction_analytic", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         const Real x = coords.Xc<parthenon::X1DIR>(i);
         const Real y = coords.Xc<parthenon::X2DIR>(j);
         const Real z = coords.Xc<parthenon::X3DIR>(k);
@@ -103,7 +98,7 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const int eos_id = eos_from_matid(mat_id);
         auto &eose = electron_eos(eos_id);
         auto &eosi = ion_eos(eos_id);
-        RiotEOS::LambdaIndexerMulti<decltype(v)> lambda(v, 0, k, j, i);
+        RiotEOS::LambdaIndexerMulti<decltype(v)> lambda(v, b, k, j, i);
         // specific heat of electrons - should be constant so just pass any
         // temperature
         const Real cve =
@@ -113,24 +108,24 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real D = Ke / (rho0 * cve);
 
         // density and vol frac
-        v(0, ccmat::rho(0), k, j, i) = rho0;
-        v(0, ccmat::volume_fraction(mat_id), k, j, i) = 1.0;
+        v(b, ccmat::rho(0), k, j, i) = rho0;
+        v(b, ccmat::volume_fraction(mat_id), k, j, i) = 1.0;
 
         // electron temperature - Fourier mode
         // solution at t=0
         const Real Te = constant + cell_average_solution(x, y, z, dx, dy, dz, kx, ky, kz,
                                                          beta, D, 0.);
-        v(0, ccbulk::electron_temperature(), k, j, i) = Te;
+        v(b, ccbulk::electron_temperature(), k, j, i) = Te;
         // set Ti = Te
         const Real Ti = Te;
-        v(0, ccbulk::temperature(), k, j, i) = Ti;
+        v(b, ccbulk::temperature(), k, j, i) = Ti;
 
         // assume fully ionized
         const Real ne = rho0 / abar / 1.66054e-24 * zbar;
-        v(0, ccbulk::electron_number_density(), k, j, i) = ne;
-        v(0, ccmat::ionization_zbar(mat_id), k, j, i) = rho0 * zbar;
+        v(b, ccbulk::electron_number_density(), k, j, i) = ne;
+        v(b, ccmat::ionization_zbar(mat_id), k, j, i) = rho0 * zbar;
         // have to set prim zbar also because it's used in the eos calls below
-        v(0, cm::ionization_zbar(mat_id), k, j, i) = zbar;
+        v(b, cm::ionization_zbar(mat_id), k, j, i) = zbar;
 
         // internal energy density
         const Real sie_e =
@@ -141,14 +136,14 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real ui = sie_i * rho0;
 
         // electron and total material energy
-        v(0, ccbulk::electron_internal_energy(), k, j, i) = ue;
-        v(0, ccbulk::total_material_energy(), k, j, i) = ui + ue;
+        v(b, ccbulk::electron_internal_energy(), k, j, i) = ue;
+        v(b, ccbulk::total_material_energy(), k, j, i) = ui + ue;
 
         // electron and total pressure
         const Real pe = eose.PressureFromDensityTemperature(rho0, Te, lambda[mat_id]);
         const Real pi = eosi.PressureFromDensityTemperature(rho0, Ti, lambda[mat_id]);
-        v(0, ccbulk::electron_pressure(), k, j, i) = pe;
-        v(0, ccbulk::pressure(), k, j, i) = pi + pe;
+        v(b, ccbulk::electron_pressure(), k, j, i) = pe;
+        v(b, ccbulk::pressure(), k, j, i) = pi + pe;
       });
 
   return;

@@ -17,7 +17,7 @@
 #include <parthenon/package.hpp>
 namespace conduction_analytic {
 using namespace parthenon::package::prelude;
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin);
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md);
 void ProblemModifier(parthenon::ParthenonManager *pman);
 void UserWorkAfterLoop(Mesh *pmesh, ParameterInput *pin, parthenon::SimTime &tm);
 

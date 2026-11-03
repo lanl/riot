@@ -20,7 +20,7 @@
 
 namespace linear_modes {
 using namespace parthenon::package::prelude;
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin);
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md);
 void ProblemModifier(parthenon::ParthenonManager *pman);
 std::shared_ptr<StateDescriptor> ProblemPackage(ParameterInput *pin);
 void UserWorkAfterLoop(Mesh *pmesh, ParameterInput *pin, parthenon::SimTime &tm);

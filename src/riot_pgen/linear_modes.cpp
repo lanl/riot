@@ -65,9 +65,8 @@ LinWaveVariables lwv;
 //----------------------------------------------------------------------------------------
 //! \fn  void linear_modes::ProblemGenerator
 //! \brief
-void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
+void ProblemGenerator(Mesh *pmesh, ParameterInput *pin, MeshData<Real> *md) {
   // read global parameters
-  const Mesh *pmesh = pmb->pmy_mesh;
   const int ndim = pmesh->ndim;
   const int iprob = pin->GetInteger("problem", "iprob");
   const Real nperiod = pin->GetOrAddReal("problem", "nperiod", 1);
@@ -152,12 +151,12 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   lwv.b3_0 = 0.5;
 
   // capture variables for kernel
-  IndexRange ib = pmb->cellbounds.GetBoundsI(IndexDomain::entire);
-  IndexRange jb = pmb->cellbounds.GetBoundsJ(IndexDomain::entire);
-  IndexRange kb = pmb->cellbounds.GetBoundsK(IndexDomain::entire);
+  IndexRange ib = md->GetBoundsI(IndexDomain::entire);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::entire);
+  IndexRange kb = md->GetBoundsK(IndexDomain::entire);
 
   // Adiabatic index (assuming single material)
-  auto mat_pkg = pmb->packages.Get("materials");
+  auto mat_pkg = pmesh->packages.Get("materials");
   auto eos_vec = mat_pkg->Param<std::vector<RiotEOS::EOS>>("h.h.EOS");
   lwv.gm1 = eos_vec[0].GruneisenParamFromDensityTemperature(lwv.d0, 1.);
   lwv.gamma = lwv.gm1 + 1.0;
@@ -174,20 +173,15 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   using parthenon::MakePackDescriptor;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
-  auto &rc = pmb->meshblock_data.Get();
-
-  for (auto &var : rc->GetVariableVector()) {
-    if (!var->IsAllocated()) pmb->AllocateSparse(var->label());
-  }
+  riot::AllocateAllSparse(md);
 
   // packing
   static auto desc =
       MakePackDescriptor<ccmat::rho, ccmat::internal_energy, ccmat::volume_fraction,
                          ccbulk::total_material_energy, ccbulk::momentum,
                          // electrons
-                         ccbulk::electron_internal_energy>(
-          (pmb->resolved_packages).get());
-  auto v = desc.GetPack(rc.get());
+                         ccbulk::electron_internal_energy>(md);
+  auto v = desc.GetPack(md);
 
   const int nummat =
       v.GetUpperBoundHost(0, ccmat::rho()) - v.GetLowerBoundHost(0, ccmat::rho()) + 1;
@@ -201,13 +195,14 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
   }
 
   // coordinates and problem setup
-  auto &coords = pmb->coords;
   auto dlw = lwv;
 
   // set initial condition
-  pmb->par_for(
-      "ProblemGenerator::linear_modes", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int k, const int j, const int i) {
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, "ProblemGenerator::linear_modes", DevExecSpace(), 0,
+      md->NumBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+        const auto &coords = v.GetCoordinates(b);
         // cell-centered coordinates
         const Real x1v = coords.Xc<X1DIR>(i);
         const Real x2v = coords.Xc<X2DIR>(j);
@@ -222,12 +217,12 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real mz = dlw.amp * sn * dlw.rem[3][dlw.wave_flag];
 
         // set bulk quantities
-        v(0, ccbulk::momentum(0), k, j, i) =
+        v(b, ccbulk::momentum(0), k, j, i) =
             mx * dlw.cos_a2 * dlw.cos_a3 - my * dlw.sin_a3 - mz * dlw.sin_a2 * dlw.cos_a3;
-        v(0, ccbulk::momentum(1), k, j, i) =
+        v(b, ccbulk::momentum(1), k, j, i) =
             mx * dlw.cos_a2 * dlw.sin_a3 + my * dlw.cos_a3 - mz * dlw.sin_a2 * dlw.sin_a3;
-        v(0, ccbulk::momentum(2), k, j, i) = mx * dlw.sin_a2 + mz * dlw.cos_a2;
-        v(0, ccbulk::total_material_energy(), k, j, i) =
+        v(b, ccbulk::momentum(2), k, j, i) = mx * dlw.sin_a2 + mz * dlw.cos_a2;
+        v(b, ccbulk::total_material_energy(), k, j, i) =
             dlw.p0 / dlw.gm1 + 0.5 * dlw.d0 * (dlw.v1_0) * (dlw.v1_0) +
             dlw.amp * sn * dlw.rem[4][dlw.wave_flag];
 
@@ -235,11 +230,11 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
         const Real drho = dlw.amp * sn * dlw.rem[0][dlw.wave_flag];
         const Real rho_bulk = dlw.d0 + drho;
         const Real KE = 0.5 *
-                        (SQR(v(0, ccbulk::momentum(0), k, j, i)) +
-                         SQR(v(0, ccbulk::momentum(1), k, j, i)) +
-                         SQR(v(0, ccbulk::momentum(2), k, j, i))) /
+                        (SQR(v(b, ccbulk::momentum(0), k, j, i)) +
+                         SQR(v(b, ccbulk::momentum(1), k, j, i)) +
+                         SQR(v(b, ccbulk::momentum(2), k, j, i))) /
                         rho_bulk;
-        const Real u_bulk = v(0, ccbulk::total_material_energy(), k, j, i) - KE;
+        const Real u_bulk = v(b, ccbulk::total_material_energy(), k, j, i) - KE;
 
         // iprob==2 discontinous vfracs, iprob==3 uniform vfracs, iprob==4 smoothly
         // varying vfracs
@@ -253,19 +248,19 @@ void ProblemGenerator(MeshBlock *pmb, ParameterInput *pin) {
             vfrac_0 = 0.25 * sn + 0.5;
           }
           const Real vfrac_1 = 1.0 - vfrac_0;
-          v(0, ccmat::volume_fraction(0), k, j, i) = vfrac_0;
-          v(0, ccmat::volume_fraction(1), k, j, i) = vfrac_1;
-          v(0, ccmat::rho(0), k, j, i) = vfrac_0 * rho_bulk;
-          v(0, ccmat::rho(1), k, j, i) = vfrac_1 * rho_bulk;
+          v(b, ccmat::volume_fraction(0), k, j, i) = vfrac_0;
+          v(b, ccmat::volume_fraction(1), k, j, i) = vfrac_1;
+          v(b, ccmat::rho(0), k, j, i) = vfrac_0 * rho_bulk;
+          v(b, ccmat::rho(1), k, j, i) = vfrac_1 * rho_bulk;
         } else { // iprob==1, single material
-          v(0, ccmat::volume_fraction(0), k, j, i) = 1.0;
-          v(0, ccmat::rho(0), k, j, i) = rho_bulk;
+          v(b, ccmat::volume_fraction(0), k, j, i) = 1.0;
+          v(b, ccmat::rho(0), k, j, i) = rho_bulk;
         }
 
         // ionization correction
         if (do_ionization) {
           // put half the energy into electrons
-          v(0, ccbulk::electron_internal_energy(), k, j, i) = 0.5 * u_bulk;
+          v(b, ccbulk::electron_internal_energy(), k, j, i) = 0.5 * u_bulk;
         }
       });
 

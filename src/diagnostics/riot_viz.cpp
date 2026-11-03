@@ -12,7 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 #include <algorithm>
-//#include <format>
+// #include <format>
 #include <iomanip>
 #include <sstream>
 
@@ -22,8 +22,8 @@
 
 // stb implementations live in stb_impl.c, compiled with the C compiler rather than
 // nvcc. See the note there.
-#include <stb_image_write.h>
 #include <stb_image_resize2.h>
+#include <stb_image_write.h>
 
 #include <font8x8.h>
 
@@ -104,7 +104,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
     auto slice_pos = pin->GetOrAddVector<Real>(layer, "slice_location", {});
     auto slice_normal = pin->GetOrAddVector<Real>(layer, "slice_normal", {});
     auto slice_alpha = pin->GetOrAdd<Real>(layer, "slice_alpha", 1.0);
-    auto slice_transparent_outside = pin->GetOrAddVector<bool>(layer, "transparent_outside_range", std::vector<bool>(2, false));
+    auto slice_transparent_outside = pin->GetOrAddVector<bool>(
+        layer, "transparent_outside_range", std::vector<bool>(2, false));
     if (type == "slice") {
       // stick slice_alpha in contour_alpha
       slice_alpha = std::clamp(slice_alpha, 0.0, 1.0);
@@ -511,10 +512,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       ParArrayND<uint8_t>("Volume Render images", scene.camera.size(), 4 * max_size);
 
   const int initial_pool_size =
-    pin->GetOrAddInteger("riot_viz", "initial_swarm_pool_size", 256);
+      pin->GetOrAddInteger("riot_viz", "initial_swarm_pool_size", 256);
 
   PARTHENON_REQUIRE(initial_pool_size > 0,
-                  "riot_viz/initial_swarm_pool_size must be positive");
+                    "riot_viz/initial_swarm_pool_size must be positive");
 
   Metadata mswarm({Metadata::Provides, Metadata::None, Metadata::Analysis});
   mswarm.SetInitialSwarmPoolReservation(initial_pool_size);
@@ -531,8 +532,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   pkg->AddSwarmValue<pvr::camera_id, pvr::particles>(m_int);
   pkg->AddSwarmValue<pvr::pixel_id, pvr::particles>(m_int);
 
-  const bool analysis =
-      pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false);
+  const bool analysis = pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false);
   std::vector<parthenon::MetadataFlag> flags{Metadata::OneCopy, Metadata::Node,
                                              Metadata::Analysis};
   if (analysis) flags.push_back(Metadata::FillGhost);
@@ -546,9 +546,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("scene_info", scene, true);
   params.Add("orig_fields", orig_fields);
   params.Add("analysis", analysis);
-  //RenderingParams rparams(scene.rendering_params);
-  //params.Add("rendering_params", rparams);
-  params.Add("tracer_info", impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)), true);
+  // RenderingParams rparams(scene.rendering_params);
+  // params.Add("rendering_params", rparams);
+  params.Add("tracer_info",
+             impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)),
+             true);
 
   params.Add("nodal_bounds", impl::NodalBounds(), true);
 
@@ -720,10 +722,10 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
         DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
         KOKKOS_LAMBDA(const int n) {
           const int pidx = new_context(0).GetNewParticleIndex(n);
-	  x(pidx) = camera_pts(n, sample::x); // to make Cuda happy
-	  y(pidx) = camera_pts(n, sample::y);
-	  z(pidx) = camera_pts(n, sample::z);
-	  const auto block_xmax0 = block_xmax[0];
+          x(pidx) = camera_pts(n, sample::x); // to make Cuda happy
+          y(pidx) = camera_pts(n, sample::y);
+          z(pidx) = camera_pts(n, sample::z);
+          const auto block_xmax0 = block_xmax[0];
           if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
           } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
             Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
@@ -791,8 +793,7 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
 
   auto pm = md->GetMeshPointer();
   auto viz = pm->packages.Get("riot_viz");
-  auto orig_fields =
-      viz->Param<std::vector<std::string>>("orig_fields");
+  auto orig_fields = viz->Param<std::vector<std::string>>("orig_fields");
   auto &scene_info = viz->Param<SceneInfo>("scene_info");
   auto node_fields = scene_info.field;
   auto desc_orig = parthenon::MakePackDescriptor(md, orig_fields);
@@ -811,21 +812,24 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
   std::vector<parthenon::PackIdx> node_pack_idx;
   for (auto &key : scene_info.field)
     node_pack_idx.emplace_back(node_pack_idx_map.at(key));
-  auto node_pack_idx_view = RiotUtils::VectorToDevice(node_pack_idx, "node_pack_idx_view");
+  auto node_pack_idx_view =
+      RiotUtils::VectorToDevice(node_pack_idx, "node_pack_idx_view");
 
   PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == vnode.GetNBlocks(), "oops");
   PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == md->NumBlocks(), "oops");
 
   PARTHENON_REQUIRE_THROWS(nfields <= 2 * max_layers,
                            "Too many distinct visualization fields.");
-  auto max_value = parthenon::ParArray2D<Real>("max_nodal_value", md->NumBlocks(), 2*max_layers);
-  auto min_value = parthenon::ParArray2D<Real>("min_nodal_value", md->NumBlocks(), 2*max_layers);
-  parthenon::par_for(DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(),
-    0, md->NumBlocks() - 1, 0, 2 * max_layers - 1,
-    KOKKOS_LAMBDA(const int b, const int l) {
-      max_value(b, l) = std::numeric_limits<Real>::lowest();
-      min_value(b, l) = std::numeric_limits<Real>::max();
-    });
+  auto max_value =
+      parthenon::ParArray2D<Real>("max_nodal_value", md->NumBlocks(), 2 * max_layers);
+  auto min_value =
+      parthenon::ParArray2D<Real>("min_nodal_value", md->NumBlocks(), 2 * max_layers);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, md->NumBlocks() - 1,
+      0, 2 * max_layers - 1, KOKKOS_LAMBDA(const int b, const int l) {
+        max_value(b, l) = std::numeric_limits<Real>::lowest();
+        min_value(b, l) = std::numeric_limits<Real>::max();
+      });
 
   Kokkos::fence();
 
@@ -884,14 +888,16 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
               RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
                 vnode(b, iv, k, j, i) = 0.0;
               });
-              Kokkos::atomic_store(&min_value(b, n), std::numeric_limits<Real>::quiet_NaN());
-              Kokkos::atomic_store(&max_value(b, n), std::numeric_limits<Real>::quiet_NaN());
+              Kokkos::atomic_store(&min_value(b, n),
+                                   std::numeric_limits<Real>::quiet_NaN());
+              Kokkos::atomic_store(&max_value(b, n),
+                                   std::numeric_limits<Real>::quiet_NaN());
             }
           }
         }
       });
-  
-  //parthenon::par_for_outer
+
+  // parthenon::par_for_outer
 
   Kokkos::fence();
 
@@ -924,11 +930,14 @@ TaskCollection Render(Mesh *pm, Real time) {
           "riot_viz_nodes", md_sp, viz->Param<SceneInfo>("scene_info").field);
       comms = parthenon::AddBoundaryExchangeTasks(
           set_nodal_vals, tl, md_nodes, pm->multilevel,
-          [](TaskID id, TaskList *, std::shared_ptr<MeshData<Real>>, bool) { return id; });
+          [](TaskID id, TaskList *, std::shared_ptr<MeshData<Real>>, bool) {
+            return id;
+          });
     }
     auto [itl, push] = tl.AddSublist(comms | init_particles, {0, 100000});
-    
-    auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp, pvr::particles::name());
+
+    auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp,
+                              pvr::particles::name());
     auto reset_comms = itl.AddTask(none, parthenon::ResetSwarmsCommunicationMesh, md_sp);
     auto send = itl.AddTask(reset_comms | remove, parthenon::SendSwarmsMesh, md_sp);
     auto recv = itl.AddTask(send | reset_comms, parthenon::ReceiveSwarmsMesh, md_sp);
@@ -995,35 +1004,22 @@ std::string FormatReal(Real value) {
 std::string FormatMinMax(double min_val, double max_val) {
   return FormatReal(min_val) + " / " + FormatReal(max_val);
 }
-std::vector<std::uint8_t>
-resize_rgba(const void *src,
-            int src_w, int src_h,
-            int dst_w, int dst_h)
-{
-    std::vector<std::uint8_t> dst(
-        static_cast<std::size_t>(dst_w) * dst_h * 4);
+std::vector<std::uint8_t> resize_rgba(const void *src, int src_w, int src_h, int dst_w,
+                                      int dst_h) {
+  std::vector<std::uint8_t> dst(static_cast<std::size_t>(dst_w) * dst_h * 4);
 
-    auto filter = STBIR_FILTER_CATMULLROM;
-    stbir_resize(
-        src,
-        src_w,
-        src_h,
-        0,                  // tightly packed source stride
-        dst.data(),
-        dst_w,
-        dst_h,
-        0,                  // tightly packed destination stride
-        STBIR_RGBA,
-        STBIR_TYPE_UINT8,
-        STBIR_EDGE_CLAMP,
-        filter
-    );
+  auto filter = STBIR_FILTER_CATMULLROM;
+  stbir_resize(src, src_w, src_h,
+               0, // tightly packed source stride
+               dst.data(), dst_w, dst_h,
+               0, // tightly packed destination stride
+               STBIR_RGBA, STBIR_TYPE_UINT8, STBIR_EDGE_CLAMP, filter);
 
-    return dst;
+  return dst;
 }
 
-int write_png(char const *filename, int w, int h, int comp,
-              const void *data, int stride_in_bytes, Real scale) {
+int write_png(char const *filename, int w, int h, int comp, const void *data,
+              int stride_in_bytes, Real scale) {
   if (scale == 1.0) return stbi_write_png(filename, w, h, comp, data, stride_in_bytes);
 
   int nw = scale * w;
@@ -1077,11 +1073,11 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       int t = camera[i].colorbar_thickness;
       int total_h = h + (camera[i].ncolorbar + timebar) * t;
       uint8_t alpha_max = 0;
-      //for (int j = 3; j < 4 * w * total_h; j+=4) {
-        //if (host_images(i, j) > alpha_max) alpha_max = host_images(i, j);
+      // for (int j = 3; j < 4 * w * total_h; j+=4) {
+      // if (host_images(i, j) > alpha_max) alpha_max = host_images(i, j);
       //}
-      //for (int j = 3; j < 4 * w * total_h; j+=4) {
-        //host_images(i, j) *= (255.0 / alpha_max);
+      // for (int j = 3; j < 4 * w * total_h; j+=4) {
+      // host_images(i, j) *= (255.0 / alpha_max);
       //}
       int ilabel = 0;
       if (timebar) {
@@ -1137,9 +1133,12 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
               host_images(i, j + 3) = 255;
             } else {
               Real darken = (iy > iyl && layer.type == VizType::volume) ? 0.5 : 1.0;
-              host_images(i, j + 0) = real_to_uint8_t(darken * layer.rcmap.interpToReal(x));
-              host_images(i, j + 1) = real_to_uint8_t(darken * layer.gcmap.interpToReal(x));
-              host_images(i, j + 2) = real_to_uint8_t(darken * layer.bcmap.interpToReal(x));
+              host_images(i, j + 0) =
+                  real_to_uint8_t(darken * layer.rcmap.interpToReal(x));
+              host_images(i, j + 1) =
+                  real_to_uint8_t(darken * layer.gcmap.interpToReal(x));
+              host_images(i, j + 2) =
+                  real_to_uint8_t(darken * layer.bcmap.interpToReal(x));
               host_images(i, j + 3) = 255;
             }
           }
@@ -1156,23 +1155,22 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       }
 
       // Move to this commented out line when we go to C++20 and add include <format>
-      //std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
+      // std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
       std::ostringstream ss;
       ss << camera[i].filename << std::setfill('0') << std::setw(4) << dump_id << ".png";
       std::string name = ss.str();
       // stbi_write_png
       if (!write_png(name.c_str(), w, total_h,
                      4, // RGBA
-                     &host_images(i, 0), w * 4,
-                     scale)) {
+                     &host_images(i, 0), w * 4, scale)) {
         throw std::runtime_error("Failed to write PNG");
       }
     }
   }
   dump_id++;
 
-  //for (int b = 0; b < md->NumBlocks(); b++) {
-    //md->GetSwarmData(b)->Get(vr::particles::name())->RemoveMarkedParticles();
+  // for (int b = 0; b < md->NumBlocks(); b++) {
+  // md->GetSwarmData(b)->Get(vr::particles::name())->RemoveMarkedParticles();
   //}
 
   parthenon::par_for(
