@@ -150,6 +150,11 @@ if(RIOT_ENABLE_CUDA)
   set(Kokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE ON CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_CUDA_LAMBDA ON CACHE BOOL "" FORCE)
   set(Kokkos_ENABLE_CUDA_CONSTEXPR ON CACHE BOOL "" FORCE)
+  # pybind11 adds -flto when this is undefined, which breaks linking
+  # nvcc host stubs (duplicate fatbinData symbols)
+  if(NOT DEFINED CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+  endif()
 endif()
 
 # HDF5
@@ -160,14 +165,6 @@ if(RIOT_ENABLE_HDF5)
     message(FATAL_ERROR "HDF5 is required but couldn't be found. "
       "If you want to build RIOT without HDF5, please rerun "
       "CMake with -DRIOT_ENABLE_HDF5=OFF")
-  endif()
-  if (RIOT_ENABLE_MPI AND (NOT HDF5_IS_PARALLEL))
-    message(FATAL_ERROR "Both MPI and HDF5 are enabled "
-      "but only a serial version of HDF5 was found. Please install "
-      "a parallel version of HDF5 (or point CMake to it by adding its path "
-      "to the CMAKE_PREFIX_PATH environment variable), or disable either MPI "
-      "or HDF5 by rerunning CMake with -DRIOT_ENABLE_MPI=OFF or "
-      "-DRIOT_ENABLE_HDF5=OFF.")
   endif()
   set(SINGULARITY_USE_HDF5 ON CACHE BOOL "" FORCE)
   set(SINGULARITY_USE_SPINER ON CACHE BOOL "" FORCE)
@@ -202,6 +199,7 @@ add_compiler_flag_if_supported(-Wno-unused-function)
 add_compiler_flag_if_supported(-Wno-unknown-pragmas)
 add_compiler_flag_if_supported(-Wno-ps-abi)
 add_compiler_flag_if_supported(-Wno-tautological-constant-compare)
+add_compiler_flag_if_supported(-diag-disable=1675)
 if (RIOT_ENABLE_WARNINGS)
   add_compiler_flag_if_supported(-Wall)
 else()
