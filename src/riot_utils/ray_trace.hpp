@@ -204,22 +204,28 @@ class IntegratorBase : public CellInfo {
     bool use_x = std::abs(v[0]) > 0.0;
     bool use_y = std::abs(v[1]) > 0.0;
     bool use_z = std::abs(v[2]) > 0.0;
-    Real h1 = use_x ? (context.x_min_ + (v[0] > 0) * (context.x_max_ - context.x_min_) - xc[0]) / v[0]
-                    : std::numeric_limits<Real>::max();
-    Real h2 = use_y ? (context.y_min_ + (v[1] > 0) * (context.y_max_ - context.y_min_) - xc[1]) / v[1]
-                    : std::numeric_limits<Real>::max();
-    Real h3 = use_z ? (context.z_min_ + (v[2] > 0) * (context.z_max_ - context.z_min_) - xc[2]) / v[2]
-                    : std::numeric_limits<Real>::max();
+    Real h1 =
+        use_x
+            ? (context.x_min_ + (v[0] > 0) * (context.x_max_ - context.x_min_) - xc[0]) /
+                  v[0]
+            : std::numeric_limits<Real>::max();
+    Real h2 =
+        use_y
+            ? (context.y_min_ + (v[1] > 0) * (context.y_max_ - context.y_min_) - xc[1]) /
+                  v[1]
+            : std::numeric_limits<Real>::max();
+    Real h3 =
+        use_z
+            ? (context.z_min_ + (v[2] > 0) * (context.z_max_ - context.z_min_) - xc[2]) /
+                  v[2]
+            : std::numeric_limits<Real>::max();
     if (h1 > h2) std::swap(h1, h2);
     if (h2 > h3) std::swap(h2, h3);
     if (h1 > h2) std::swap(h1, h2);
 
     h3 = h1 + kStepOvershoot * min_size();
-    h1 = (h2 == std::numeric_limits<Real>::max() ? h3
-                                                 : std::min(h3, 0.5 * (h1 + h2)));
-    loop_3d([&]<int d>() {
-      xc[d - 1] += h1 * v[d - 1];
-    });
+    h1 = (h2 == std::numeric_limits<Real>::max() ? h3 : std::min(h3, 0.5 * (h1 + h2)));
+    loop_3d([&]<int d>() { xc[d - 1] += h1 * v[d - 1]; });
     init_cell(xc[0], xc[1], xc[2]);
     snap_to_face();
     skipped = true;
@@ -229,9 +235,7 @@ class IntegratorBase : public CellInfo {
   bool is_active() const { return context.IsActive(pidx); }
 
   KOKKOS_INLINE_FUNCTION
-  bool on_block() const {
-    return on_block(xc);
-  }
+  bool on_block() const { return on_block(xc); }
 
   KOKKOS_INLINE_FUNCTION
   bool on_block(const std::array<Real, 3> &xc) const {
@@ -365,18 +369,18 @@ class IntegratorBase : public CellInfo {
   }
 };
 
-template <typename Integrator,
-	  typename VarPack_t, typename SwarmPack_t,
-	  typename Tuple, std::size_t... I>
-KOKKOS_INLINE_FUNCTION
-Integrator MakeIntegrator(const VarPack_t &v, const SwarmPack_t &ps, int b, int n,
-                          int ndim, const auto &context, const Tuple &args,
-                          std::index_sequence<I...>) {
+template <typename Integrator, typename VarPack_t, typename SwarmPack_t, typename Tuple,
+          std::size_t... I>
+KOKKOS_INLINE_FUNCTION Integrator MakeIntegrator(const VarPack_t &v,
+                                                 const SwarmPack_t &ps, int b, int n,
+                                                 int ndim, const auto &context,
+                                                 const Tuple &args,
+                                                 std::index_sequence<I...>) {
   return Integrator(v, ps, b, n, ndim, context, std::get<I>(args)...);
 }
 
-template <template <typename> class Integrator_t,
-          typename SwarmPack_t, typename VarPack_t, typename... Args>
+template <template <typename> class Integrator_t, typename SwarmPack_t,
+          typename VarPack_t, typename... Args>
 TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
   namespace rt = particles::ray_tracer;
   using Integrator = Integrator_t<const VarPack_t>;
@@ -395,9 +399,9 @@ TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
         auto &context = ps.GetContext(b);
 
         if (context.IsActive(n)) {
-          auto integrator = MakeIntegrator<Integrator>(
-              v, ps, b, n, ndim, context, captured_args,
-              std::index_sequence_for<Args...>{});
+          auto integrator =
+              MakeIntegrator<Integrator>(v, ps, b, n, ndim, context, captured_args,
+                                         std::index_sequence_for<Args...>{});
 
           if (integrator.is_active()) {
             while (!integrator.stop()) {

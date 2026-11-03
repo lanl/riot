@@ -103,7 +103,7 @@ struct plane_mask {
       const Real dot = nx * x + ny * y + nz * z + offset;
       include &= dot >= 0.0;
     }
-    return include^invert;
+    return include ^ invert;
   }
 };
 inline auto plane_lambda(ParameterInput *pin, const std::string &block_name) {
