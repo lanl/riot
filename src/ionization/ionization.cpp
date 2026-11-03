@@ -1947,7 +1947,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   const auto dj = idx_space.GetDelta(X2DIR);
   const auto dk = idx_space.GetDelta(X3DIR);
   constexpr int MAX_DIFFUSION_SPECIES = 5 * MAX_MATERIALS;
-  constexpr bool eigensystem_timestep_estimate = true;
+  constexpr bool eigensystem_timestep_estimate = false;
 
   // Pull isotope information.
   const auto &iso_zaids =
@@ -2169,6 +2169,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real max_kn_face = 0.0;
               Real D_est = 0.0;
               Real mfp_max = 0.0;
+              Real vth_max = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
                 const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + 1e-30);
@@ -2211,6 +2212,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 D_est = std::max(D_est, unit_system::kb * TiF * species.mass_inv[s] /
                                             (nu_total[a] + 1e-300));
                 mfp_max = std::max(mfp_max, mfp);
+                vth_max = std::max(vth_max, vth);
 
                 // non-dimensional gradient of mole fraction
                 const Real invLY = fabs(gradYC) / (YCF + 1e-30);
@@ -2295,7 +2297,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
 
                 const Real lambda_raw = MaxDiffusionEigenvalue(K_data.data(), nactive);
 
-                const Real Kn_cell = lambda_raw / (vth_max * dx + tiny);
+                const Real Kn_cell = lambda_raw / (vth_max * dx + 1e-30);
                 const Real transport_factor =
                     LimitFluxByCellKnudsenNumber(nactive, Kn_cell, mass_flux);
 
