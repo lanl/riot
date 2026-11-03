@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
   }
 
   int main_status;
-  if (pman.IsAnalysis()) {
+  if (false) { // (pman.IsAnalysis()) {
     main_status = main<AnalysisDriver>(pman);
   } else {
     main_status = main<RiotDriver>(pman);

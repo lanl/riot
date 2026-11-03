@@ -347,10 +347,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
 //! \brief
 void FillInteriorBlockDerived(std::shared_ptr<MeshBlockData<Real>> pmbd) {
   parthenon::BlockList_t block_list{pmbd->GetBlockSharedPointer()};
-  // Initialize looks up (or deep-copies into) the block's stage with this MeshData's
-  // name. Naming it "base" reuses the existing base container, so nothing is allocated.
-  // pmbd is then swapped in, so callers may still pass a non-base stage.
-  MeshData<Real> md("base");
+  //MeshData<Real> md("FillInteriorBlockDerived::temp", block_list, pmbd->GetMeshPointer());
+  MeshData<Real> md;
   md.Initialize(block_list, pmbd->GetMeshPointer());
   md.GetBlockData(0) = pmbd;
   FillInteriorDerived(&md);

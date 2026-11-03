@@ -516,7 +516,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   PARTHENON_REQUIRE(initial_pool_size > 0,
                   "riot_viz/initial_swarm_pool_size must be positive");
 
-  Metadata mswarm({Metadata::Provides, Metadata::None, Metadata::Analysis});
+  //Metadata mswarm({Metadata::Provides, Metadata::None, Metadata::Analysis});
+  Metadata mswarm({Metadata::Provides, Metadata::None});
   mswarm.SetInitialSwarmPoolReservation(initial_pool_size);
   pkg->AddSwarm(pvr::particles::name(), mswarm);
   Metadata m_real({Metadata::Real});
@@ -533,8 +534,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   const bool analysis =
       pin->GetOrAddBoolean("parthenon/job", "run_only_analysis", false);
-  std::vector<parthenon::MetadataFlag> flags{Metadata::OneCopy, Metadata::Node,
-                                             Metadata::Analysis};
+  // std::vector<parthenon::MetadataFlag> flags{Metadata::OneCopy, Metadata::Node,
+  //                                            Metadata::Analysis};
+  std::vector<parthenon::MetadataFlag> flags{Metadata::OneCopy, Metadata::Node};
   if (analysis) flags.push_back(Metadata::FillGhost);
   Metadata m(flags);
   std::vector<std::string> orig_fields = scene.field;
