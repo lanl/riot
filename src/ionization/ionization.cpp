@@ -1947,7 +1947,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   const auto dj = idx_space.GetDelta(X2DIR);
   const auto dk = idx_space.GetDelta(X3DIR);
   constexpr int MAX_DIFFUSION_SPECIES = 5 * MAX_MATERIALS;
-  constexpr bool eigensystem_timestep_estimate = false;
 
   // Pull isotope information.
   const auto &iso_zaids =
@@ -2244,74 +2243,12 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 PARTHENON_FAIL("Failed to solve plasma diffusion system");
               }
 
-              // Frozen-T charged-ion diffusion matrix for all N species-density
-              // gradient modes. Reuse the existing QR factorization.
-              if (eigensystem_timestep_estimate) {
+              const Real Kn_cell = mfp_max / (dx + 1e-300);
+              const Real transport_factor =
+                  LimitFluxByCellKnudsenNumber(nactive, Kn_cell, mass_flux);
 
-                std::array<Real, MAX_DIFFUSION_SPECIES> rhs_basis{}, J_basis{};
-                // Full N x N frozen-coefficient diffusion matrix.
-                // J = -K_rho grad(rho).
-                std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> K_data{};
-
-                for (int q = 0; q < nactive; ++q) {
-                  const int s_q = active_species[q];
-
-                  // Pressure response to grad(rho_q) = 1, all other gradients zero.
-                  const Real gradPC_basis = unit_system::kb * TiF * species.mass_inv[s_q];
-                  const Real gradPe_basis =
-                      unit_system::kb * TeF * species_zbarF[s_q] * species.mass_inv[s_q];
-
-                  for (int a = 0; a < nactive; ++a) {
-                    const int s = active_species[a];
-                    const Real Ys = (rhoF[s] * species.mass_inv[s]) / (nCF + 1e-30);
-                    const Real Xs = rhoF[s] / (rhoCF + 1e-30);
-
-                    // Derivative of charged-ion mole fraction with respect to rho_q.
-                    const Real dYq = (((s == s_q) ? 1.0 * species.mass_inv[s] : 0.0) -
-                                      Ys * species.mass_inv[s_q]) /
-                                     (nCF + 1e-30);
-                    const Real Qs = nF[s] * species_zbarF[s] / (nChargeF + 1e-30);
-
-                    rhs_basis[a] = -(PCF * dYq + (Ys - Xs) * gradPC_basis +
-                                     (Qs - Xs) * gradPe_basis);
-                    // rhs_basis[a] = -(PCF * dYq + (Ys - Xs) * gradPC_basis);
-                    // rhs_basis[a] = -(PCF * dYq);
-
-                    J_basis[a] = 0.0;
-                  }
-
-                  rhs_basis[constraint_row] = 0.0;
-                  // Apply the same row scaling as the factored matrix.
-                  // for (int a = 0; a < nactive; ++a)
-                  //   rhs_basis[a] *= row_inv_scale[a];
-
-                  if (QRDecomposition::solve(M, Q, rhs_basis, J_basis) != 0) {
-                    PARTHENON_FAIL("Failed to solve plasma diffusion basis system");
-                  }
-
-                  // Accumulate absolute row sums of the full N x N diffusion matrix.
-                  for (int a = 0; a < nactive; ++a) {
-                    K_data[a * nactive + q] = -J_basis[a]; // full NxN diffusion matrix
-                  }
-                }
-
-                const Real lambda_raw = MaxDiffusionEigenvalue(K_data.data(), nactive);
-
-                const Real Kn_cell = lambda_raw / (vth_max * dx + 1e-30);
-                const Real transport_factor =
-                    LimitFluxByCellKnudsenNumber(nactive, Kn_cell, mass_flux);
-
-                const Real lambda_eff = transport_factor * lambda_raw;
-                cell_rate += lambda_eff / (dx * dx + 1e-30);
-
-              } else { // simple time step estimate; still limit mass fluxes
-                const Real Kn_cell = mfp_max / (dx + 1e-300);
-                const Real transport_factor = LimitFluxByCellKnudsenNumber(
-                    nactive, Kn_cell, mass_flux);
-
-                const Real D_eff = transport_factor * D_est;
-                cell_rate += D_eff / (dx * dx + 1e-30);
-              }
+              const Real D_eff = transport_factor * D_est;
+              cell_rate += D_eff / (dx * dx + 1e-30);
 
             } // Stefan-Maxwell branch
 
