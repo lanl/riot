@@ -27,6 +27,7 @@ set (SRC_LIST
   diagnostics/masses.hpp
   diagnostics/riot_viz.cpp
   diagnostics/riot_viz.hpp
+  diagnostics/stb_impl.c
 
   gravity/gravity.cpp
   gravity/gravity.hpp
@@ -227,7 +228,8 @@ target_include_directories(riotlib PUBLIC
 target_compile_features(riotlib PUBLIC cxx_std_17)
 
 if (Kokkos_ENABLE_CUDA)
-  target_compile_options(riotlib PUBLIC --expt-relaxed-constexpr)
+  # CXX-only: the C sources (stb_impl.c) are built by the plain C compiler, not nvcc.
+  target_compile_options(riotlib PUBLIC $<$<COMPILE_LANGUAGE:CXX>:--expt-relaxed-constexpr>)
 endif()
 
 if (RIOT_ENABLE_SANITIZE)

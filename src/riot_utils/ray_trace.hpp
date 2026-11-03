@@ -15,6 +15,8 @@
 // This file was made in part with generative AI.
 
 #include <memory>
+#include <tuple>
+#include <utility>
 
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
@@ -502,6 +504,13 @@ class IntegratorBase : public CellInfo {
   }
 };
 
+// An Integrator from the leading arguments lead and then the elements of the tuple args
+template <typename Integrator, typename Tuple, std::size_t... I, typename... Lead>
+KOKKOS_INLINE_FUNCTION Integrator MakeIntegrator(const Tuple &args, std::index_sequence<I...>,
+                                                 Lead &&...lead) {
+  return Integrator(std::forward<Lead>(lead)..., std::get<I>(args)...);
+}
+
 // Trace the rays [range.s, range.e] of a lukewarm until each is done or leaves the
 // MeshData of the pack, which the next exchange delivers it to. Rays just created start
 // from their source block, since they may sit on its upper face.
@@ -515,6 +524,9 @@ TaskStatus Trace(Pack_t &ps, VarPack_t &v, Mesh *pm, const IndexRange &range,
 
   const int ndim = pm->ndim;
   const BlockBounds mesh_bounds(pm->mesh_size);
+  // nvcc does not let a device lambda capture a parameter pack, so the trailing
+  // integrator arguments are captured as a tuple
+  const auto targs = std::make_tuple(args...);
 
   parthenon::par_for(
       DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), range.s, range.e,
@@ -525,9 +537,9 @@ TaskStatus Trace(Pack_t &ps, VarPack_t &v, Mesh *pm, const IndexRange &range,
         const std::array<Real, 3> *xlast = nullptr;
         // Each block is traced as one integrator, as rays used to be between exchanges
         while (true) {
-          Integrator integrator(v, ps, b, n, ndim,
-                                mesh_bounds.OnBlock(ps.GetGeometry(), b), xlast,
-                                args...);
+          Integrator integrator = MakeIntegrator<Integrator>(
+              targs, std::index_sequence_for<Args...>{}, v, ps, b, n, ndim,
+              mesh_bounds.OnBlock(ps.GetGeometry(), b), xlast);
           if (integrator.is_active()) {
             while (!integrator.stop()) {
               integrator.set_cell();

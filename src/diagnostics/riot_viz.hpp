@@ -79,7 +79,7 @@ T GetType(const std::string &key, const std::unordered_map<std::string, T> &map)
 }
 
 template <typename T>
-T clamp(const T &val, const T &min_val, const T &max_val) {
+KOKKOS_INLINE_FUNCTION T clamp(const T &val, const T &min_val, const T &max_val) {
   return std::min(std::max(val, min_val), max_val);
 }
 
@@ -200,6 +200,7 @@ class VectorView3D {
     Kokkos::deep_copy(outer_offset, host_outer_offset);
   }
 
+  KOKKOS_INLINE_FUNCTION
   T &operator()(const int k, const int j, const int i) const {
     return data(inner_offset(outer_offset(k) + j) + i);
   }
@@ -239,6 +240,7 @@ class VectorView2D {
     Kokkos::deep_copy(offset, host_offset);
   }
 
+  KOKKOS_INLINE_FUNCTION
   T &operator()(const int j, const int i) const { return data(offset(j) + i); }
 
  private:
@@ -255,6 +257,7 @@ class VectorView1D {
       host_data(i) = h[i];
     Kokkos::deep_copy(data, host_data);
   }
+  KOKKOS_INLINE_FUNCTION
   T &operator()(const int i) const { return data(i); }
 
  private:
@@ -337,6 +340,7 @@ struct RenderingParams {
             b(outer, inner).interpToReal(v), a(outer, inner).interpToReal(av)};
   }
 
+  KOKKOS_INLINE_FUNCTION
   bool masks(const int cam_id, const int layer_id, const Real x, const Real y,
              const Real z) const {
     bool in = true;
@@ -1026,12 +1030,14 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     }
   }
 
+  KOKKOS_FUNCTION
   void advance() {
     const Real s0 = ray_coord(x);
     const bool initial_mask = any_mask(x, s0);
     // step size til next cell face
     auto h = distance_to_face();
-    h = std::max(h, kMarchTiny);
+    // std::max binds by reference, which device code cannot do to a host constexpr
+    h = std::max(h, Real(kMarchTiny));
     if (!initial_mask) {
       // see if I can skip everything else
       std::array<Real, 3> temp;

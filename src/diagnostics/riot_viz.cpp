@@ -20,11 +20,9 @@
 
 #include <riot_utils/riot_loops.hpp>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// the stb implementations are compiled as C, in stb_impl.c
 #include <stb_image_write.h>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include "stb_image_resize2.h"
+#include <stb_image_resize2.h>
 
 #include <font8x8.h>
 
@@ -770,37 +768,34 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
                 Real &x = pack(lukewarm::x(), pidx);
                 Real &y = pack(lukewarm::y(), pidx);
                 Real &z = pack(lukewarm::z(), pidx);
+                // nvcc does not let a device lambda first capture a variable in an if
+                // constexpr branch, so what the branches use is read before them
+                const Real px = camera_pts(n, sample::x);
+                const Real py = camera_pts(n, sample::y);
+                const Real pz = camera_pts(n, sample::z);
+                const Real block_xmax1 = geom.Xmax(b, X1DIR);
                 if (start_kind(n) == OnBlock::start_inside) {
                   x = start(n, 0);
                   y = start(n, 1);
                   z = start(n, 2);
                 } else if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-                  x = camera_pts(n, sample::x);
-                  y = camera_pts(n, sample::y);
-                  z = camera_pts(n, sample::z);
+                  x = px;
+                  y = py;
+                  z = pz;
                 } else if constexpr (parthenon::IsCoord<
                                          parthenon::UniformCylindrical>()) {
-                  const Real block_xmax1 = geom.Xmax(b, X1DIR);
-                  Real rcyl =
-                      std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                                camera_pts(n, sample::y) * camera_pts(n, sample::y));
+                  Real rcyl = std::sqrt(px * px + py * py);
                   if (std::abs(rcyl - block_xmax1) / block_xmax1 < kBoundaryBand)
                     rcyl = block_xmax1 - kGeomTol;
-                  const Real zcyl = camera_pts(n, sample::z);
-                  Real phi_cyl =
-                      std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
+                  Real phi_cyl = std::atan2(py, px);
                   phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
                   x = rcyl;
-                  y = zcyl;
+                  y = pz;
                   z = phi_cyl;
                 } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-                  const Real rsph =
-                      std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                                camera_pts(n, sample::y) * camera_pts(n, sample::y) +
-                                camera_pts(n, sample::z) * camera_pts(n, sample::z));
-                  const Real th = std::acos(camera_pts(n, sample::z) / rsph);
-                  Real phi_sph =
-                      std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
+                  const Real rsph = std::sqrt(px * px + py * py + pz * pz);
+                  const Real th = std::acos(pz / rsph);
+                  Real phi_sph = std::atan2(py, px);
                   phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
                   x = rsph;
                   y = th;
