@@ -1860,6 +1860,61 @@ KOKKOS_INLINE_FUNCTION Real LimitFluxByCellKnudsenNumber(
   return factor * lambda_raw;
 }
 
+template <std::size_t MaxSpecies>
+KOKKOS_INLINE_FUNCTION void AssembleStefanMaxwellCollisionMatrix(
+    const PlasmaDiffusionSpeciesList<MaxSpecies> &species, const int nactive,
+    const std::array<int, MaxSpecies> &active_species,
+    const std::array<Real, MaxSpecies> &number_density,
+    const std::array<Real, MaxSpecies> &zbar, const Real ion_temperature,
+    const Real electron_temperature, const Real electron_number_density,
+    const Real zbar_floor, const Real ion_number_density_floor,
+    parthenon::batched_linear_algebra::matrix_wrapper_t<Real> &M,
+    std::array<Real, MaxSpecies> &nu_total) {
+  constexpr Real tiny = 1e-300;
+
+  for (int a = 0; a < nactive; ++a) {
+    nu_total[a] = 0.0;
+    for (int bb = 0; bb < nactive; ++bb) {
+      M(a, bb) = 0.0;
+    }
+  }
+
+  for (int a = 0; a < nactive; ++a) {
+    const int s = active_species[a];
+    const Real ns = number_density[s];
+    const Real rho_s = ns * species.mass[s];
+
+    for (int bb = a + 1; bb < nactive; ++bb) {
+      const int q = active_species[bb];
+      const Real nq = number_density[q];
+      const Real rho_q = nq * species.mass[q];
+
+      const Real nu_sq = IonIonMomentumExchangeRate(
+          electron_temperature, ion_temperature, electron_number_density, ns, nq,
+          species.mass[s], species.mass[q], zbar[s], zbar[q], zbar_floor,
+          ion_number_density_floor);
+
+      // lambda_sq = rho_s nu_sq = rho_q nu_qs.
+      const Real lambda_sq = rho_s * nu_sq;
+      const Real nu_qs = lambda_sq / (rho_q + tiny);
+
+      M(a, a) += nu_sq;
+      M(a, bb) -= nu_qs;
+      M(bb, bb) += nu_qs;
+      M(bb, a) -= nu_sq;
+
+      nu_total[a] += nu_sq;
+      nu_total[bb] += nu_qs;
+    }
+
+    // Self-collisions contribute only to the mfp/Knudsen diagnostic.
+    nu_total[a] += IonIonMomentumExchangeRate(
+        electron_temperature, ion_temperature, electron_number_density, ns, ns,
+        species.mass[s], species.mass[s], zbar[s], zbar[s], zbar_floor,
+        ion_number_density_floor);
+  }
+}
+
 void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
   using parthenon::batched_linear_algebra::matrix_wrapper_t;
@@ -1907,14 +1962,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   const auto dj = idx_space.GetDelta(X2DIR);
   const auto dk = idx_space.GetDelta(X3DIR);
   constexpr int MAX_DIFFUSION_SPECIES = 5 * MAX_MATERIALS;
-  constexpr bool use_limiters = false;
-  constexpr bool use_gradP_limiter_in_timestep = true;
   constexpr bool eigensystem_timestep_estimate = true;
-  constexpr bool limit_diffusion_knudsen = false;
-  constexpr Real knudsen_limit = 0.01;
-  constexpr bool limit_diffusion_drift = false;
-  constexpr Real max_drift_fraction = 0.1;
-  constexpr bool debug_timestep = false;
 
   // Pull isotope information.
   const auto &iso_zaids =
@@ -1980,9 +2028,8 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             const auto dl = deltas[DIR];
             const Real dx = coords.Dxc(DIR, k, j, i);
             const Real dxinv = 1.0 / (dx + 1e-30);
-            std::array<Real, MAX_DIFFUSION_SPECIES> rhoLL, rhoL, rhoR, rhoRR;
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoL, rhoR;
             std::array<Real, MAX_DIFFUSION_SPECIES> rhoF;
-            std::array<Real, MAX_DIFFUSION_SPECIES> YL{}, YR{};
             // Compact list of species active at this face.
             // summed collision frequencies
             std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{};
@@ -1991,190 +2038,101 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             std::array<Real, MAX_DIFFUSION_SPECIES> mass_flux{};
             // Gather species densities.
             Real rhoTotF = 0.0;
-            Real nTotL = 0.0, nTotR = 0.0;
             for (int s = 0; s < nspecies; ++s) {
               const int m = species.material[s];
               const int iso = species.isotope[s];
-              if (iso >= 0) {
-                auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
-                // Keep tiny negative isotope densities from
-                // contaminating the transport closure.
-                rhoLL[s] = std::max(rho(kji - 2 * dl), 0.0);
-                rhoL[s] = std::max(rho(kji - dl), 0.0);
-                rhoR[s] = std::max(rho(kji), 0.0);
-                rhoRR[s] = std::max(rho(kji + dl), 0.0);
-              } else {
-                auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-                rhoLL[s] = std::max(rho(kji - 2 * dl), 0.0);
-                rhoL[s] = std::max(rho(kji - dl), 0.0);
-                rhoR[s] = std::max(rho(kji), 0.0);
-                rhoRR[s] = std::max(rho(kji + dl), 0.0);
-              }
+              auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+              if (iso >= 0) rho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
+              rhoL[s] = std::max(rho(kji - dl), 0.0);
+              rhoR[s] = std::max(rho(kji), 0.0);
               rhoF[s] = 0.5 * (rhoL[s] + rhoR[s]);
               rhoTotF += rhoF[s];
-              nTotL += rhoL[s] * species.mass_inv[s];
-              nTotR += rhoR[s] * species.mass_inv[s];
             }
-            for (int s = 0; s < nspecies; ++s) {
-              YL[s] = (rhoL[s] * species.mass_inv[s]) / (nTotL + 1e-30);
-              YR[s] = (rhoR[s] * species.mass_inv[s]) / (nTotR + 1e-30);
-            }
-            const Real NeL = ccbulk_ne(kji - dl);
-            const Real NeR = ccbulk_ne(kji);
-            const Real NeF = 0.5 * (NeL + NeR);
 
-            const Real PL = pres(kji - dl);
-            const Real PR = pres(kji);
+            const Real NeF = 0.5 * (ccbulk_ne(kji - dl) + ccbulk_ne(kji));
+
             int nactive = 0;
             std::array<int, MAX_DIFFUSION_SPECIES> active_species;
-            std::array<Real, MAX_MATERIALS> nMatL{}, nMatR{};
 
             if (constant_diffusion) {
               // Constant Fickian diffusion for every species, including neutrals.
               // mass_flux is indexed by the full species index in this branch.
               for (int s = 0; s < nspecies; ++s) {
                 mass_flux[s] = -diffusion_coefficient * (rhoR[s] - rhoL[s]) * dxinv;
-                const int m = species.material[s];
-                nMatL[m] += rhoL[s] * species.mass_inv[s];
-                nMatR[m] += rhoR[s] * species.mass_inv[s];
               }
               if (nspecies > 0) {
                 cell_rate += diffusion_coefficient / (dx * dx + 1e-30);
               }
             } else {
+
               // Restrict Coulomb diffusion to the charged-ion subsystem.
               std::array<Real, MAX_DIFFUSION_SPECIES> species_zbarF{};
               for (int s = 0; s < nspecies; ++s) {
                 const int m = species.material[s];
                 const int iso = species.isotope[s];
-                Real zbarF;
-                if (iso >= 0) {
-                  auto zbar =
+                auto zbar = RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
+                if (iso >= 0)
+                  zbar =
                       RiotLoop::make_var_view(idx_range, v, cm::iso_ionization_zbar(iso));
-                  zbarF = 0.5 * (zbar(kji - dl) + zbar(kji));
-                } else {
-                  auto zbar =
-                      RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
-                  zbarF = 0.5 * (zbar(kji - dl) + zbar(kji));
-                }
                 species_zbarF[s] =
-                    std::max(0.0, std::min(zbarF, species.nuclear_charge[s]));
+                    std::max(0.0, std::min(0.5 * (zbar(kji - dl) + zbar(kji)),
+                                           species.nuclear_charge[s]));
                 if (rhoF[s] > rhoTotF * mass_fraction_floor &&
                     species_zbarF[s] > zbar_floor) {
                   active_species[nactive++] = s;
                 }
               }
+
               // No relative diffusion if fewer than two species
               // are present.
               if (nactive <= 1) {
                 continue;
               }
-              // Wrap matrix backing storage for the active system.
-              //
-              // IMPORTANT: row stride is nactive here, because
-              // matrix_wrapper_t sees this as an nactive x nactive
-              // contiguous matrix.
-
-              // Allocate QR workspace only for the Stefan-Maxwell model.
-              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{};
-              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> Q_data{};
-              std::array<double,
-                         QRDecomposition::double_scratch_size(MAX_DIFFUSION_SPECIES)>
-                  qr_scratch{};
-              matrix_wrapper_t<Real> M(M_data.data(), nactive, nactive);
-              matrix_wrapper_t<Real> Q(Q_data.data(), nactive, nactive);
 
               // Charged-ion subsystem: neutral species remain in the bulk EOS/hydro,
               // but are excluded from this Coulomb-collision diffusion solve.
+              // suffix C indicates charged ion subsystem quantities
               Real rhoCL = 0.0, rhoCR = 0.0, rhoCF = 0.0;
-              Real nCLL = 0.0, nCL = 0.0, nCR = 0.0, nCRR = 0.0;
+              Real nCL = 0.0, nCR = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
                 rhoCL += rhoL[s];
                 rhoCR += rhoR[s];
-                nCLL += rhoLL[s] * species.mass_inv[s];
                 nCL += rhoL[s] * species.mass_inv[s];
                 nCR += rhoR[s] * species.mass_inv[s];
-                nCRR += rhoRR[s] * species.mass_inv[s];
                 rhoCF += rhoF[active_species[a]];
               }
 
               ///////////////////////////////////////////////////////////////////////////
-              // pressure and temperature gradients
-              // limited ion number density gradient
+              // charged subsystem ion number density face value, face-centered
+              // gradient and inverse local face-centered gradient scale length
               const Real nCF = 0.5 * (nCL + nCR);
-              const Real dnCm1 = (nCL - nCLL) * dxinv;
-              const Real dnC0 = (nCR - nCL) * dxinv;
-              const Real dnCp1 = (nCRR - nCR) * dxinv;
-              const Real gradnC = 0.5 * (RiotReconstruction::minmod(dnCm1, dnC0) +
-                                         RiotReconstruction::minmod(dnC0, dnCp1));
+              const Real gradnC = (nCR - nCL) * dxinv;
               const Real invLn = fabs(gradnC) / (nCF + 1e-30);
 
-              const Real PCLL = nCLL * unit_system::kb * tion(kji - 2 * dl);
+              // total charged subsystem pressure face value, gradient, inverse scale
+              // length
+              // TODO(@SWJ) this assumes ideal gases for isotopes. Once EOS is
+              // isotope-aware, we should make this consistent with the EoS
               const Real PCL = nCL * unit_system::kb * tion(kji - dl);
               const Real PCR = nCR * unit_system::kb * tion(kji);
-              const Real PCRR = nCRR * unit_system::kb * tion(kji + dl);
               const Real PCF = 0.5 * (PCL + PCR);
-              const Real dPCm1 = (PCL - PCLL) * dxinv;
-              const Real dPC0 = (PCR - PCL) * dxinv;
-              const Real dPCp1 = (PCRR - PCR) * dxinv;
-              Real gradPC = 0.5 * (RiotReconstruction::minmod(dPCm1, dPC0) +
-                                   RiotReconstruction::minmod(dPC0, dPCp1));
-              // unlimited centered gradPC
-              const Real gradPC_center = (PCR - PCL) * dxinv;
-              // effective limiter (used in time step estimate for linear perturbation of
-              // grad rho)
-              gradPC = (!use_limiters) ? gradPC_center : gradPC;
-              const Real thetaP = (fabs(gradPC_center) > 1e-12)
-                                      ? std::min(1.0, fabs(gradPC / gradPC_center))
-                                      : 1.0;
+              const Real gradPC = (PCR - PCL) * dxinv;
 
               // electron pressure gradient
-              const Real dPem1 = (prese(kji - dl) - prese(kji - 2 * dl)) * dxinv;
-              const Real dPe0 = (prese(kji) - prese(kji - dl)) * dxinv;
-              const Real dPep1 = (prese(kji + dl) - prese(kji)) * dxinv;
+              // SWJ: This is gradient of total electron pressure, not only
+              // charged ion subsystem. Valid? Implications?
+              const Real gradPe = (prese(kji) - prese(kji - dl)) * dxinv;
 
-              Real gradPe = 0.5 * (RiotReconstruction::minmod(dPem1, dPe0) +
-                                   RiotReconstruction::minmod(dPe0, dPep1));
-              // unlimited centered gradPe
-              const Real gradPe_center = (prese(kji) - prese(kji - dl)) * dxinv;
-              // effective limiter (used in time step estimate for linear perturbation of
-              // grad rho)
-              gradPe = (!use_limiters) ? gradPe_center : gradPe;
-              const Real thetaPe = (fabs(gradPe_center) > 1e-12)
-                                       ? std::min(1.0, fabs(gradPe / gradPe_center))
-                                       : 1.0;
+              // ion temperature face value, face-centered gradient and inverse scale
+              // length
+              const Real TiF = 0.5 * (tion(kji - dl) + tion(kji));
+              const Real gradTi = (tion(kji) - tion(kji - dl)) * dxinv;
+              const Real invLTi = fabs(gradTi) / (TiF + 1e-30);
 
-              // limited ion temperature gradient
-              const Real TiLL = tion(kji - 2 * dl);
-              const Real TiL = tion(kji - dl);
-              const Real TiR = tion(kji);
-              const Real TiRR = tion(kji + dl);
-              const Real TiF = 0.5 * (TiL + TiR);
-              const Real dTim1 = (TiL - TiLL) * dxinv;
-              const Real dTi0 = (TiR - TiL) * dxinv;
-              const Real dTip1 = (TiRR - TiR) * dxinv;
-              Real gradTi = 0.5 * (RiotReconstruction::minmod(dTim1, dTi0) +
-                                   RiotReconstruction::minmod(dTi0, dTip1));
-              const Real gradTi_center = (tion(kji) - tion(kji - dl)) * dxinv;
-              gradTi = (!use_limiters) ? gradTi_center : gradTi;
-              const Real invLT = fabs(gradTi) / (TiF + 1e-30);
-
-              // limited electron temperature gradient
-              const Real TeLL = tele(kji - 2 * dl);
-              const Real TeL = tele(kji - dl);
-              const Real TeR = tele(kji);
-              const Real TeRR = tele(kji + dl);
-              const Real TeF = 0.5 * (TeL + TeR);
-              const Real dTem1 = (TeL - TeLL) * dxinv;
-              const Real dTe0 = (TeR - TeL) * dxinv;
-              const Real dTep1 = (TeRR - TeR) * dxinv;
-              Real gradTe = 0.5 * (RiotReconstruction::minmod(dTem1, dTe0) +
-                                   RiotReconstruction::minmod(dTe0, dTep1));
-              const Real gradTe_center = (tele(kji) - tele(kji - dl)) * dxinv;
-              gradTe = (!use_limiters) ? gradTe_center : gradTe;
-              const Real invLTe = fabs(gradTe) / (TeF + 1e-30);
-              ///////////////////////////////////////////////////////////////////////////
+              // electron temperature face value, face-centered gradient
+              const Real TeF = 0.5 * (tele(kji - dl) + tele(kji));
+              const Real gradTe = (tele(kji) - tele(kji - dl)) * dxinv;
 
               ///////////////////////////////////////////////////////////////////////////////
               // Electron thermodiffusion in a multicomponent ion mixture.
@@ -2207,41 +2165,31 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real thermal_coeff = Be / (Zeff + 1e-30);
               ///////////////////////////////////////////////////////////////////////////////
 
-              // Arrays are value-initialized; the active matrix is already zero.
-              // Build Stefan-Maxwell mass-flux matrix.
-              for (int a = 0; a < nactive; ++a) {
-                const int s = active_species[a];
-                const Real ns = rhoF[s] * species.mass_inv[s];
-                for (int bb = a + 1; bb < nactive; ++bb) {
-                  const int q = active_species[bb];
-                  const Real nq = rhoF[q] * species.mass_inv[q];
+              std::array<Real, MAX_DIFFUSION_SPECIES> nF{};
 
-                  const Real nu_sq = IonIonMomentumExchangeRate(
-                      TeF, TiF, NeF, ns, nq, species.mass[s], species.mass[q],
-                      species_zbarF[s], species_zbarF[q], zbar_floor,
-                      ion_number_density_floor);
-
-                  // Symmetric momentum-exchange coefficient.
-                  const Real lambda = rhoF[s] * nu_sq;
-
-                  // Reciprocal frequency, satisfying momentum conservation.
-                  const Real nu_qs = lambda / (rhoF[q] + 1e-300);
-
-                  M(a, a) += nu_sq;
-                  M(a, bb) -= nu_qs;
-                  M(bb, bb) += nu_qs;
-                  M(bb, a) -= nu_sq;
-                  // sum in collision frequencies
-                  nu_total[a] += nu_sq;  // s collisions due to q
-                  nu_total[bb] += nu_qs; // q collisions due to s
-                }
-                // Self collisions for Knudsen diagnostic and heuristic timestep
-                const Real nu_sq = IonIonMomentumExchangeRate(
-                    TeF, TiF, NeF, ns, ns, species.mass[s], species.mass[s],
-                    species_zbarF[s], species_zbarF[s], zbar_floor,
-                    ion_number_density_floor);
-                nu_total[a] += nu_sq;
+              for (int s = 0; s < nspecies; ++s) {
+                nF[s] = rhoF[s] * species.mass_inv[s];
               }
+
+              // Wrap matrix backing storage for the active system.
+              //
+              // IMPORTANT: row stride is nactive here, because
+              // matrix_wrapper_t sees this as an nactive x nactive
+              // contiguous matrix.
+
+              // Allocate QR workspace only for the Stefan-Maxwell model.
+              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{};
+              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> Q_data{};
+              std::array<double,
+                         QRDecomposition::double_scratch_size(MAX_DIFFUSION_SPECIES)>
+                  qr_scratch{};
+              matrix_wrapper_t<Real> M(M_data.data(), nactive, nactive);
+              matrix_wrapper_t<Real> Q(Q_data.data(), nactive, nactive);
+
+
+              AssembleStefanMaxwellCollisionMatrix<MAX_DIFFUSION_SPECIES>(
+                  species, nactive, active_species, nF, species_zbarF, TiF, TeF, NeF,
+                  zbar_floor, ion_number_density_floor, M, nu_total);
 
               // compute RHS and knudsen numbers
               // This preserves sum_a rhs[a] = 0 (roundoff).
@@ -2292,7 +2240,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                     fabs(gradYC) /
                     (YCF + 1e-30); // non-dimensional gradient of mole fraction
 
-                const Real kn_bulk = mfp * std::max(invLT, invLn);
+                const Real kn_bulk = mfp * std::max(invLTi, invLn);
                 const Real kn_comp = mfp * invLY;
 
                 const Real kn =
@@ -2333,14 +2281,9 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                   const int s_q = active_species[q];
 
                   // Pressure response to grad(rho_q) = 1, all other gradients zero.
-                  // apply effective limiter for gradP
-                  Real limiter = (use_gradP_limiter_in_timestep) ? thetaP : 1.0;
-                  const Real gradPC_basis =
-                      limiter * unit_system::kb * TiF * species.mass_inv[s_q];
-                  // apply effective limiter for gradPe
-                  limiter = (use_gradP_limiter_in_timestep) ? thetaPe : 1.0;
-                  const Real gradPe_basis = limiter * unit_system::kb * TeF *
-                                            species_zbarF[s_q] * species.mass_inv[s_q];
+                  const Real gradPC_basis = unit_system::kb * TiF * species.mass_inv[s_q];
+                  const Real gradPe_basis =
+                      unit_system::kb * TeF * species_zbarF[s_q] * species.mass_inv[s_q];
 
                   for (int a = 0; a < nactive; ++a) {
                     const int s = active_species[a];
