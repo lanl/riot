@@ -833,7 +833,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     bool initial_mask = all_mask(x, mask);
     // step size til next cell face
     auto h = distance_to_face();
-    h = std::max(h, kMarchTiny);
+    // copy to a temporary: std::max binds by reference, and device code may not
+    // reference a host constexpr variable
+    h = std::max(h, Real(kMarchTiny));
     if (!initial_mask) {
       // see if I can skip everything else
       std::array<Real, 3> temp;
