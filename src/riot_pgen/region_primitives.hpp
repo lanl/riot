@@ -478,6 +478,68 @@ bool eval_mask(const mask_types::types &t, const int id, const Real x, const Rea
   }
 }
 
+// Narrow [tlo, thi], the range of t over which the mask m keeps its value at (x, y, z) on
+// the ray (x, y, z) + t (vx, vy, vz). Masks without a span shrink it to nothing.
+template <typename T>
+KOKKOS_INLINE_FUNCTION void mask_span(const T &m, const Real x, const Real y,
+                                      const Real z, const Real vx, const Real vy,
+                                      const Real vz, Real &tlo, Real &thi) {
+  tlo = 1.0;
+  thi = -1.0;
+}
+KOKKOS_INLINE_FUNCTION
+void mask_span(const background_mask &m, const Real x, const Real y, const Real z,
+               const Real vx, const Real vy, const Real vz, Real &tlo, Real &thi) {}
+KOKKOS_INLINE_FUNCTION
+void mask_span(const plane_mask &m, const Real x, const Real y, const Real z,
+               const Real vx, const Real vy, const Real vz, Real &tlo, Real &thi) {
+  for (int i = 0; i < m.nplanes; i++) {
+    const Real nx = m.pdata[4 * i];
+    const Real ny = m.pdata[4 * i + 1];
+    const Real nz = m.pdata[4 * i + 2];
+    const Real offset = m.pdata[4 * i + 3];
+    const Real dot = nx * x + ny * y + nz * z + offset;
+    const Real ndotv = nx * vx + ny * vy + nz * vz;
+    // stay clear of the plane by more than roundoff in dot, and in the point itself
+    const Real nabs = std::abs(nx) + std::abs(ny) + std::abs(nz);
+    const Real tol = 1.e-10 * (nabs * (std::abs(x) + std::abs(y) + std::abs(z)) +
+                               std::abs(offset)) +
+                     1.e-12 * nabs;
+    if (std::abs(dot) <= tol) {
+      tlo = 1.0;
+      thi = -1.0;
+      return;
+    }
+    if (ndotv == 0.0) continue;
+    const Real tb = ((dot > 0.0 ? tol : -tol) - dot) / ndotv;
+    if (tb > 0.0) {
+      thi = std::min(thi, tb);
+    } else {
+      tlo = std::max(tlo, tb);
+    }
+  }
+}
+
+// evaluate the mask in slot `id` of tuple `t` and narrow [tlo, thi] to the range of t
+// over which it keeps that value along the ray (x, y, z) + t (vx, vy, vz)
+KOKKOS_INLINE_FUNCTION
+bool eval_mask_span(const mask_types::types &t, const int id, const Real x, const Real y,
+                    const Real z, const Real vx, const Real vy, const Real vz,
+                    Real &tlo, Real &thi) {
+  switch (id) {
+#define REG(name)                                                                        \
+  case static_cast<int>(RegionID::name): {                                               \
+    const auto &m = std::get<static_cast<std::size_t>(RegionID::name)>(t);              \
+    mask_span(m, x, y, z, vx, vy, vz, tlo, thi);                                         \
+    return m(x, y, z);                                                                   \
+  }
+    FOREACH_REGION
+#undef REG
+  default:
+    return true;
+  }
+}
+
 // construct the mask for `id` from input and store it in slot `id` of tuple `t`
 inline void set_mask(mask_types::types &t, const int id, ParameterInput *pin,
                      const std::string &block_name) {

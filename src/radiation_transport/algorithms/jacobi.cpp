@@ -210,17 +210,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   std::string control_field = ccrad::intensity::name();
   using namespace parthenon::refinement_ops;
   Metadata mi = Metadata({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
-                          Metadata::Intensive, Metadata::Conserved, MetadataJacobi,
-                          MetadataOperatorSplit},
+                          Metadata::CommunicateOne, Metadata::Intensive,
+                          Metadata::Conserved, MetadataJacobi, MetadataOperatorSplit},
                          std::vector<int>({ngroups * nangles}));
-  mi.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  mi.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::intensity>(mi);
 
   // Opacity fields
   Metadata mo = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy,
-                          Metadata::FillGhost, MetadataJacobi, MetadataOperatorSplit},
+                          Metadata::FillGhost, Metadata::CommunicateOne, MetadataJacobi,
+                          MetadataOperatorSplit},
                          std::vector<int>({ngroups}));
-  mo.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  mo.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::aa>(mo);
   jacobi_pkg->AddField<ccrad::ss>(mo);
 

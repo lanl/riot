@@ -126,7 +126,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   if (do_radiation_transport) {
     if (riot_pkg->Param<bool>("do_explicit")) {
       OperatorSplitTasks.push_back(&Explicit::ExplicitTasks);
-    } else if (riot_pkg->Param<bool>("do_jacboi")) {
+    } else if (riot_pkg->Param<bool>("do_jacobi")) {
       OperatorSplitTasks.push_back(&Jacobi::JacobiTasks);
     }
   }
