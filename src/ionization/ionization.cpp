@@ -1829,35 +1829,20 @@ KOKKOS_INLINE_FUNCTION int ImposeBarycentricFluxConstraint(
   return constraint_row;
 }
 
+// Cell-Knudsen limiter for the fastest Stefan-Maxwell diffusion
+// eigenmode.
+// cell_knudsen_limit = 1 means lambda_mfp,eff <= one cell width.
 template <std::size_t MaxSpecies>
 KOKKOS_INLINE_FUNCTION Real LimitFluxByCellKnudsenNumber(
-    const int nactive, const std::array<int, MaxSpecies> &active_species,
-    const std::array<Real, MaxSpecies> &species_mass_inv, const Real Ti, const Real dx,
-    const Real lambda_raw, const Real cell_knudsen_limit,
-    std::array<Real, MaxSpecies> &mass_flux) {
-  constexpr Real tiny = 1e-300;
-  using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+    const int nflux, const Real Kn_cell, std::array<Real, MaxSpecies> &mass_flux) {
+  constexpr Real Kn_limit = 1.0;
+  const Real factor = std::min(1.0, Kn_limit / (Kn_cell + 1e-300));
 
-  Real vth_max = 0.0;
-  for (int a = 0; a < nactive; ++a) {
-    const int s = active_species[a];
-    const Real vth = sqrt(unit_system::kb * Ti * species_mass_inv[s]);
-    vth_max = std::max(vth_max, vth);
-  }
-
-  // lambda_raw is the largest diffusion eigenvalue, with units of D.
-  // Interpret D = vth_max * lambda_mfp,mode.
-  const Real mfp_mode = lambda_raw / (vth_max + tiny);
-  const Real Kn_cell = mfp_mode / (dx + tiny);
-
-  const Real factor = std::min(1.0, cell_knudsen_limit / (Kn_cell + tiny));
-
-  // A common factor preserves sum_s J_s = 0.
-  for (int a = 0; a < nactive; ++a) {
+  for (int a = 0; a < nflux; ++a) {
     mass_flux[a] *= factor;
   }
 
-  return factor * lambda_raw;
+  return factor;
 }
 
 template <std::size_t MaxSpecies>
@@ -2028,14 +2013,13 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             const auto dl = deltas[DIR];
             const Real dx = coords.Dxc(DIR, k, j, i);
             const Real dxinv = 1.0 / (dx + 1e-30);
-            std::array<Real, MAX_DIFFUSION_SPECIES> rhoL, rhoR;
-            std::array<Real, MAX_DIFFUSION_SPECIES> rhoF, nF;
+
             // Compact list of species active at this face.
-            // summed collision frequencies
-            std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{};
-            // RHS and solution.
-            std::array<Real, MAX_DIFFUSION_SPECIES> rhs{};
-            std::array<Real, MAX_DIFFUSION_SPECIES> mass_flux{};
+            // species mass densities L/R and face, number densities (face),
+            // summed collision frequencies, RHS and solution
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoL, rhoR, rhoF, nF;
+            std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{}, rhs{}, mass_flux{};
+
             // Gather species mass and number densities.
             Real rhoTotF = 0.0;
             for (int s = 0; s < nspecies; ++s) {
@@ -2049,8 +2033,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               rhoTotF += rhoF[s];
               nF[s] = rhoF[s] * species.mass_inv[s];
             }
-
-            const Real NeF = 0.5 * (ccbulk_ne(kji - dl) + ccbulk_ne(kji));
 
             int nactive = 0;
             std::array<int, MAX_DIFFUSION_SPECIES> active_species;
@@ -2125,6 +2107,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // charged ion subsystem. Valid? Implications?
               const Real gradPe = (prese(kji) - prese(kji - dl)) * dxinv;
 
+              // electron number density face value; again this is total.
+              // Implications? Valid?
+              const Real NeF = 0.5 * (ccbulk_ne(kji - dl) + ccbulk_ne(kji));
+
               // ion temperature face value, face-centered gradient and inverse scale
               // length
               const Real TiF = 0.5 * (tion(kji - dl) + tion(kji));
@@ -2135,13 +2121,16 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real TeF = 0.5 * (tele(kji - dl) + tele(kji));
               const Real gradTe = (tele(kji) - tele(kji - dl)) * dxinv;
 
-              ///////////////////////////////////////////////////////////////////////////////
               // Electron thermodiffusion in a multicomponent ion mixture.
               // Kagan & Baalrud, "Transport formulas for multi-component plasmas
               // within the effective potential theory framework", Eqs. (57)-(59).
               //
               // Evaluate the local effective charge and mass-weighted Z^2/m.
               // Mean charge states are taken from RIOT's ionization model.
+              // Electron thermal-force coefficient B_e^(e).
+              // Kagan & Baalrud, Eq. (58), weakly coupled plasma approximation.
+              // This coefficient accounts for the non-Maxwellian electron
+              // distribution induced by an electron-temperature gradient.
               Real nChargeF = 0.0, nZ2F = 0.0, sumZ2OverM = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
@@ -2153,36 +2142,23 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               const Real Zeff = nZ2F / (nChargeF + 1e-30);
               sumZ2OverM /= (rhoCF + 1e-30);
 
-              // Electron thermal-force coefficient B_e^(e).
-              // Kagan & Baalrud, Eq. (58), weakly coupled plasma approximation.
-              //
-              // This coefficient accounts for the non-Maxwellian electron
-              // distribution induced by an electron-temperature gradient.
               const Real invZeff = 1.0 / (Zeff + 1e-30);
               const Real Be = (0.47 + 0.94 * invZeff) /
                               (0.31 + 1.20 * invZeff + 0.41 * invZeff * invZeff);
               const Real thermal_coeff = Be * invZeff;
-              ///////////////////////////////////////////////////////////////////////////////
-
-
-              for (int s = 0; s < nspecies; ++s) {
-              }
 
               // Wrap matrix backing storage for the active system.
-              //
-              // IMPORTANT: row stride is nactive here, because
+              // row stride is nactive here, because
               // matrix_wrapper_t sees this as an nactive x nactive
               // contiguous matrix.
-
               // Allocate QR workspace only for the Stefan-Maxwell model.
-              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{};
-              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> Q_data{};
+              std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{},
+                  Q_data{};
               std::array<double,
                          QRDecomposition::double_scratch_size(MAX_DIFFUSION_SPECIES)>
                   qr_scratch{};
               matrix_wrapper_t<Real> M(M_data.data(), nactive, nactive);
               matrix_wrapper_t<Real> Q(Q_data.data(), nactive, nactive);
-
 
               AssembleStefanMaxwellCollisionMatrix<MAX_DIFFUSION_SPECIES>(
                   species, nactive, active_species, nF, species_zbarF, TiF, TeF, NeF,
@@ -2192,6 +2168,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // This preserves sum_a rhs[a] = 0 (roundoff).
               Real max_kn_face = 0.0;
               Real D_est = 0.0;
+              Real mfp_max = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
                 const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + 1e-30);
@@ -2233,18 +2210,18 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 const Real mfp = vth / (nu_total[a] + 1e-300);
                 D_est = std::max(D_est, unit_system::kb * TiF * species.mass_inv[s] /
                                             (nu_total[a] + 1e-300));
-                const Real invLY =
-                    fabs(gradYC) /
-                    (YCF + 1e-30); // non-dimensional gradient of mole fraction
+                mfp_max = std::max(mfp_max, mfp);
+
+                // non-dimensional gradient of mole fraction
+                const Real invLY = fabs(gradYC) / (YCF + 1e-30);
 
                 const Real kn_bulk = mfp * std::max(invLTi, invLn);
                 const Real kn_comp = mfp * invLY;
-
                 const Real kn =
                     (YCF > diagnostic_Y_floor) ? std::max(kn_bulk, kn_comp) : kn_bulk;
 
                 max_kn_face = std::max(max_kn_face, kn); // max face knudsen number
-              }
+              } // face loop
               cell_kn_max = std::max(cell_kn_max, max_kn_face);
 
               // Replace the minimum-norm friction row with a scaled
@@ -2318,19 +2295,20 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
 
                 const Real lambda_raw = MaxDiffusionEigenvalue(K_data.data(), nactive);
 
-                // Cell-Knudsen limiter for the fastest Stefan-Maxwell diffusion
-                // eigenmode.
-                // cell_knudsen_limit = 1 means lambda_mfp,eff <= one cell width.
-                constexpr Real cell_knudsen_limit = 1.0;
+                const Real Kn_cell = lambda_raw / (vth_max * dx + tiny);
+                const Real transport_factor =
+                    LimitFluxByCellKnudsenNumber(nactive, Kn_cell, mass_flux);
 
-                const Real lambda_eff = LimitFluxByCellKnudsenNumber(
-                    nactive, active_species, species.mass_inv, TiF, dx, lambda_raw,
-                    cell_knudsen_limit, mass_flux);
-
+                const Real lambda_eff = transport_factor * lambda_raw;
                 cell_rate += lambda_eff / (dx * dx + 1e-30);
 
-              } else {
-                cell_rate += D_est / (dx * dx + 1e-30);
+              } else { // simple time step estimate; still limit mass fluxes
+                const Real Kn_cell = mfp_max / (dx + 1e-300);
+                const Real transport_factor = LimitFluxByCellKnudsenNumber(
+                    nactive, Kn_cell, mass_flux);
+
+                const Real D_eff = transport_factor * D_est;
+                cell_rate += D_eff / (dx * dx + 1e-30);
               }
 
             } // Stefan-Maxwell branch
