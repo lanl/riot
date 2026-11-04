@@ -2298,6 +2298,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
               auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
 
+              // Reconstruct face specific enthalpy and electron energy from the
+              // left/right conserved densities. Using rho_L + rho_R gives a
+              // density-weighted face state, so a nearly absent material on one side
+              // cannot amplify its specific energy.
               const Real rho_sum = rhom(left) + rhom(right);
 
               // [(rho h)_L + (rho h)_R] / (rho_L + rho_R)
