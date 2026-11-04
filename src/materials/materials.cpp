@@ -472,7 +472,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     num_iso_per_mat.push_back(niso);
 
     // For adding EOS...
-    auto valid_eos_types = RiotEOS::GetEOSNames(RiotEOS::EOS());
     auto add_eos = [&](const std::string &eos_block) {
       auto eos_type = pin->GetString(eos_block, "eos_type");
       bool is_ideal = (eos_type.compare(singularity::IdealGas::EosType()) == 0) ||
