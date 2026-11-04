@@ -352,8 +352,8 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
   set_clean_state(pmb, eos_host, elec_eos, eos_from_matid, region_cnts, var_map,
                   var_mirror_map, mat_tied_mirror_vars);
   // initialize the state in all cells not marked as clean
-  auto dirty_map = set_dirty_state(pmb, eos_host, elec_eos, eos_from_matid, var_map,
-                                   var_mirror_map, mat_tied_mirror_vars, matids);
+  set_dirty_state(pmb, eos_host, elec_eos, eos_from_matid, var_map, var_mirror_map,
+                  mat_tied_mirror_vars, matids);
 
   var_mirror_map.erase("does_not_exist");
   for (auto v : var_mirror_map) {
@@ -379,31 +379,39 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
 //! \fn  std::vector<int> BlockInitData::set_mask
 //! \brief
 std::vector<int> BlockInitData::set_mask(sample_positions_t &x) {
-  sample_positions_t xs(x.size());
-  std::vector<int> reg_id(x.size(), -1);
-  for (int r = regions.size() - 1; r >= 0; r--) {
-    int n = 0;
-    xs.resize(x.size());
-    for (int i = 0; i < x.size(); i++) {
-      if (reg_id[i] == -1) {
-        auto [xx, yy, zz] = to_cartesian(x(i, 0), x(i, 1), x(i, 2));
-        xs(n, 0) = xx;
-        xs(n, 1) = yy;
-        xs(n, 2) = zz;
-        n++;
-      }
-    }
+  // The masks are applied from the highest region down, each to the points not yet in a
+  // region, so that a point is in the highest region whose mask contains it.  The points
+  // left, in their original order, and their Cartesian positions are kept compacted at
+  // the front of rest and xs.
+  const std::size_t npts = x.size();
+  std::vector<int> reg_id(npts, -1);
+  std::vector<std::uint32_t> rest(npts);
+  sample_positions_t xs(npts);
+  for (std::size_t i = 0; i < npts; i++) {
+    rest[i] = i;
+    auto [xx, yy, zz] = to_cartesian(x(i, 0), x(i, 1), x(i, 2));
+    xs(i, 0) = xx;
+    xs(i, 1) = yy;
+    xs(i, 2) = zz;
+  }
+  std::size_t n = npts;
+  for (int r = regions.size() - 1; r >= 0 && n > 0; r--) {
     xs.resize(n);
-    auto m = regions[r].mask(xs);
-    n = 0;
-    for (int i = 0; i < x.size(); i++) {
-      if (reg_id[i] == -1) {
-        if (m[n]) {
-          reg_id[i] = r;
+    const auto m = regions[r].mask(xs);
+    std::size_t left = 0;
+    for (std::size_t q = 0; q < n; q++) {
+      if (m[q]) {
+        reg_id[rest[q]] = r;
+      } else {
+        if (left < q) {
+          rest[left] = rest[q];
+          for (int d = 0; d < 3; d++)
+            xs(left, d) = xs(q, d);
         }
-        n++;
+        left++;
       }
     }
+    n = left;
   }
   return reg_id;
 }

@@ -79,11 +79,13 @@ struct python_region_t {
   mask_func_t make_mask() {
 #ifdef RIOT_ENABLE_PYTHON
     return [this](const sample_positions_t &x) {
-      return py_obj.call_method<std::vector<bool>>("mask", make_real_view(x));
+      return py_obj.call_method<region_primitives::mask_t>("mask", make_real_view(x));
     };
 #else
     return mask_func_t{
-        [](const sample_positions_t &x) { return std::vector<bool>(x.size(), true); }};
+        [](const sample_positions_t &x) {
+          return region_primitives::mask_t(x.size(), 1);
+        }};
 #endif
   }
 

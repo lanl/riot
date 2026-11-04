@@ -14,6 +14,7 @@
 #define RIOT_PGEN_REGION_PRIMITIVES_HPP_
 // This file was made in part with generative AI.
 
+#include <cstdint>
 #include <functional>
 
 #include <parthenon/package.hpp>
@@ -56,7 +57,8 @@ struct sample_positions_t : public VectorOfArrays {
     VectorOfArrays::reshape(n1, n2);
   }
 };
-using mask_t = std::vector<bool>;
+// nonzero for each point in the region
+using mask_t = std::vector<std::uint8_t>;
 using mask_func_t = std::function<mask_t(const sample_positions_t &)>;
 
 template <typename T>
@@ -436,7 +438,7 @@ mask_func_t cad(ParameterInput *pin, const std::string &block_name);
 inline mask_func_t cad(ParameterInput *pin, const std::string &block_name) {
   PARTHENON_FAIL("Riot not build with support for CAD initializiation.");
   return mask_func_t{
-      [](const sample_positions_t &x) { return std::vector<bool>(x.size(), true); }};
+      [](const sample_positions_t &x) { return mask_t(x.size(), 1); }};
 }
 #endif
 

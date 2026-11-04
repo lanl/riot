@@ -441,202 +441,169 @@ std::array<T, N> operator+(const std::array<T, N> &arr1, const std::array<T, N> 
 
 std::tuple<Real, Real, Real> to_cartesian(const Real x0, const Real x1, const Real x2);
 
-struct TreeCell {
-  TreeCell(const std::tuple<int, int, int> &cell_id, const int numdim,
-           const int my_stride, const int my_level)
-      : cell(cell_id), ndim(numdim), stride(my_stride), level(my_level) {}
-  std::tuple<int, int, int> cell;
-  const int ndim, stride, level;
-  std::vector<int> corner;
-  std::vector<TreeCell> child;
+// A cell cut by a region boundary is refined into subcells on the block's lattice refined
+// 2^nlev_max times, where a subcell is split in two along each dimension if its corners
+// lie in different regions.  The subcells are stored level by level, with the 2^ndim
+// children of a split subcell contiguous in the next level and ordered i fastest, then j,
+// then k, like the corners.
+struct SubCell {
+  int i, j, k;            // lower corner on the refined lattice
+  int child = -1;         // first child in the next level, or -1 for a leaf
+  std::array<int, 8> reg; // region of each corner
+};
 
-  int refine_to(const int nlev_target) {
-    if (level < nlev_target) {
-      auto [k, j, i] = cell;
-      auto cc = std::make_tuple(k, j, i);
-      int child_stride = stride / 2;
-      child.emplace_back(cc, ndim, child_stride, level + 1);
-      child.back().refine_to(nlev_target);
-      cc = std::make_tuple(k, j, i + child_stride);
-      child.emplace_back(cc, ndim, child_stride, level + 1);
-      child.back().refine_to(nlev_target);
-      if (ndim > 1) {
-        cc = std::make_tuple(k, j + child_stride, i);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-        cc = std::make_tuple(k, j + child_stride, i + child_stride);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-      }
-      if (ndim > 2) {
-        cc = std::make_tuple(k + child_stride, j, i);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-        cc = std::make_tuple(k + child_stride, j, i + child_stride);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-        cc = std::make_tuple(k + child_stride, j + child_stride, i);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-        cc = std::make_tuple(k + child_stride, j + child_stride, i + child_stride);
-        child.emplace_back(cc, ndim, child_stride, level + 1);
-        child.back().refine_to(nlev_target);
-      }
-    }
-    return child.size();
+// Distinct points of the refined lattice, so that each is sampled once.  The points of a
+// cell refined nref times are looked up in a dense table over the cell when inside it,
+// and otherwise, on its faces where they can be shared with other cells, in a hash table.
+// Both tables are kept between sets of points, and between cells for the dense one, and
+// stale entries told apart by a generation count instead of clearing the tables.
+class LatticePoints {
+ public:
+  LatticePoints(const int ndim, const int nref, const std::int64_t n1,
+                const std::int64_t n2)
+      : ndim_(ndim), nref_(nref), n1_(n1), n2_(n2) {
+    std::size_t ncell = 1;
+    for (int d = 0; d < ndim; d++)
+      ncell *= nref + 1;
+    if (ncell <= max_dense_) dense_.resize(ncell);
   }
 
-  template <typename F>
-  void fill_leaf_corners(std::unordered_set<int> &new_corners,
-                         std::unordered_set<int> &all_corners, F &flatten) {
-    if (child.size() > 0) {
-      for (auto &c : child) {
-        c.fill_leaf_corners(new_corners, all_corners, flatten);
-      }
+  // start a new set of at most n distinct points
+  void reset(const std::size_t n) {
+    if (slots_.empty()) slots_.resize(min_slots_);
+    if (++gen_ == 0) {
+      std::fill(slots_.begin(), slots_.end(), Slot());
+      gen_ = 1;
     }
-    if (child.size() == 0 && corner.size() == 0) {
-      auto [k, j, i] = cell;
-      corner.push_back(flatten(k, j, i));
-      auto isnew = all_corners.insert(corner.back());
-      if (isnew.second) new_corners.insert(corner.back());
-      corner.push_back(flatten(k, j, i + stride));
-      isnew = all_corners.insert(corner.back());
-      if (isnew.second) new_corners.insert(corner.back());
-      if (ndim > 1) {
-        corner.push_back(flatten(k, j + stride, i));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-        corner.push_back(flatten(k, j + stride, i + stride));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-      }
-      if (ndim > 2) {
-        corner.push_back(flatten(k + stride, j, i));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-        corner.push_back(flatten(k + stride, j, i + stride));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-        corner.push_back(flatten(k + stride, j + stride, i));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-        corner.push_back(flatten(k + stride, j + stride, i + stride));
-        isnew = all_corners.insert(corner.back());
-        if (isnew.second) new_corners.insert(corner.back());
-      }
-    }
+    nhash_ = 0;
+    new_cell();
+    if (pts_.size() < n) pts_.resize(n);
+    npts_ = 0;
   }
 
-  template <typename T>
-  int refine(const std::unordered_map<int, T> &pid_to_reg, const int level_max) {
-    if (level == level_max) return 0;
-    if (child.size() > 0) {
-      int sum_new = 0;
-      for (int i = 0; i < child.size(); i++)
-        sum_new += child[i].refine(pid_to_reg, level_max);
-      return sum_new;
-    }
-    int r0 = pid_to_reg.at(corner[0]);
-    for (int i = 1; i < corner.size(); i++) {
-      if (pid_to_reg.at(corner[i]) != r0) {
-        return refine_to(level + 1);
+  // index among the distinct points of the point p of the cell with lower corner c.  The
+  // points of a cell must be inserted together.
+  int insert(const std::array<int, 3> &c, const std::array<int, 3> &p) {
+    if (dense_.size() > 0) {
+      if (c != cell_) {
+        cell_ = c;
+        new_cell();
+      }
+      bool inside = true;
+      std::size_t q = 0;
+      for (int d = ndim_ - 1; d >= 0; d--) {
+        const int pd = p[d] - c[d];
+        inside = inside && (pd > 0 && pd < nref_);
+        q = q * (nref_ + 1) + pd;
+      }
+      if (inside) {
+        // without branching on whether the point is new, which is unpredictable
+        auto &e = dense_[q];
+        const bool fresh = (e.gen != dense_gen_);
+        const int idx = (fresh ? static_cast<int>(npts_) : e.idx);
+        e = {idx, dense_gen_};
+        pts_[npts_] = p;
+        npts_ += fresh;
+        return idx;
       }
     }
-    return 0;
+    const std::int64_t key = p[0] + n1_ * (p[1] + n2_ * p[2]);
+    Slot &e = find(slots_, key);
+    if (e.gen != gen_) {
+      e = {key, static_cast<int>(npts_), gen_};
+      pts_[npts_++] = p;
+      // keep the hash table at most half full
+      if (2 * ++nhash_ > slots_.size()) {
+        std::vector<Slot> slots(2 * slots_.size());
+        for (const auto &o : slots_) {
+          if (o.gen == gen_) find(slots, o.key) = o;
+        }
+        slots_.swap(slots);
+      }
+      return npts_ - 1;
+    }
+    return e.idx;
   }
 
-  template <typename F>
-  void integrate(const std::unordered_map<int, int> &pid_to_reg, F &id_to_xyz,
-                 std::vector<std::array<Real, 4>> &vol_moments) {
-    integrate_impl(pid_to_reg, id_to_xyz, vol_moments);
-    // now normalize by volume
-    std::array<Real, 3> xlo, xhi;
-    set_bounds(id_to_xyz, xlo, xhi);
-    auto moments = get_subcell_moments(xlo, xhi);
-    auto norm = 1.0 / moments[0];
-    for (int r = 0; r < vol_moments.size(); r++) {
-      for (int m = 0; m < 4; m++)
-        vol_moments[r][m] *= norm;
-    }
-  }
+  // number of distinct points and the n-th one
+  std::size_t size() const { return npts_; }
+  const std::array<int, 3> &operator[](const std::size_t n) const { return pts_[n]; }
 
  private:
-  template <typename F>
-  void integrate_impl(const std::unordered_map<int, int> &pid_to_reg, F &id_to_xyz,
-                      std::vector<std::array<Real, 4>> &vol_moments) {
-    if (child.size() == 0) {
-      // get bounds of current subcell
-      std::array<Real, 3> xlo, xhi;
-      set_bounds(id_to_xyz, xlo, xhi);
-      // integrate over subcell
-      auto moments = get_subcell_moments(xlo, xhi);
-      // and add to region integrals
-      Real wgt = 1.0 / (1 << ndim);
-      for (auto id : corner) {
-        int r = pid_to_reg.at(id);
-        for (int m = 0; m < 4; m++)
-          vol_moments[r][m] += wgt * moments[m];
-      }
-    } else {
-      for (auto &c : child) {
-        c.integrate_impl(pid_to_reg, id_to_xyz, vol_moments);
-      }
+  static constexpr std::size_t max_dense_ = 1 << 21, min_slots_ = 1 << 10;
+  struct Slot {
+    std::int64_t key = 0;
+    int idx = 0;
+    unsigned int gen = 0;
+  };
+  struct Entry {
+    int idx = 0;
+    unsigned int gen = 0;
+  };
+
+  // slot of the key in the hash table, or the empty slot for it
+  Slot &find(std::vector<Slot> &slots, const std::int64_t key) const {
+    const std::size_t mask = slots.size() - 1;
+    std::uint64_t h = static_cast<std::uint64_t>(key) * 0x9E3779B97F4A7C15ull;
+    std::size_t s = (h ^ (h >> 32)) & mask;
+    while (slots[s].gen == gen_ && slots[s].key != key)
+      s = (s + 1) & mask;
+    return slots[s];
+  }
+  void new_cell() {
+    if (++dense_gen_ == 0) {
+      std::fill(dense_.begin(), dense_.end(), Entry());
+      dense_gen_ = 1;
     }
   }
 
-  std::array<Real, 4> get_subcell_moments(std::array<Real, 3> &xlo,
-                                          std::array<Real, 3> &xhi) {
-    std::array<Real, 4> moments;
-    if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      Real r0sq = xlo[0] * xlo[0];
-      Real r0cb = xlo[0] * r0sq;
-      Real r1sq = xhi[0] * xhi[0];
-      Real r1cb = xhi[0] * r1sq;
-      moments[0] = 4.0 / 3.0 * M_PI * (r1cb - r0cb);
-      moments[1] = 3.0 * M_PI * (xhi[0] + r0cb / (r0sq + xlo[0] * xhi[0] + r1sq));
-      moments[2] = 0.0;
-      moments[3] = 0.0;
-      return moments;
-    }
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      Real r0sq = xlo[0] * xlo[0];
-      Real r0cb = xlo[0] * r0sq;
-      Real r1sq = xhi[0] * xhi[0];
-      Real r1cb = xhi[0] * r1sq;
-      Real dz = xhi[1] - xlo[1];
-      moments[0] = M_PI * (r1sq - r0sq) * dz;
-      moments[1] = 2.0 * M_PI / 3.0 * (r1cb - r0cb) * dz;
-      moments[2] = 0.5 * moments[0] * (xlo[1] + xhi[1]);
-      moments[3] = 0.0;
-      return moments;
-    }
-    moments[0] = 1.0;
-    for (int d = 0; d < ndim; d++) {
-      moments[0] *= (xhi[d] - xlo[d]);
-    }
-    moments[1] = moments[0] * 0.5 * (xlo[0] + xhi[0]);
-    moments[2] = ndim > 1 ? moments[0] * 0.5 * (xlo[1] + xhi[1]) : 0.0;
-    moments[3] = ndim > 2 ? moments[0] * 0.5 * (xlo[2] + xhi[2]) : 0.0;
+  int ndim_, nref_;
+  std::int64_t n1_, n2_;
+  std::size_t nhash_ = 0, npts_ = 0;
+  unsigned int gen_ = 0, dense_gen_ = 0;
+  std::array<int, 3> cell_ = {-1, -1, -1};
+  std::vector<Slot> slots_;
+  std::vector<Entry> dense_;
+  std::vector<std::array<int, 3>> pts_;
+};
+
+// volume and first moments of the subcell [xlo, xhi]
+inline std::array<Real, 4> get_subcell_moments(const std::array<Real, 3> &xlo,
+                                               const std::array<Real, 3> &xhi,
+                                               const int ndim) {
+  std::array<Real, 4> moments;
+  if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+    Real r0sq = xlo[0] * xlo[0];
+    Real r0cb = xlo[0] * r0sq;
+    Real r1sq = xhi[0] * xhi[0];
+    Real r1cb = xhi[0] * r1sq;
+    moments[0] = 4.0 / 3.0 * M_PI * (r1cb - r0cb);
+    moments[1] = 3.0 * M_PI * (xhi[0] + r0cb / (r0sq + xlo[0] * xhi[0] + r1sq));
+    moments[2] = 0.0;
+    moments[3] = 0.0;
     return moments;
   }
-
-  template <typename F>
-  void set_bounds(F &id_to_xyz, std::array<Real, 3> &xlo, std::array<Real, 3> &xhi) {
-    for (int d = 0; d < 3; d++) {
-      xlo[d] = 1.e300;
-      xhi[d] = -1e300;
-    }
-    for (auto &id : corner) {
-      auto [x1, x2, x3] = id_to_xyz(id);
-      xlo[0] = std::min(xlo[0], x1);
-      xhi[0] = std::max(xhi[0], x1);
-      xlo[1] = std::min(xlo[1], x2);
-      xhi[1] = std::max(xhi[1], x2);
-      xlo[2] = std::min(xlo[2], x3);
-      xhi[2] = std::max(xhi[2], x3);
-    }
+  if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    Real r0sq = xlo[0] * xlo[0];
+    Real r0cb = xlo[0] * r0sq;
+    Real r1sq = xhi[0] * xhi[0];
+    Real r1cb = xhi[0] * r1sq;
+    Real dz = xhi[1] - xlo[1];
+    moments[0] = M_PI * (r1sq - r0sq) * dz;
+    moments[1] = 2.0 * M_PI / 3.0 * (r1cb - r0cb) * dz;
+    moments[2] = 0.5 * moments[0] * (xlo[1] + xhi[1]);
+    moments[3] = 0.0;
+    return moments;
   }
-};
+  moments[0] = 1.0;
+  for (int d = 0; d < ndim; d++) {
+    moments[0] *= (xhi[d] - xlo[d]);
+  }
+  moments[1] = moments[0] * 0.5 * (xlo[0] + xhi[0]);
+  moments[2] = ndim > 1 ? moments[0] * 0.5 * (xlo[1] + xhi[1]) : 0.0;
+  moments[3] = ndim > 2 ? moments[0] * 0.5 * (xlo[2] + xhi[2]) : 0.0;
+  return moments;
+}
 
 class BlockInitData {
   enum region_loop_bounds { state = 0, mask = 1 };
@@ -982,10 +949,8 @@ class BlockInitData {
     }
   }
 
-  using dirty_map_t =
-      std::unordered_map<std::tuple<int, int, int>, std::unordered_map<int, Real>>;
   template <typename host_mirror_t>
-  dirty_map_t
+  void
   set_dirty_state(MeshBlock *pmb, std::vector<RiotEOS::EOS> &eos_v,
                   std::vector<RiotEOS::EOS> &electron_eos_v,
                   std::vector<int> &eos_from_matid,
@@ -1004,10 +969,7 @@ class BlockInitData {
     std::vector<VectorOfArrays> ms;
     std::unordered_map<std::string, VectorOfArrays> ss;
     std::set<int> mats_to_remove;
-    dirty_map_t dirty_map;
     std::vector<Real> local_state;
-    std::vector<TreeCell> dirty_cell;
-    std::unordered_set<int> dirty_id;
 
     for (auto mat_id : all_matids) {
       const std::string rho_mat_name = var_name<ccmat::rho>({mat_id});
@@ -1030,11 +992,13 @@ class BlockInitData {
       mats_to_remove.insert(mat_id);
     }
 
+    const int nmin = regions.nlev_min;
     const int nmax = regions.nlev_max;
     const int nref = 1 << nmax;
+    const int nc = 1 << ndim;
     // max number of faces in the fully refined mesh
-    const int n1 = (nx1 + 2 * nghost) * nref + 1;
-    const int n2 = ndim > 1 ? (nx2 + 2 * nghost) * nref + 1 : 1;
+    const std::int64_t n1 = (nx1 + 2 * nghost) * nref + 1;
+    const std::int64_t n2 = ndim > 1 ? (nx2 + 2 * nghost) * nref + 1 : 1;
     xlo[0] = coords->Xf<X1DIR>(0, 0, 0);
     xlo[1] = coords->Xf<X2DIR>(0, 0, 0);
     xlo[2] = coords->Xf<X3DIR>(0, 0, 0);
@@ -1043,12 +1007,11 @@ class BlockInitData {
     dx[1] = coords->Dxf<X2DIR>(0) / nref;
     dx[2] = coords->Dxf<X3DIR>(0) / nref;
 
-    // Find the dirty cells and start building the tree
+    // Find the dirty cells, which are the roots of the subcell tree
+    std::vector<std::vector<SubCell>> tree(nmax + 1);
     block_loop<state>([&](const int k, const int j, const int i) {
       if (region_id(k, j, i) == -1) {
-        dirty_cell.emplace_back(std::make_tuple(k * nref, j * nref, i * nref), ndim, nref,
-                                0);
-        dirty_cell.back().refine_to(regions.nlev_min);
+        tree[0].push_back({i * nref, j * nref, k * nref});
       } else {
         for (auto mat_id : regions[region_id(k, j, i)].matid) {
           mats_to_remove.erase(mat_id);
@@ -1056,73 +1019,172 @@ class BlockInitData {
       }
     });
 
-    auto flatten = [&](const int k, const int j, const int i) {
-      return i + n1 * (j + n2 * k);
+    // region of each of the nreg points added to reg by point(), sampling each distinct
+    // point once
+    LatticePoints distinct(ndim, nref, n1, n2);
+    std::vector<int> reg;
+    std::size_t nreg = 0;
+    sample_positions_t xs(0);
+    auto start = [&](const std::size_t n) {
+      distinct.reset(n);
+      reg.resize(n);
+      nreg = 0;
     };
-    std::unordered_set<int> new_points;
-    std::unordered_set<int> all_points;
-    for (auto &c : dirty_cell) {
-      c.fill_leaf_corners(new_points, all_points, flatten);
-    }
-
-    auto id_to_xyz = [&](const int id) {
-      const int k = id / (n1 * n2);
-      const int j = (id - k * n1 * n2) / n1;
-      const int i = id - n1 * (j + n2 * k);
-      return std::make_tuple(xlo[0] + i * dx[0], xlo[1] + j * dx[1], xlo[2] + k * dx[2]);
+    // the point at offset (a, b, c), in units of h, from the lower corner of subcell s
+    auto point = [&](const SubCell &s, const int h, const int a, const int b,
+                     const int c) {
+      const std::array<int, 3> cell = {s.i & ~(nref - 1), s.j & ~(nref - 1),
+                                       s.k & ~(nref - 1)};
+      reg[nreg++] = distinct.insert(cell, {s.i + h * a, s.j + h * b, s.k + h * c});
     };
-    sample_positions_t xs(new_points.size());
-    int n = 0;
-    for (auto pid : new_points) {
-      auto [x, y, z] = id_to_xyz(pid);
-      xs(n, 0) = x;
-      xs(n, 1) = y;
-      xs(n, 2) = z;
-      n++;
+    auto sample = [&]() {
+      xs.resize(distinct.size());
+      for (std::size_t n = 0; n < distinct.size(); n++) {
+        for (int d = 0; d < 3; d++)
+          xs(n, d) = xlo[d] + distinct[n][d] * dx[d];
+      }
+      if (distinct.size() > 0) {
+        const auto reg_id = set_mask(xs);
+        for (std::size_t n = 0; n < nreg; n++)
+          reg[n] = reg_id[reg[n]];
+      }
+    };
+
+    // split subcell s at level l into its children in level l + 1, setting the regions
+    // of the corners of each child c with set_reg(c, child)
+    auto split = [&](SubCell &s, const int l, auto &&set_reg) {
+      const int h = nref >> (l + 1);
+      s.child = tree[l + 1].size();
+      for (int c = 0; c < nc; c++) {
+        SubCell child{s.i + h * (c & 1), s.j + h * ((c >> 1) & 1),
+                      s.k + h * ((c >> 2) & 1)};
+        set_reg(c, child);
+        tree[l + 1].push_back(child);
+      }
+    };
+
+    // always refine down to nlev_min
+    for (int l = 0; l < nmin; l++) {
+      tree[l + 1].reserve(nc * tree[l].size());
+      for (auto &s : tree[l])
+        split(s, l, [](const int, SubCell &) {});
     }
 
-    std::vector<int> reg_id;
-    if (new_points.size() > 0) reg_id = set_mask(xs);
-    std::unordered_map<int, int> pid_to_reg;
-    n = 0;
-    for (auto pid : new_points) {
-      pid_to_reg[pid] = reg_id[n++];
-    }
-
-    for (int lev = 0; lev <= regions.nlev_max; lev++) {
-      for (auto &c : dirty_cell) {
-        c.refine(pid_to_reg, regions.nlev_max);
+    // sample the corners of the subcells at nlev_min
+    {
+      const int h = nref >> nmin;
+      start(nc * tree[nmin].size());
+      for (auto &s : tree[nmin]) {
+        for (int c = 0; c < nc; c++)
+          point(s, h, c & 1, (c >> 1) & 1, (c >> 2) & 1);
       }
-
-      new_points.clear();
-      for (auto &c : dirty_cell) {
-        c.fill_leaf_corners(new_points, all_points, flatten);
-      }
-      if (new_points.size() == 0) break;
-
-      xs.resize(new_points.size());
-      n = 0;
-      for (auto pid : new_points) {
-        auto [x, y, z] = id_to_xyz(pid);
-        xs(n, 0) = x;
-        xs(n, 1) = y;
-        xs(n, 2) = z;
-        n++;
-      }
-      reg_id = set_mask(xs);
-      n = 0;
-      for (auto pid : new_points) {
-        pid_to_reg[pid] = reg_id[n++];
+      sample();
+      for (std::size_t n = 0; n < tree[nmin].size(); n++) {
+        for (int c = 0; c < nc; c++)
+          tree[nmin][n].reg[c] = reg[nc * n + c];
       }
     }
+
+    // then split the subcells whose corners are in different regions.  A split subcell
+    // and its children have their corners on its 3^ndim lattice points (a, b, c) in
+    // {0, 1, 2}^ndim, where those with every index even are its own corners.  The others
+    // fall on odd multiples of the child spacing, so they are new and only can coincide
+    // with points of other subcells split at the same level.
+    const int nl = (ndim > 2 ? 27 : (ndim > 1 ? 9 : 3));
+    // corner of the subcell at each lattice point q = a + 3 b + 9 c, or -1, the offsets of
+    // the new points, and the lattice point at each corner of each child
+    std::array<int, 27> lattice_corner;
+    std::vector<std::array<int, 3>> new_offsets;
+    for (int q = 0; q < nl; q++) {
+      const int a = q % 3, b = (q / 3) % 3, c = q / 9;
+      lattice_corner[q] =
+          (a == 1 || b == 1 || c == 1) ? -1 : (a / 2) + 2 * (b / 2) + 4 * (c / 2);
+      if (lattice_corner[q] < 0) new_offsets.push_back({a, b, c});
+    }
+    std::array<std::array<int, 8>, 8> child_lattice;
+    for (int ch = 0; ch < nc; ch++) {
+      for (int c = 0; c < nc; c++)
+        child_lattice[ch][c] = (ch & 1) + (c & 1) + 3 * (((ch >> 1) & 1) + ((c >> 1) & 1)) +
+                               9 * (((ch >> 2) & 1) + ((c >> 2) & 1));
+    }
+    std::vector<int> cut;
+    for (int l = nmin; l < nmax; l++) {
+      const int h = nref >> (l + 1);
+      cut.clear();
+      for (int n = 0; n < tree[l].size(); n++) {
+        const auto &reg = tree[l][n].reg;
+        for (int c = 1; c < nc; c++) {
+          if (reg[c] != reg[0]) {
+            cut.push_back(n);
+            break;
+          }
+        }
+      }
+      if (cut.size() == 0) break;
+
+      start(new_offsets.size() * cut.size());
+      for (auto n : cut) {
+        const auto &s = tree[l][n];
+        for (const auto &o : new_offsets)
+          point(s, h, o[0], o[1], o[2]);
+      }
+      sample();
+
+      tree[l + 1].reserve(nc * cut.size());
+      int m = 0;
+      std::array<int, 27> lattice;
+      for (auto n : cut) {
+        auto &s = tree[l][n];
+        for (int q = 0; q < nl; q++)
+          lattice[q] = (lattice_corner[q] < 0 ? reg[m++] : s.reg[lattice_corner[q]]);
+        split(s, l, [&](const int ch, SubCell &child) {
+          for (int c = 0; c < nc; c++)
+            child.reg[c] = lattice[child_lattice[ch][c]];
+        });
+      }
+    }
+
+    // bounds of the subcell s at level l
+    auto bounds = [&](const SubCell &s, const int l, std::array<Real, 3> &lo,
+                      std::array<Real, 3> &hi) {
+      const int h = nref >> l;
+      const int p[3] = {s.i, s.j, s.k};
+      for (int d = 0; d < 3; d++) {
+        lo[d] = xlo[d] + p[d] * dx[d];
+        hi[d] = (d < ndim ? xlo[d] + (p[d] + h) * dx[d] : lo[d]);
+      }
+    };
+
+    // accumulate the moments of each region over the leaves under subcell s at level l,
+    // depth first
+    auto integrate = [&](auto &self, const SubCell &s, const int l) -> void {
+      if (s.child < 0) {
+        std::array<Real, 3> lo, hi;
+        bounds(s, l, lo, hi);
+        auto moments = get_subcell_moments(lo, hi, ndim);
+        Real wgt = 1.0 / (1 << ndim);
+        // add each corner's share in turn, holding the sums in registers over runs of
+        // corners in the same region
+        for (int c = 0; c < nc;) {
+          const int r = s.reg[c];
+          std::array<Real, 4> v = vol_moments[r];
+          for (; c < nc && s.reg[c] == r; c++) {
+            for (int m = 0; m < 4; m++)
+              v[m] += wgt * moments[m];
+          }
+          vol_moments[r] = v;
+        }
+      } else {
+        for (int c = 0; c < nc; c++)
+          self(self, tree[l + 1][s.child + c], l + 1);
+      }
+    };
 
     xs.resize(1);
-    for (auto &c : dirty_cell) {
-
-      auto [kfine, jfine, ifine] = c.cell;
-      int k = kfine / nref;
-      int j = jfine / nref;
-      int i = ifine / nref;
+    for (auto &c : tree[0]) {
+      int k = c.k / nref;
+      int j = c.j / nref;
+      int i = c.i / nref;
 
       for (int r = 0; r < regions.size(); r++) {
         vol_moments[r][0] = 0.0;
@@ -1130,11 +1192,21 @@ class BlockInitData {
         vol_moments[r][2] = 0.0;
         vol_moments[r][3] = 0.0;
       }
-      c.integrate(pid_to_reg, id_to_xyz, vol_moments);
+      integrate(integrate, c, 0);
+      // now normalize by volume
+      {
+        std::array<Real, 3> lo, hi;
+        bounds(c, 0, lo, hi);
+        auto moments = get_subcell_moments(lo, hi, ndim);
+        auto norm = 1.0 / moments[0];
+        for (int r = 0; r < vol_moments.size(); r++) {
+          for (int m = 0; m < 4; m++)
+            vol_moments[r][m] *= norm;
+        }
+      }
 
       for (int r = 0; r < regions.size(); r++) {
         if (vol_moments[r][0] == 0.0) continue; // region does not overlap cell
-        dirty_map[std::make_tuple(k, j, i)][r] = vol_moments[r][0];
         xs(0, 0) = vol_moments[r][1];
         xs(0, 1) = vol_moments[r][2];
         xs(0, 2) = vol_moments[r][3];
@@ -1276,7 +1348,6 @@ class BlockInitData {
         pmb->DeallocateSparse(rho_mat_name);
       }
     }
-    return dirty_map;
   }
 };
 

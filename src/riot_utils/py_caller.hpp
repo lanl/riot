@@ -15,6 +15,7 @@
 // This file was made in part with generative AI.
 
 #include <Python.h>
+#include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <ios>
@@ -700,6 +701,40 @@ struct FromPy<std::vector<bool>> {
     }
     Py_ssize_t n = PySequence_Size(o);
     if (n < 0) throw PyException(fetch_python_error());
+    out.reserve(static_cast<size_t>(n));
+    for (Py_ssize_t i = 0; i < n; ++i) {
+      PyPtr item(PySequence_GetItem(o, i));
+      if (!item) throw PyException(fetch_python_error());
+      out.push_back(FromPy<bool>::convert(item.get()));
+    }
+    return out;
+  }
+};
+
+// buffers / sequences -> std::vector<std::uint8_t>, one per byte for buffers like
+// std::vector<bool> but copied at once, normalized to 0 or 1
+template <>
+struct FromPy<std::vector<std::uint8_t>> {
+  static std::vector<std::uint8_t> convert(PyObject *o) {
+    if (PyObject_CheckBuffer(o)) {
+      Py_buffer view;
+      if (PyObject_GetBuffer(o, &view, PyBUF_CONTIG_RO) == 0) {
+        const unsigned char *p = static_cast<const unsigned char *>(view.buf);
+        std::vector<std::uint8_t> out(p, p + view.len);
+        PyBuffer_Release(&view);
+        for (auto &b : out)
+          b = (b != 0);
+        return out;
+      }
+      PyErr_Clear();
+    }
+
+    if (!PySequence_Check(o)) {
+      throw PyException("Expected a NumPy array or a sequence for vector<uint8_t>");
+    }
+    Py_ssize_t n = PySequence_Size(o);
+    if (n < 0) throw PyException(fetch_python_error());
+    std::vector<std::uint8_t> out;
     out.reserve(static_cast<size_t>(n));
     for (Py_ssize_t i = 0; i < n; ++i) {
       PyPtr item(PySequence_GetItem(o, i));
