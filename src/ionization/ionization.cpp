@@ -1996,7 +1996,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
         auto tion = RiotLoop::make_var_view(idx_range, v, ccbulk::temperature());
         auto tele = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_temperature());
-        auto pres = RiotLoop::make_var_view(idx_range, v, ccbulk::pressure());
         auto presm = RiotLoop::make_var_view(idx_range, v, cm::pressure());
         auto prese = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_pressure());
         auto knudsen_number =
@@ -2169,7 +2168,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real max_kn_face = 0.0;
               Real D_est = 0.0;
               Real mfp_max = 0.0;
-              Real vth_max = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
                 const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + tiny);
@@ -2212,7 +2210,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 D_est = std::max(D_est, unit_system::kb * TiF * species.mass_inv[s] /
                                             (nu_total[a] + tiny));
                 mfp_max = std::max(mfp_max, mfp);
-                vth_max = std::max(vth_max, vth);
 
                 // non-dimensional gradient of mole fraction
                 const Real invLY = fabs(gradYC) / (YCF + tiny);
@@ -2254,8 +2251,6 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             } // Stefan-Maxwell branch (i.e. not constant diffusion coefficient)
 
             std::array<Real, MAX_MATERIALS> Jmat{};
-            for (int m = 0; m < nmat; ++m)
-              Jmat[m] = 0.0;
 
             const int nflux = constant_diffusion ? nspecies : nactive;
             for (int a = 0; a < nflux; ++a) {
@@ -2325,6 +2320,387 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
   ionization_pkg->UpdateParam<Real>("max_diffusion_rate", max_diffusion_rate);
 }
 
+// This version performs Stefan-Maxwell solves at cell centers. Each cell writes
+// its species fluxes into per-point scratch in master-species order; face fluxes
+// are then the arithmetic mean of their two neighboring cell fluxes.
+void ComputePlasmaDiffusionFluxesStefanMaxwellCC(MeshData<Real> *md) {
+  using unit_system = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
+  using parthenon::batched_linear_algebra::matrix_wrapper_t;
+  using parthenon::batched_linear_algebra::QRDecomposition;
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  namespace cm = cell_variables::material_averaged;
+
+  auto pm = md->GetParentPointer();
+  auto &ionization_pkg = pm->packages.Get("ionization");
+  auto &ionization_params = ionization_pkg->AllParams();
+  auto &materials = pm->packages.Get("materials");
+  const auto num_iso_per_mat =
+      materials->Param<parthenon::ParArray1D<int>>("num_iso_per_mat");
+  const auto &ion_eos = materials->Param<RiotEOS::EOS_Array_t>("d.d.EOS");
+  const auto &eos_from_matid =
+      materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
+  const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  const Real zbar_floor = ionization_params.Get<Real>("zbar_floor");
+  const Real ion_number_density_floor =
+      ionization_params.Get<Real>("ion_number_density_floor");
+  const Real diffusion_coefficient =
+      ionization_params.Get<Real>("ion_diffusion_coefficient");
+  const auto diffusion_model = PlasmaDiffusionEnumFromString(
+      ionization_params.Get<std::string>("ion_diffusion_model"));
+  const bool constant_diffusion = (diffusion_model == PlasmaDiffusionModel::Constant);
+
+  std::set<parthenon::PDOpt> opts = {parthenon::PDOpt::WithFluxes};
+  auto v = riot::MakePack<
+      ccmat::rho, ccmat::iso, ccmat::volume_fraction, ccmat::internal_energy,
+      cm::pressure, ccbulk::electron_pressure, ccmat::electron_internal_energy,
+      ccbulk::electron_internal_energy, ccbulk::temperature,
+      ccbulk::total_material_energy, ccbulk::electron_temperature,
+      ccbulk::electron_number_density, ccbulk::knudsen_number,
+      cm::ionization_zbar, cm::iso_ionization_zbar>(
+      md, std::vector<int>{}, opts);
+
+  const int nblocks = v.GetNBlocks();
+  const int ndim = pm->ndim;
+  if (nblocks == 0) return;
+
+  using TE = parthenon::TopologicalElement;
+  using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+
+  // The face interpolation needs cell fluxes on either side of the face, and
+  // each cell-centered limited gradient needs one cell on either side of that
+  // cell. This therefore needs one more stencil layer than the old face solve.
+  const int nhalo = 2;
+  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, TE::NN);
+  const auto di = idx_space.GetDelta(X1DIR);
+  const auto dj = idx_space.GetDelta(X2DIR);
+  const auto dk = idx_space.GetDelta(X3DIR);
+
+  constexpr int MAX_DIFFUSION_SPECIES = 5 * MAX_MATERIALS;
+  constexpr int MAX_CELL_FLUX_COMPONENTS = 3 * MAX_DIFFUSION_SPECIES;
+  constexpr Real tiny = 1e-30;
+  constexpr Real mass_fraction_floor = 1e-300;
+  constexpr Real diagnostic_Y_floor = 1e-6;
+
+  // Slots are [direction][master species]. Inactive species are explicitly
+  // written as zero, so neighboring cells may have different active sets.
+  AddPerPointScratch<Real>(idx_space, MAX_CELL_FLUX_COMPONENTS);
+
+  // Pull isotope information.
+  const auto &iso_zaids = materials->Param<std::vector<std::vector<int>>>("Isotope Zaids");
+  int total_niso = 0;
+  for (const auto &mat_zaids : iso_zaids) total_niso += mat_zaids.size();
+
+  // TODO: initialize isotope A/Z through a device-safe host-mirror copy.
+  parthenon::ParArray1D<Real> iso_A("isotope A", total_niso);
+  parthenon::ParArray1D<Real> iso_Z("isotope Z", total_niso);
+  int iso_idx = 0;
+  for (int m = 0; m < iso_zaids.size(); ++m) {
+    for (int iso = 0; iso < iso_zaids[m].size(); ++iso) {
+      iso_A(iso_idx) = iso_zaids[m][iso] % 1000;
+      iso_Z(iso_idx) = iso_zaids[m][iso] / 1000;
+      ++iso_idx;
+    }
+  }
+
+  std::array<int, 4> deltas{0, di, dj, dk};
+  const Real max_diffusion_rate = RiotLoop::outer_reduce(
+      idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        const int nmat = v.GetSize(b, ccmat::rho());
+
+        std::array<int, MAX_MATERIALS> eos_map;
+        RiotEOS::FillEosMap<ccmat::rho>(v, b, nmat, eos_from_matid, nphase, eos_map);
+
+        std::array<int, MAX_MATERIALS> material_ids{};
+        for (int m = 0; m < nmat; ++m) {
+          material_ids[m] = v(b, ccmat::rho(m)).sparse_id;
+        }
+
+        PlasmaDiffusionSpeciesList<MAX_DIFFUSION_SPECIES> species{};
+        BuildPlasmaDiffusionSpeciesList<MAX_DIFFUSION_SPECIES, MAX_MATERIALS>(
+            nmat, material_ids, num_iso_per_mat, ion_eos, eos_map, iso_A, iso_Z, species);
+        const int nspecies = species.count;
+
+        auto ne = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
+        auto Ti = RiotLoop::make_var_view(idx_range, v, ccbulk::temperature());
+        auto Te = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_temperature());
+        auto Pm = RiotLoop::make_var_view(idx_range, v, cm::pressure());
+        auto Pe = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_pressure());
+        auto knudsen_number =
+            RiotLoop::make_var_view(idx_range, v, ccbulk::knudsen_number());
+        auto cell_species_flux =
+            RiotLoop::GetPerPointScratch<Real, MAX_CELL_FLUX_COMPONENTS>(idx_range);
+
+        // Phase 1: cell-centered transport solves and cell-centered timestep estimate.
+        RiotLoop::inner_reduce(idx_range, [&](const auto kji, Real &max_rate) {
+          const auto [k, j, i] = idx_range.GetKJI(kji);
+          Real cell_rate = 0.0;
+          Real cell_kn_max = 0.0;
+
+          for (int DIR = X1DIR; DIR < X1DIR + ndim; ++DIR) {
+            const auto dl = deltas[DIR];
+            const auto left = kji - dl;
+            const auto right = kji + dl;
+            const Real dx = coords.Dxc(DIR, k, j, i);
+            const Real dxinv = 1.0 / (dx + tiny);
+            const int flux_offset = (DIR - X1DIR) * MAX_DIFFUSION_SPECIES;
+
+            // Master-species slots are always initialized. This lets a face
+            // interpolate fluxes from cells with different charged subsets.
+            for (int s = 0; s < nspecies; ++s) {
+              cell_species_flux(flux_offset + s, kji) = 0.0;
+            }
+
+            // Per-species mass and number density at the left, center, and
+            // right cells surrounding this cell-centered solve.
+            std::array<Real, MAX_DIFFUSION_SPECIES> rhoL{}, rhoC{}, rhoR{}, nC{};
+            Real rhoTotC = 0.0;
+            for (int s = 0; s < nspecies; ++s) {
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
+              auto rho = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+              if (iso >= 0) rho = RiotLoop::make_var_view(idx_range, v, ccmat::iso(iso));
+
+              rhoL[s] = std::max(rho(left), 0.0);
+              rhoC[s] = std::max(rho(kji), 0.0);
+              rhoR[s] = std::max(rho(right), 0.0);
+              nC[s] = rhoC[s] * species.mass_inv[s];
+              rhoTotC += rhoC[s];
+            }
+
+            int nactive = 0;
+            std::array<int, MAX_DIFFUSION_SPECIES> active_species{};
+
+            if (constant_diffusion) {
+              // Cell-centered Fickian flux using a limited finite-volume slope.
+              for (int s = 0; s < nspecies; ++s) {
+                const Real grad_rho = RiotReconstruction::minmod(
+                    (rhoC[s] - rhoL[s]) * dxinv, (rhoR[s] - rhoC[s]) * dxinv);
+                cell_species_flux(flux_offset + s, kji) =
+                    -diffusion_coefficient * grad_rho;
+              }
+              if (nspecies > 0) {
+                cell_rate += diffusion_coefficient / (dx * dx + tiny);
+              }
+              continue;
+            }
+
+            // Local charged subset and its charge states. The collision matrix
+            // and RHS are evaluated entirely from this cell's state.
+            std::array<Real, MAX_DIFFUSION_SPECIES> zbarC{};
+            for (int s = 0; s < nspecies; ++s) {
+              if (rhoC[s] <= rhoTotC * mass_fraction_floor) continue;
+
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
+              auto zbar = RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
+              if (iso >= 0) {
+                zbar = RiotLoop::make_var_view(idx_range, v, cm::iso_ionization_zbar(iso));
+              }
+
+              zbarC[s] = std::max(0.0, std::min(zbar(kji), species.nuclear_charge[s]));
+              if (zbarC[s] > zbar_floor) active_species[nactive++] = s;
+            }
+
+            if (nactive <= 1) continue;
+
+            // Charged-ion subsystem state at the three cells used for slopes.
+            Real rhoCL = 0.0, rhoCC = 0.0, rhoCR = 0.0;
+            Real nCL = 0.0, nCC = 0.0, nCR = 0.0;
+            for (int a = 0; a < nactive; ++a) {
+              const int s = active_species[a];
+              rhoCL += rhoL[s];
+              rhoCC += rhoC[s];
+              rhoCR += rhoR[s];
+              nCL += rhoL[s] * species.mass_inv[s];
+              nCC += rhoC[s] * species.mass_inv[s];
+              nCR += rhoR[s] * species.mass_inv[s];
+            }
+
+            const Real gradnC = RiotReconstruction::minmod(
+                (nCC - nCL) * dxinv, (nCR - nCC) * dxinv);
+            const Real invLn = fabs(gradnC) / (nCC + tiny);
+
+            // Ideal charged-ion-subsystem pressure. This is the sum of the
+            // active isotope partial pressures, not a material EOS pressure.
+            const Real PCL = nCL * unit_system::kb * Ti(left);
+            const Real PCC = nCC * unit_system::kb * Ti(kji);
+            const Real PCR = nCR * unit_system::kb * Ti(right);
+            const Real gradPC = RiotReconstruction::minmod(
+                (PCC - PCL) * dxinv, (PCR - PCC) * dxinv);
+
+            const Real gradPe = RiotReconstruction::minmod(
+                (Pe(kji) - Pe(left)) * dxinv, (Pe(right) - Pe(kji)) * dxinv);
+            const Real gradTi = RiotReconstruction::minmod(
+                (Ti(kji) - Ti(left)) * dxinv, (Ti(right) - Ti(kji)) * dxinv);
+            const Real gradTe = RiotReconstruction::minmod(
+                (Te(kji) - Te(left)) * dxinv, (Te(right) - Te(kji)) * dxinv);
+            const Real invLTi = fabs(gradTi) / (Ti(kji) + tiny);
+
+            // Electron quantities are total electron-fluid fields; they are not
+            // restricted to the active charged-ion subset.
+            const Real NeC = ne(kji);
+            const Real TiC = Ti(kji);
+            const Real TeC = Te(kji);
+
+            Real nChargeC = 0.0, nZ2C = 0.0, sumZ2OverM = 0.0;
+            for (int a = 0; a < nactive; ++a) {
+              const int s = active_species[a];
+              const Real Zs = zbarC[s];
+              nChargeC += nC[s] * Zs;
+              nZ2C += nC[s] * Zs * Zs;
+              sumZ2OverM += nC[s] * Zs * Zs;
+            }
+            const Real Zeff = nZ2C / (nChargeC + tiny);
+            sumZ2OverM /= (rhoCC + tiny);
+            const Real invZeff = 1.0 / (Zeff + tiny);
+            const Real Be = (0.47 + 0.94 * invZeff) /
+                            (0.31 + 1.20 * invZeff + 0.41 * invZeff * invZeff);
+            const Real thermal_coeff = Be * invZeff;
+
+            std::array<Real, MAX_DIFFUSION_SPECIES * MAX_DIFFUSION_SPECIES> M_data{},
+                Q_data{};
+            std::array<double,
+                       QRDecomposition::double_scratch_size(MAX_DIFFUSION_SPECIES)>
+                qr_scratch{};
+            matrix_wrapper_t<Real> M(M_data.data(), nactive, nactive);
+            matrix_wrapper_t<Real> Q(Q_data.data(), nactive, nactive);
+            std::array<Real, MAX_DIFFUSION_SPECIES> nu_total{}, rhs{}, mass_flux{};
+
+            AssembleStefanMaxwellCollisionMatrix<MAX_DIFFUSION_SPECIES>(
+                species, nactive, active_species, nC, zbarC, TiC, TeC, NeC,
+                zbar_floor, ion_number_density_floor, M, nu_total);
+
+            // Build the cell-centered RHS using limited finite-volume slopes.
+            Real max_kn_cell = 0.0;
+            Real D_est = 0.0;
+            Real mfp_max = 0.0;
+            for (int a = 0; a < nactive; ++a) {
+              const int s = active_species[a];
+              const Real YL = rhoL[s] * species.mass_inv[s] / (nCL + tiny);
+              const Real YC = rhoC[s] * species.mass_inv[s] / (nCC + tiny);
+              const Real YR = rhoR[s] * species.mass_inv[s] / (nCR + tiny);
+              const Real XC = rhoC[s] / (rhoCC + tiny);
+              const Real gradY = RiotReconstruction::minmod(
+                  (YC - YL) * dxinv, (YR - YC) * dxinv);
+
+              rhs[a] = -(PCC * gradY);                         // composition
+              rhs[a] -= (YC - XC) * gradPC;                    // barodiffusion
+
+              const Real charge_fraction =
+                  nC[s] * zbarC[s] / (nChargeC + tiny);
+              rhs[a] -= (charge_fraction - XC) * gradPe;      // ambipolar
+
+              rhs[a] -= XC * rhoCC * unit_system::kb *
+                        (zbarC[s] * zbarC[s] * species.mass_inv[s] - sumZ2OverM) *
+                        thermal_coeff * gradTe;                // electron thermodiffusion
+
+              const Real vth = sqrt(unit_system::kb * TiC * species.mass_inv[s]);
+              const Real mfp = vth / (nu_total[a] + tiny);
+              const Real D_s = unit_system::kb * TiC * species.mass_inv[s] /
+                               (nu_total[a] + tiny);
+              D_est = std::max(D_est, D_s);
+              mfp_max = std::max(mfp_max, mfp);
+
+              const Real invLY = fabs(gradY) / (YC + tiny);
+              const Real kn_bulk = mfp * std::max(invLTi, invLn);
+              const Real kn_comp = mfp * invLY;
+              const Real kn = (YC > diagnostic_Y_floor) ? std::max(kn_bulk, kn_comp)
+                                                         : kn_bulk;
+              max_kn_cell = std::max(max_kn_cell, kn);
+            }
+            cell_kn_max = std::max(cell_kn_max, max_kn_cell);
+
+            const int constraint_row =
+                ImposeBarycentricFluxConstraint<MAX_DIFFUSION_SPECIES>(M, rhs, nactive);
+            rhs[constraint_row] = 0.0;
+            if (QRDecomposition::execute(&M, &Q, qr_scratch.data()) != 0) {
+              PARTHENON_FAIL("Failed to factor plasma diffusion system");
+            }
+            if (QRDecomposition::solve(M, Q, rhs, mass_flux) != 0) {
+              PARTHENON_FAIL("Failed to solve plasma diffusion system");
+            }
+
+            const Real Kn_cell = mfp_max * dxinv;
+            const Real transport_factor =
+                LimitFluxByCellKnudsenNumber(nactive, Kn_cell, mass_flux);
+            const Real D_eff = transport_factor * D_est;
+            cell_rate += D_eff / (dx * dx + tiny);
+
+            // Scatter the compressed active solution into master-species slots.
+            for (int a = 0; a < nactive; ++a) {
+              const int s = active_species[a];
+              cell_species_flux(flux_offset + s, kji) = mass_flux[a];
+            }
+          } // DIR
+
+          knudsen_number(kji) = cell_kn_max;
+          max_rate = std::max(max_rate, cell_rate);
+        }); // Phase 1 inner_reduce
+
+        // All cell-centered fluxes are now available before face interpolation.
+        idx_range.TeamBarrier();
+
+        // Phase 2: interpolate master-species fluxes to faces and scatter.
+        RiotLoop::inner(idx_range, [&](const auto kji) {
+          for (int DIR = X1DIR; DIR < X1DIR + ndim; ++DIR) {
+            const auto dl = deltas[DIR];
+            const auto left = kji - dl;
+            const auto right = kji;
+            const int flux_offset = (DIR - X1DIR) * MAX_DIFFUSION_SPECIES;
+
+            std::array<Real, MAX_MATERIALS> Jmat{};
+            for (int s = 0; s < nspecies; ++s) {
+              const Real J = 0.5 * (cell_species_flux(flux_offset + s, left) +
+                                    cell_species_flux(flux_offset + s, right));
+              const int m = species.material[s];
+              const int iso = species.isotope[s];
+              Jmat[m] += J;
+
+              if (iso >= 0) {
+                auto flx_iso =
+                    RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::iso(iso));
+                flx_iso(kji) += J;
+              }
+              auto flx_rhom =
+                  RiotLoop::make_flux_view(idx_range, v, DIR, ccmat::rho(m));
+              flx_rhom(kji) += J;
+            }
+
+            auto flx_E = RiotLoop::make_flux_view(
+                idx_range, v, DIR, ccbulk::total_material_energy());
+            auto flx_Ee = RiotLoop::make_flux_view(
+                idx_range, v, DIR, ccbulk::electron_internal_energy());
+
+            for (int m = 0; m < nmat; ++m) {
+              auto Em = RiotLoop::make_var_view(
+                  idx_range, v, ccmat::internal_energy(m));
+              auto Ee = RiotLoop::make_var_view(
+                  idx_range, v, ccmat::electron_internal_energy(m));
+              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
+              auto fv = RiotLoop::make_var_view(
+                  idx_range, v, ccmat::volume_fraction(m));
+
+              // Density-weighted reconstruction prevents a nearly absent material
+              // on one side from amplifying its specific enthalpy or electron energy.
+              const Real rho_sum = rhom(left) + rhom(right);
+              const Real h_face =
+                  (Em(left) + fv(left) * Pm(left) + Em(right) + fv(right) * Pm(right)) /
+                  (rho_sum + tiny);
+              const Real ee_face = (Ee(left) + Ee(right)) / (rho_sum + tiny);
+
+              flx_E(kji) += Jmat[m] * h_face;
+              flx_Ee(kji) += Jmat[m] * ee_face;
+            }
+          } // DIR
+        }); // Phase 2 inner
+      });   // outer_reduce
+
+  ionization_pkg->UpdateParam<Real>("max_diffusion_rate", max_diffusion_rate);
+}
+
+
 // Compute fluxes to density, momentum and energy from plasma diffusion
 TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
   auto pm = md->GetParentPointer();
@@ -2334,6 +2710,7 @@ TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md) {
 
   if (!plasma_diffusion) return TaskStatus::complete;
 
+  // ComputePlasmaDiffusionFluxesStefanMaxwellSam(md);
   ComputePlasmaDiffusionFluxesStefanMaxwellSam(md);
 
   return TaskStatus::complete;

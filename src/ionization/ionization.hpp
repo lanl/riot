@@ -403,7 +403,7 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md);
 TaskStatus ComputePlasmaDiffusionFluxes(MeshData<Real> *md);
 void ComputePlasmaDiffusionFluxesConstantCoefficient(MeshData<Real> *md);
 void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md);
-void ComputePlasmaDiffusionFluxesStefanMaxwell(MeshData<Real> *md);
+void ComputePlasmaDiffusionFluxesStefanMaxwellCC(MeshData<Real> *md);
 void FillDerivedIonization(MeshData<Real> *md);
 void CalculatePlasmaViscosity(MeshData<Real> *md);
 
