@@ -2012,7 +2012,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
           for (int DIR = X1DIR; DIR < X1DIR + ndim; ++DIR) {
             const auto dl = deltas[DIR];
             const Real dx = coords.Dxc(DIR, k, j, i);
-            const Real dxinv = 1.0 / (dx + tiny;
+            const Real dxinv = 1.0 / (dx + tiny);
 
             // Compact list of species active at this face.
             // species mass densities L/R and face, number densities (face),
@@ -2044,7 +2044,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 mass_flux[s] = -diffusion_coefficient * (rhoR[s] - rhoL[s]) * dxinv;
               }
               if (nspecies > 0) {
-                cell_rate += diffusion_coefficient / (dx * dx + tiny;
+                cell_rate += diffusion_coefficient / (dx * dx + tiny);
               }
             } else {
 
@@ -2091,7 +2091,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // gradient and inverse local face-centered gradient scale length
               const Real nCF = 0.5 * (nCL + nCR);
               const Real gradnC = (nCR - nCL) * dxinv;
-              const Real invLn = fabs(gradnC) / (nCF + tiny;
+              const Real invLn = fabs(gradnC) / (nCF + tiny);
 
               // total charged subsystem pressure face value, gradient, inverse scale
               // length
@@ -2115,7 +2115,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               // length
               const Real TiF = 0.5 * (tion(kji - dl) + tion(kji));
               const Real gradTi = (tion(kji) - tion(kji - dl)) * dxinv;
-              const Real invLTi = fabs(gradTi) / (TiF + tiny;
+              const Real invLTi = fabs(gradTi) / (TiF + tiny);
 
               // electron temperature face value, face-centered gradient
               const Real TeF = 0.5 * (tele(kji - dl) + tele(kji));
@@ -2139,10 +2139,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 nZ2F += nF[s] * Zs * Zs;
                 sumZ2OverM += rhoF[s] * Zs * Zs * species.mass_inv[s];
               }
-              const Real Zeff = nZ2F / (nChargeF + tiny;
-              sumZ2OverM /= (rhoCF + tiny;
+              const Real Zeff = nZ2F / (nChargeF + tiny);
+              sumZ2OverM /= (rhoCF + tiny);
 
-              const Real invZeff = 1.0 / (Zeff + tiny;
+              const Real invZeff = 1.0 / (Zeff + tiny);
               const Real Be = (0.47 + 0.94 * invZeff) /
                               (0.31 + 1.20 * invZeff + 0.41 * invZeff * invZeff);
               const Real thermal_coeff = Be * invZeff;
@@ -2172,10 +2172,10 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
               Real vth_max = 0.0;
               for (int a = 0; a < nactive; ++a) {
                 const int s = active_species[a];
-                const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + tiny;
-                const Real YCR = rhoR[s] * species.mass_inv[s] / (nCR + tiny;
-                const Real XCL = rhoL[s] / (rhoCL + tiny;
-                const Real XCR = rhoR[s] / (rhoCR + tiny;
+                const Real YCL = rhoL[s] * species.mass_inv[s] / (nCL + tiny);
+                const Real YCR = rhoR[s] * species.mass_inv[s] / (nCR + tiny);
+                const Real XCL = rhoL[s] / (rhoCL + tiny);
+                const Real XCR = rhoR[s] / (rhoCR + tiny);
                 const Real gradYC = (YCR - YCL) * dxinv;
                 const Real YCF = 0.5 * (YCL + YCR);
                 const Real XCF = 0.5 * (XCL + XCR);
@@ -2187,7 +2187,7 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
                 // add electron ambipolar diffusion thermodynamic driving force
                 // ("electrodiffusion")
                 const Real nsF = rhoF[s] * species.mass_inv[s];
-                const Real charge_fraction = nsF * species_zbarF[s] / (nChargeF + tiny;
+                const Real charge_fraction = nsF * species_zbarF[s] / (nChargeF + tiny);
                 rhs[a] -= (charge_fraction - XCF) * gradPe;
 
                 // Electron thermodiffusion driving force.
