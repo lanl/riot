@@ -2288,100 +2288,26 @@ void ComputePlasmaDiffusionFluxesStefanMaxwellSam(MeshData<Real> *md) {
             auto flx_Ee = RiotLoop::make_flux_view(idx_range, v, DIR,
                                                    ccbulk::electron_internal_energy());
 
-            constexpr Real rho_floor = 1e-20;
-
             const auto left = kji - dl;
             const auto right = kji;
-
-            // Choose a thermodynamically well-resolved material as the enthalpy
-            // reference.  Its flux need not be nonzero.
-            int mref = -1;
-            Real ref_rho_min = -1.0;
-
-            for (int m = 0; m < nmat; ++m) {
-              auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-
-              // Require the material to be resolved on both sides, since the
-              // donor side depends on the sign of Jmat[m].
-              const Real rhoL = rhom(left);
-              const Real rhoR = rhom(right);
-              const Real rho_min = (rhoL < rhoR) ? rhoL : rhoR;
-
-              if (rho_min > ref_rho_min) {
-                ref_rho_min = rho_min;
-                mref = m;
-              }
-            }
-
-            Real FE_direct = 0.0;
-            Real Jsum_energy = 0.0;
-            Real href = 0.0;
-            bool have_href = false;
-
-            const Real FE_before = flx_E(kji); // hydro flux already present here
-
-            Real FE_diff_internal = 0.0;
-            Real FE_diff_pressure = 0.0;
-            Real FEe_diff = 0.0;
 
             for (int m = 0; m < nmat; ++m) {
               auto Em = RiotLoop::make_var_view(idx_range, v, ccmat::internal_energy(m));
               auto Ee = RiotLoop::make_var_view(idx_range, v,
                                                 ccmat::electron_internal_energy(m));
-              auto sie_e = RiotLoop::make_var_view(idx_range, v, cm::electron_sie(m));
               auto rhom = RiotLoop::make_var_view(idx_range, v, ccmat::rho(m));
-              auto rhocm = RiotLoop::make_var_view(idx_range, v, cm::rho(m));
               auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
 
-              const auto upwind = (Jmat[m] >= 0.0) ? left : right;
-              const Real rho = rhom(upwind);
+              const Real rho_sum = rhom(left) + rhom(right);
 
-              // Preserve your present vacuum treatment. If this branch is ever
-              // taken with appreciable Jmat[m], that is separately diagnostic.
-              // if (rho <= rho_floor) continue;
-
-              const Real ee_up = sie_e(upwind);
-              const Real eeL = sie_e(left);
-              const Real eeR = sie_e(right);
-
-              const Real pele_up = prese(upwind);
-              const Real pion_up = pres(upwind) - pele_up;
-
-              auto pv_m = RiotLoop::make_sparse_pack_view(idx_range, v, m);
-              RiotEOS::LambdaIndexerSingle pU(pv_m, upwind);
-              const int mat_id = v(b, ccmat::rho(m)).sparse_id;
-              auto &eose = electron_eos(eos_map[mat_id]);
-              const Real pe_m =
-                  eose.PressureFromDensityTemperature(rhocm(upwind), tele(upwind), pU);
-              const Real pi_m = presm(upwind) - pe_m;
-
-              const Real hL =
-                  Em(left) / (rhom(left) + tiny) + presm(left) / (rhocm(left) + tiny);
-              const Real hupwind = Em(upwind) / (rhom(upwind) + tiny) +
-                                   presm(upwind) / (rhocm(upwind) + tiny);
-              const Real hR =
-                  Em(right) / (rhom(right) + tiny) + presm(right) / (rhocm(right) + tiny);
-
-              const Real rhoL = rhom(left);
-              const Real rhoR = rhom(right);
-              const Real rho_sum = rhoL + rhoR;
-
-              if (rho_sum <= rho_floor) continue;
-
-              // This is [ (rho h)_L + (rho h)_R ] / (rho_L + rho_R).
-              // It equals 0.5*(hL+hR) when rhoL == rhoR, but is well behaved
-              // when one side contains essentially no material.
+              // [(rho h)_L + (rho h)_R] / (rho_L + rho_R)
               const Real h_face = (Em(left) + fv(left) * presm(left) + Em(right) +
                                    fv(right) * presm(right)) /
                                   (rho_sum + tiny);
 
-              // Likewise reconstruct electron specific energy from its conserved density.
+              // Conserved electron-energy reconstruction.
               const Real ee_face = (Ee(left) + Ee(right)) / (rho_sum + tiny);
 
-              // flx_E(kji) += Jmat[m] * hupwind;
-              // flx_Ee(kji) += Jmat[m] * ee_up;
-              // flx_E(kji) += Jmat[m] * 0.5 * (hL + hR);
-              // flx_Ee(kji) += Jmat[m] * 0.5 * (eeL + eeR);
               flx_E(kji) += Jmat[m] * h_face;
               flx_Ee(kji) += Jmat[m] * ee_face;
             }
