@@ -267,7 +267,9 @@ class ParticlePusher {
     }
     auto vmag1 = lp.vmag();
     auto speed = 0.5 * (vmag0 + vmag1);
-    Real path = 0.5 * h * speed;
+    // speed is already the mean of the end speeds, so the path is h * speed. The extra 0.5 that was here halved
+    // the optical depth tau = kappa * path (and the laser_energy_density diagnostic).
+    Real path = h * speed;
 
     // finish it off
     path += rk1(lp, accel, vmag1);
