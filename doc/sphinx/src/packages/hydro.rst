@@ -243,6 +243,10 @@ All parameters below reside in the ``<hydro>`` block unless otherwise noted.
      - bool
      - ``false``
      - Record total kinetic energy in the history file.
+   * - faces_only_comms
+     - bool
+     - ``false``
+     - Only exchange face ghost zones in the hydro boundary exchange (Parthenon ``BoundaryType::faces_only_recv``); edge and corner ghost zones are left stale until the next full exchange (e.g. after remeshing). Incompatible with THINC, the ``chllc``/``lhllc`` Riemann solvers, and plasma viscosity, which read edge and corner ghosts. Material interface refinement, tracers, and lasers without electron-ion coupling also read them, so a warning is printed.
 
 Whether the hydro solver runs at all, and which extra terms it
 evaluates, is governed by the package toggles in the ``<physics>``

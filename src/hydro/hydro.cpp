@@ -134,6 +134,26 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     PARTHENON_THROW("Invalid Riemann solver option");
   }
 
+  // Faces-only boundary communication of the hydro fields. Edge and corner ghost zones
+  // are left stale (they are refreshed by any full exchange, e.g. after remeshing), so
+  // this is only valid when the stencils reading ghost zones are face-only.
+  const bool faces_only_comms = pin->GetOrAddBoolean(
+      "hydro", "faces_only_comms", false,
+      "Only fill face ghost zones in the hydro boundary exchange; edge and corner ghost "
+      "zones are left stale");
+  if (faces_only_comms) {
+    PARTHENON_REQUIRE(!do_thinc, "hydro/faces_only_comms is incompatible with THINC, "
+                                 "which reads edge and corner ghost zones");
+    PARTHENON_REQUIRE(solver != "chllc" && solver != "lhllc",
+                      "hydro/faces_only_comms is incompatible with the chllc and lhllc "
+                      "Riemann solvers, which read edge and corner ghost zones");
+    if (adaptive && amr_int && parthenon::Globals::my_rank == 0) {
+      PARTHENON_WARN("hydro/faces_only_comms: material interface refinement reads stale "
+                     "edge and corner ghost zones");
+    }
+  }
+  params.Add("faces_only_comms", faces_only_comms);
+
   // Thornber's low-Mach correction
   bool lm_correction =
       pin->GetOrAddBoolean("hydro", "lm_correction", false,

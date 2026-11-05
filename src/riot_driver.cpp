@@ -112,6 +112,22 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   if (do_strength) strength_pkg = pm->packages.Get("strength").get();
   if (do_ionization) ion_pkg = pm->packages.Get("ionization").get();
 
+  // Faces-only boundary communication of the hydro fields
+  hydro_faces_only_comms = do_hydro && hydro_pkg->Param<bool>("faces_only_comms");
+  if (hydro_faces_only_comms) {
+    PARTHENON_REQUIRE(!(do_ionization && ion_pkg->Param<bool>("plasma_viscosity")),
+                      "hydro/faces_only_comms is incompatible with plasma viscosity, "
+                      "which reads edge and corner ghost zones");
+    if (parthenon::Globals::my_rank == 0) {
+      if (riot_pkg->Param<bool>("do_tracers"))
+        PARTHENON_WARN("hydro/faces_only_comms: tracer velocity interpolation may read "
+                       "stale edge and corner ghost zones");
+      if (do_lasers && !ion_pkg->Param<bool>("electron_ion_coupling"))
+        PARTHENON_WARN("hydro/faces_only_comms: laser deposition reads stale edge and "
+                       "corner ghost zones without electron_ion_coupling");
+    }
+  }
+
   // setup operator split tasks
   if (do_multigroup_diffusion) {
     if (do_ionization) {
@@ -225,7 +241,8 @@ TaskCollection RiotDriver::RiotStepTasks() {
   using namespace ::parthenon::Update;
   namespace mdname = container_names;
   TaskID none(0);
-  const auto any = parthenon::BoundaryType::any;
+  constexpr auto any = parthenon::BoundaryType::any;
+  constexpr auto faces_only = parthenon::BoundaryType::faces_only_recv;
   const int num_partitions = pmesh->DefaultNumPartitions();
 
   // first deep copy u1 <-- u0
@@ -254,7 +271,11 @@ TaskCollection RiotDriver::RiotStepTasks() {
 
       // start looking for incoming messages. These calls are not required but may
       // have an impact on MPI performance (TODO(LFR): Check if these change anything)
-      auto start_recv = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, mu0);
+      auto start_recv =
+          tl.AddTask(none,
+                     hydro_faces_only_comms ? parthenon::StartReceiveBoundBufs<faces_only>
+                                            : parthenon::StartReceiveBoundBufs<any>,
+                     mu0);
       auto start_flx_recv = tl.AddTask(none, parthenon::StartReceiveFluxCorrections, mu0);
 
       // compute hydro fluxes
@@ -417,8 +438,11 @@ TaskCollection RiotDriver::RiotStepTasks() {
                      PreCommFillDerived<MeshData<Real>>, mu0.get());
 
       // communicate boundaries
-      auto set_bc = parthenon::AddBoundaryExchangeTasks(int_derived | max_signal, tl, mu0,
-                                                        pmesh->multilevel);
+      auto set_bc = hydro_faces_only_comms
+                        ? parthenon::AddBoundaryExchangeTasks<faces_only>(
+                              int_derived | max_signal, tl, mu0, pmesh->multilevel)
+                        : parthenon::AddBoundaryExchangeTasks<any>(
+                              int_derived | max_signal, tl, mu0, pmesh->multilevel);
 
       // fill in thermodynamic state everywhere
       auto derive = tl.AddTask(set_bc, FillDerived<MeshData<Real>>, mu0.get());

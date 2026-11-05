@@ -55,7 +55,7 @@ class RiotDriver : public EvolutionDriver {
       *gravity_pkg, *strength_pkg, *ion_pkg, *laser_pkg;
   bool do_hydro, do_strength, do_mix, do_tn, do_levelsets, do_gravity,
       do_multigroup_diffusion, do_radiation_transport, do_ionization, do_lasers,
-      curvilinear;
+      curvilinear, hydro_faces_only_comms;
   bool fixed_fluid, kinematic_advection, use_general_pte, sparse_dealloc;
   riot_plugins::Plugins plugins;
 
