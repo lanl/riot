@@ -38,6 +38,31 @@ namespace pte_cell_order {
 using cell_order_view_t = Kokkos::View<std::int64_t *, parthenon::DevMemSpace>;
 
 //----------------------------------------------------------------------------------------
+//! \fn  pte_cell_order::GetCellOrderBuffer
+//! \brief Greedily cached device buffer for the cell order, resized only when the
+//! number of cells changes (i.e., after remeshing / load balancing). The buffer is
+//! overwritten on every call, so this assumes there is one pack per rank (pack_size =
+//! -1) and therefore at most one ApplyMixedCellClosure in flight at a time; kernels
+//! that read the previous order are ordered before the overwrite by the shared device
+//! execution space. The buffer is released in a Kokkos finalize hook, since a static
+//! View still holding memory would otherwise be destroyed after Kokkos::finalize.
+inline cell_order_view_t GetCellOrderBuffer(const std::int64_t total) {
+  static cell_order_view_t buffer;
+  static bool finalize_hook_registered = false;
+  if (!finalize_hook_registered) {
+    Kokkos::push_finalize_hook([]() { buffer = cell_order_view_t(); });
+    finalize_hook_registered = true;
+  }
+  if (static_cast<std::int64_t>(buffer.extent(0)) != total) {
+    // Drop the old allocation before making the new one to avoid holding both
+    buffer = cell_order_view_t();
+    buffer = cell_order_view_t(
+        Kokkos::view_alloc(Kokkos::WithoutInitializing, "pte_cell_order"), total);
+  }
+  return buffer;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  pte_cell_order::OrderCellsByMaterialCount
 //! \brief Build a boiv cell-order permutation (see IndexSpace::WithCellOrder) that visits
 //! cells in decreasing order of active material count -- the same activity test the PTE
@@ -55,8 +80,7 @@ cell_order_view_t OrderCellsByMaterialCount(const Pack &v, const IdxSpace &idx_s
   const auto lidx = idx_space.GetLogicalIndexer();
   const std::int64_t ncells = static_cast<std::int64_t>(lidx.size());
   const std::int64_t total = idx_space.GetNBlocks() * ncells;
-  cell_order_view_t key(Kokkos::view_alloc(Kokkos::WithoutInitializing, "pte_cell_order"),
-                        total);
+  cell_order_view_t key = GetCellOrderBuffer(total);
   auto policy = Kokkos::RangePolicy<parthenon::DevExecSpace>(0, total);
   Kokkos::parallel_for(
       "pte_cell_order_key", policy, KOKKOS_LAMBDA(const std::int64_t flat) {
