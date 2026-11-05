@@ -922,7 +922,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   bool pte_stats_avg_fields = false;
   bool pte_stats_reset_fields = false;
   std::string pte_stats_mode = "averaged_light";
+  bool sort_pte_cells = false;
   if (use_general_pte) {
+    sort_pte_cells = pin->GetOrAddBoolean(
+        "materials", "sort_pte_cells", false,
+        "On device (boiv loops), schedule the general PTE closure over cells sorted in "
+        "decreasing order of active material count, to group cells of similar cost into "
+        "the same warp. Costs one extra pass over material densities plus a sort.");
     track_pte_statistics =
         pin->GetOrAddBoolean("materials", "track_pte_statistics", false,
                              "Output diagnostic statistics on PTE solver successes, "
@@ -1004,6 +1010,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("pte_stats_mode", pte_stats_mode);
   params.Add("pte_stats_avg_fields", pte_stats_avg_fields);
   params.Add("pte_stats_reset_fields", pte_stats_reset_fields);
+  params.Add("sort_pte_cells", sort_pte_cells);
 
   return materials;
 }

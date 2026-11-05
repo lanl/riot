@@ -17,8 +17,11 @@
 #include <singularity-eos/closure/mixed_cell_models.hpp>
 #include <singularity-eos/eos/eos.hpp>
 
+#include <Kokkos_Sort.hpp>
+
 // Riot includes
 #include <array>
+#include <cstdint>
 
 #include "eos_riot.hpp"
 #include "ionization/ionization.hpp"
@@ -30,6 +33,51 @@
 using namespace parthenon::package::prelude;
 using namespace RiotEOS;
 using RiotLimits::MAX_MATERIALS;
+
+namespace pte_cell_order {
+using cell_order_view_t = Kokkos::View<std::int64_t *, parthenon::DevMemSpace>;
+
+//----------------------------------------------------------------------------------------
+//! \fn  pte_cell_order::OrderCellsByMaterialCount
+//! \brief Build a boiv cell-order permutation (see IndexSpace::WithCellOrder) that visits
+//! cells in decreasing order of active material count -- the same activity test the PTE
+//! body uses -- so cells of similar PTE cost share a warp and the most expensive cells
+//! launch first. Ties keep their original (spatial) order: the sort key is
+//! (MAX_MATERIALS - nmat_cell) * total + flat, which is unique, so any sort is
+//! effectively stable and memory access within a bucket stays near-contiguous.
+//! NOTE: Explicit return type because nvcc forbids extended lambdas in functions
+//! with deduced return types.
+template <class Pack, class IdxSpace>
+cell_order_view_t OrderCellsByMaterialCount(const Pack &v, const IdxSpace &idx_space,
+                                            const Real mfrac_thr) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  const auto lidx = idx_space.GetLogicalIndexer();
+  const std::int64_t ncells = static_cast<std::int64_t>(lidx.size());
+  const std::int64_t total = idx_space.GetNBlocks() * ncells;
+  cell_order_view_t key(Kokkos::view_alloc(Kokkos::WithoutInitializing, "pte_cell_order"),
+                        total);
+  auto policy = Kokkos::RangePolicy<parthenon::DevExecSpace>(0, total);
+  Kokkos::parallel_for(
+      "pte_cell_order_key", policy, KOKKOS_LAMBDA(const std::int64_t flat) {
+        // Same (b, local) decomposition as the boiv outer loop
+        const int b = static_cast<int>(flat / ncells);
+        const auto [k, j, i] = lidx(static_cast<int>(flat % ncells));
+        const int nmat = v.GetSize(b, ccmat::rho());
+        const Real thr = mfrac_thr * v(b, ccbulk::rho(), k, j, i);
+        int nmat_cell = 0;
+        for (int m = 0; m < nmat; m++) {
+          nmat_cell += (v(b, ccmat::rho(m), k, j, i) > thr);
+        }
+        key(flat) = static_cast<std::int64_t>(MAX_MATERIALS - nmat_cell) * total + flat;
+      });
+  Kokkos::sort(parthenon::DevExecSpace(), key);
+  Kokkos::parallel_for(
+      "pte_cell_order_decode", policy,
+      KOKKOS_LAMBDA(const std::int64_t n) { key(n) %= total; });
+  return key;
+}
+} // namespace pte_cell_order
 
 //----------------------------------------------------------------------------------------
 //! \fn  Closure::ApplyMixedCellClosure
@@ -66,6 +114,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
   const bool pte_stats_avg_fields = materials->Param<bool>("pte_stats_avg_fields");
   const bool pte_stats_reset_fields = materials->Param<bool>("pte_stats_reset_fields");
   pte_params.verbose = verbose;
+  const bool sort_pte_cells = materials->Param<bool>("sort_pte_cells");
 
   // Hydro params
   auto &hydro = pm->packages.Get("hydro");
@@ -91,6 +140,15 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
   using lt = RiotUtils::LoopType<LoopConstraint::NoGhost>;
   auto idx_space =
       lt::GetIndexSpace(domain, 0, nblocks, md, parthenon::TopologicalElement::CC);
+  // On device (boiv, one cell per thread), optionally visit cells in decreasing order of
+  // active material count to load balance PTE work across warps. Purely a scheduling
+  // change: each cell's update is independent, so results are unaffected.
+  if constexpr (lt::idx_space_t::loop_tag_v == RiotLoop::loop_tag::boiv) {
+    if (sort_pte_cells) {
+      idx_space = idx_space.WithCellOrder(
+          pte_cell_order::OrderCellsByMaterialCount(v, idx_space, mfrac_thr));
+    }
+  }
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         const int nmat = v.GetSize(b, ccmat::rho());
