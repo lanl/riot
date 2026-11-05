@@ -295,6 +295,7 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
   // Extract Explicit params
   auto explicit_pkg = pmesh->packages.Get(pkg_name);
   const bool affect_fluid = explicit_pkg->Param<bool>("affect_fluid");
+  const bool faces_only = explicit_pkg->Param<bool>("faces_only_comms");
 
   // Subcyler integrator
   auto int_string = explicit_pkg->Param<std::string>("integrator");
@@ -312,15 +313,15 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
     auto &ro = pmesh->mesh_data.GetOrAdd(mdname::ro, i);
 
     // Start receives on MeshData registers
-    auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, ro);
-    srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, r0);
+    auto srec = RadiationShared::AddRadiationStartReceiveTask(none, tl, ro, faces_only);
+    srec = RadiationShared::AddRadiationStartReceiveTask(srec, tl, r0, faces_only);
     if (affect_fluid) srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, a0);
     srec = tl.AddTask(srec, parthenon::StartReceiveFluxCorrections, r0);
 
     // Set opacities
     auto set_opac = tl.AddTask(srec, UpdateOpacities, base.get());
-    auto opac_bc =
-        parthenon::AddBoundaryExchangeTasks(set_opac, tl, ro, pmesh->multilevel);
+    auto opac_bc = RadiationShared::AddRadiationExchangeTasks(
+        set_opac, tl, ro, pmesh->multilevel, faces_only);
 
     // Prepare for iterations
     auto prep_sc = tl.AddTask(TaskQualifier::once_per_region | TaskQualifier::local_sync,
@@ -366,7 +367,7 @@ TaskID CreateExplicitTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                               std::shared_ptr<MeshData<Real>> r0,
                               std::shared_ptr<MeshData<Real>> r1, const int nsteps,
                               const Real dt) {
-  const auto any = parthenon::BoundaryType::any;
+  const bool faces_only = pmesh->packages.Get(pkg_name)->Param<bool>("faces_only_comms");
 
   // r1 <-- r0
   auto init_rk = cycler.AddTask(
@@ -386,8 +387,8 @@ TaskID CreateExplicitTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                                  integrator->beta[stage - 1] * dt);
     auto rhs = cycler.AddTask(update | rk, ApplyRHS, base.get(),
                               integrator->beta[stage - 1] * dt);
-    auto set_bc =
-        parthenon::AddBoundaryExchangeTasks(rhs | rk, cycler, r0, pmesh->multilevel);
+    auto set_bc = RadiationShared::AddRadiationExchangeTasks(
+        rhs | rk, cycler, r0, pmesh->multilevel, faces_only);
     rk = cycler.AddTask(TaskQualifier::local_sync, set_bc | rk,
                         []() { return TaskStatus::complete; });
   }

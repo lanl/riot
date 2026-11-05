@@ -191,6 +191,10 @@ Parameters are organized into a shared ``<radiation_transport>`` block and sever
      - bool
      - ``false``
      - Fix opacities to the values set in the problem generator.
+   * - faces_only_comms
+     - bool
+     - ``false``
+     - Only exchange face ghost zones of the radiation fields (Parthenon ``BoundaryType::faces_only_recv``). The transport stencils only read face ghosts, so results are unchanged while edge/corner messages are skipped; edge and corner ghost zones of the radiation fields are left stale. Fluid exchanges always use the full exchange.
    * - mix_frac
      - Real
      - ``0.0``

@@ -459,11 +459,11 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
   namespace mdname = container_names;
   TaskCollection tc;
   TaskID none(0);
-  const auto any = parthenon::BoundaryType::any;
 
   // Jacobi params
   auto jacobi_pkg = pmesh->packages.Get(pkg_name);
   const int max_iters = jacobi_pkg->Param<int>("niter_limit");
+  const bool faces_only = jacobi_pkg->Param<bool>("faces_only_comms");
   AllReduce<HostArray1D<Real>> *presidual =
       jacobi_pkg->MutableParam<AllReduce<HostArray1D<Real>>>("jresidual_reducer");
 
@@ -478,8 +478,9 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
     auto &tl = tr[i];
 
     // Start receives on MeshData registers
-    auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, rbase);
-    srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, rout);
+    auto srec =
+        RadiationShared::AddRadiationStartReceiveTask(none, tl, rbase, faces_only);
+    srec = RadiationShared::AddRadiationStartReceiveTask(srec, tl, rout, faces_only);
 
     // Set opacities
     auto set_opac = tl.AddTask(none, SetOpacities, rbase.get(), ubase.get());
@@ -490,8 +491,8 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
                    ResetIterator, rbase.get(), time, dt);
 
     // Fill ghosts with boundary conditions at the advanced time
-    auto base_bc =
-        parthenon::AddBoundaryExchangeTasks(reset_iter, tl, rbase, pmesh->multilevel);
+    auto base_bc = RadiationShared::AddRadiationExchangeTasks(
+        reset_iter, tl, rbase, pmesh->multilevel, faces_only);
 
     // Initialize solution in riter
     auto init_iter = tl.AddTask(
@@ -584,7 +585,9 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
   auto update =
       solver.AddTask(begin, JacobiUpdate, rbase.get(), riter.get(), rout.get(), dt);
   auto rsrc = solver.AddTask(update, ApplyRHS, rbase.get(), rout.get(), ubase.get(), dt);
-  auto bc = parthenon::AddBoundaryExchangeTasks(rsrc, solver, rout, pmesh->multilevel);
+  const bool faces_only = pmesh->packages.Get(pkg_name)->Param<bool>("faces_only_comms");
+  auto bc = RadiationShared::AddRadiationExchangeTasks(rsrc, solver, rout,
+                                                       pmesh->multilevel, faces_only);
   auto check = solver.AddTask(TaskQualifier::local_sync, bc, CheckConvergence,
                               &(presidual->val), riter.get(), rout.get());
   auto start_reduce_residual =

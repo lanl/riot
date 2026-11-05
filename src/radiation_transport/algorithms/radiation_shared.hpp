@@ -25,6 +25,7 @@
 #include "radiation_transport/angular_grids/geodesic_grid.hpp"
 #include "radiation_transport/angular_grids/latlon_grid.hpp"
 #include "radiation_transport/transport_utils/transport_utils.hpp"
+#include <bvals/comms/bvals_in_one.hpp>
 #include <parthenon/package.hpp>
 
 using namespace parthenon::package::prelude;
@@ -286,13 +287,25 @@ inline void AddFixedPgenOpac(ParameterInput *pin, Params &params) {
                  "Fix the opacities to the values set in the ProblemGenerator"));
 }
 
+//----------------------------------------------------------------------------------------
+//! \fn void AddFacesOnlyComms
+//! \brief Store the flag that restricts the boundary exchanges of the radiation fields
+//! to face neighbors (see AddRadiationExchangeTasks).
+inline void AddFacesOnlyComms(ParameterInput *pin, Params &params) {
+  params.Add("faces_only_comms",
+             pin->GetOrAddBoolean(radiation_block, "faces_only_comms", false,
+                                  "Only fill face ghost zones of the radiation fields; "
+                                  "edge and corner ghost zones are left stale"));
+}
+
 } // namespace ConfigOption
 
 //----------------------------------------------------------------------------------------
 //! \fn SharedParams AddSharedParams
 //! \brief Populate a radiation package's Params with all parameters common to the
 //! explicit and jacobi solvers: the sparse-physics guard, CFL number, unit system,
-//! coupling flags and utils, angular mesh, group structure, and fixed-opacity flag.
+//! coupling flags and utils, angular mesh, group structure, fixed-opacity flag, and
+//! faces-only comms flag.
 //! These are all read from the shared <radiation_transport> input block and are ordering-
 //! independent.  Returns the angle/group counts the caller needs for field sizing.
 inline SharedParams AddSharedParams(ParameterInput *pin, StateDescriptor *materials,
@@ -307,10 +320,39 @@ inline SharedParams AddSharedParams(ParameterInput *pin, StateDescriptor *materi
   ConfigOption::AddMixFrac(pin, params);
   ConfigOption::AddOpacFloors(pin, params);
   ConfigOption::AddFixedPgenOpac(pin, params);
+  ConfigOption::AddFacesOnlyComms(pin, params);
   SharedParams shared;
   shared.nangles = ConfigOption::AddAngularMesh(pin, params);
   shared.ngroups = ConfigOption::AddGroupStructure(materials, params);
   return shared;
+}
+
+//----------------------------------------------------------------------------------------
+// Boundary exchanges of the radiation fields (intensities and opacities). The transport
+// stencils only read face ghost zones, so with faces_only these exchanges skip edge and
+// corner neighbors (Parthenon still includes the edge/corner neighbors needed to
+// prolongate at fine/coarse faces). Exchanges of the fluid state must keep using
+// BoundaryType::any, since FillDerived and hydro read edge and corner ghost zones.
+// Receives must be started with the same boundary type as the exchange.
+inline TaskID AddRadiationStartReceiveTask(TaskID dependency, TaskList &tl,
+                                           std::shared_ptr<MeshData<Real>> &md,
+                                           const bool faces_only) {
+  using parthenon::BoundaryType;
+  if (faces_only)
+    return tl.AddTask(
+        dependency, parthenon::StartReceiveBoundBufs<BoundaryType::faces_only_recv>, md);
+  return tl.AddTask(dependency, parthenon::StartReceiveBoundBufs<BoundaryType::any>, md);
+}
+
+inline TaskID AddRadiationExchangeTasks(TaskID dependency, TaskList &tl,
+                                        std::shared_ptr<MeshData<Real>> &md,
+                                        const bool multilevel, const bool faces_only) {
+  using parthenon::BoundaryType;
+  if (faces_only)
+    return parthenon::AddBoundaryExchangeTasks<BoundaryType::faces_only_recv>(
+        dependency, tl, md, multilevel);
+  return parthenon::AddBoundaryExchangeTasks<BoundaryType::any>(dependency, tl, md,
+                                                                multilevel);
 }
 
 } // namespace RadiationShared
