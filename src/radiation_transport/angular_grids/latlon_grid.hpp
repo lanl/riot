@@ -42,7 +42,7 @@ class LatLonGrid {
     const int nphi =
         parthenon::IsCoord<parthenon::UniformSpherical>()
             ? 1
-            : (parthenon::IsCoord<parthenon::UniformCylindrical>() ? 2 * nlevel
+            : (parthenon::IsCylindricalCoord() ? 2 * nlevel
                                                                    : 4 * nlevel);
     return {ntheta, nphi};
   }
@@ -80,7 +80,7 @@ class LatLonGrid {
   Real DCosTheta() const { return 2.0 / ntheta_; }
   // In RZ each stored cell represents both signs of the azimuthal direction cosine.
   Real DPhi() const {
-    return (parthenon::IsCoord<parthenon::UniformCylindrical>() ? M_PI : 2.0 * M_PI) /
+    return (parthenon::IsCylindricalCoord() ? M_PI : 2.0 * M_PI) /
            nphi_;
   }
   void ComputeThetaLevels(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &theta_f,

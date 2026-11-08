@@ -290,6 +290,21 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
                                    threed * 1.0 / coords.CellWidth(X3DIR, 0, 0, 0)));
       },
       Kokkos::Min<Real>(min_dx));
+  // Mapped (forest) cells vary within a block and the (0, 0, 0) ghost may lie outside
+  // the patch, so take the minimum over the interior cells instead
+  if constexpr (parthenon::IsMappedCoord()) {
+    using rt = RiotFlatReduce::ReductionType<Kokkos::Min<Real>>;
+    auto idx_space = rt::GetIndexSpace(IndexDomain::interior, vmesh.GetNBlocks(), 1, md);
+    min_dx = rt::five_d(
+        "Jacobi::EstimateMappedSpatialTimestep", idx_space,
+        KOKKOS_LAMBDA(const int b, const int, const int k, const int j, const int i,
+                      Real &ldx) {
+          auto &coords = vmesh.GetCoordinates(b);
+          ldx = std::min(ldx, 1.0 / (1.0 / coords.CellWidth(X1DIR, k, j, i) +
+                                     multid * 1.0 / coords.CellWidth(X2DIR, k, j, i) +
+                                     threed * 1.0 / coords.CellWidth(X3DIR, k, j, i)));
+        });
+  }
   const Real min_sdt = min_dx / cc;
 
   // Angular fluxes
@@ -315,7 +330,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
         KOKKOS_LAMBDA(const int b, const int aa, const int k, const int j, const int i,
                       Real &ldt) {
           auto &coords = vmesh.GetCoordinates(b);
-          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, i);
+          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, k, j, i);
           const Real &n1 = cp(aa, NDIR[X1DIR - 1]);
           const Real &n2 = cp(aa, NDIR[X2DIR - 1]);
           const Real &n3 = cp(aa, NDIR[X3DIR - 1]);
@@ -959,7 +974,7 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
         [[maybe_unused]] auto &arcw_ = arcw;
         [[maybe_unused]] auto &indn_ = indn;
         if constexpr (do_angular_fluxes) {
-          const Real mcw_ix1 = -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+          const Real mcw_ix1 = -cdt * InverseRadiusForAngularFlux(coords, k, j, i) / wght_(aa);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb);
             g1p += (na > 0) * na;
@@ -1056,7 +1071,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
         const Real ivol = 0.5 * cdt / coords.CellVolume(k, j, i);
         Real mcw = 0.0;
         if constexpr (do_angular_fluxes) {
-          mcw = -cdt * InverseRadiusForAngularFlux(coords, i);
+          mcw = -cdt * InverseRadiusForAngularFlux(coords, k, j, i);
         }
 
         // Capture fluid state this MeshBlock
@@ -1224,7 +1239,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             [[maybe_unused]] auto &indn_ = indn;
             if constexpr (do_angular_fluxes) {
               const Real mcw_ix1 =
-                  -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+                  -cdt * InverseRadiusForAngularFlux(coords, k, j, i) / wght_(aa);
               for (int nb = 0; nb < numn_(aa); ++nb) {
                 const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb);
                 g1p += (na > 0) * na;

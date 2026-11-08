@@ -51,6 +51,40 @@ void RegisterPgens() {
   // RIOT_PROBLEM(my_cool_pgen);
 }
 
+namespace {
+constexpr char node_coordinates_name[] = "n.coordinates";
+
+template <typename Coords>
+void FillNodeCoordinates(MeshBlock *pmb, const Coords &coords) {
+  if constexpr (parthenon::IsMappedCoord()) {
+    using TE = parthenon::TopologicalElement;
+    auto x = pmb->meshblock_data.Get()->Get(node_coordinates_name).data;
+    const auto &cb = pmb->cellbounds;
+    const auto ib = cb.GetBoundsI(IndexDomain::entire, TE::NN);
+    const auto jb = cb.GetBoundsJ(IndexDomain::entire, TE::NN);
+    const auto kb = cb.GetBoundsK(IndexDomain::entire, TE::NN);
+    pmb->par_for(
+        "FillNodeCoordinates", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+        KOKKOS_LAMBDA(const int k, const int j, const int i) {
+          Real r, z;
+          coords.Vertex(j, i, r, z);
+          x(0, k, j, i) = r;
+          x(1, k, j, i) = z;
+          x(2, k, j, i) = 0.0;
+        });
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void FillNodeCoordinatesMesh
+//  \brief Physical (R, z, 0) of the nodes on mapped meshes, which outputs use as the
+//  mesh geometry
+void FillNodeCoordinatesMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm) {
+  for (auto &pmb : pm->block_list)
+    FillNodeCoordinates(pmb.get(), pmb->coords);
+}
+} // namespace
+
 //----------------------------------------------------------------------------------------
 //! \fn  Packages_t RiotDriver::ProcessPackages
 //  \brief Package initializer for Parthenon
@@ -132,6 +166,14 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_gravity) PARTHENON_REQUIRE(do_hydro, "Gravity config. requires hydro.")
   if (do_ionization) PARTHENON_REQUIRE(do_hydro, "Ionization requires hydro.");
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
+  // physics that is not yet written for mapped (non-rectilinear block) meshes
+  if (parthenon::IsMappedCoord()) {
+    PARTHENON_REQUIRE(!(do_thinc || do_strength || do_mix || do_lasers || do_ionization ||
+                        do_multigroup_diffusion || do_levelsets || do_gravity ||
+                        do_tracers),
+                      "MappedCylindrical coordinates only support hydro, radiation "
+                      "transport, tn burn and passive scalars");
+  }
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
 
@@ -146,7 +188,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_lasers", do_lasers);
   riot->AddParam("do_gravity", do_gravity);
   riot->AddParam("curvilinear", parthenon::IsCoord<parthenon::UniformSpherical>() ||
-                                    parthenon::IsCoord<parthenon::UniformCylindrical>());
+                                    parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                                    parthenon::IsMappedCoord());
   riot->AddParam("fixed_fluid", fixed_fluid);
   riot->AddParam("kinematic_advection", kinematic_advection);
   riot->AddParam("do_multigroup_diffusion", do_multigroup_diffusion);
@@ -187,6 +230,15 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddSparsePool(ccbulk::cell_delta::name(), m, ccbulk::cell_delta::name(),
                       std::vector<int>{cell_delta_id});
 
+  // physical node positions, the output geometry on mapped meshes
+  if (parthenon::IsMappedCoord()) {
+    riot->AddField(node_coordinates_name,
+                   Metadata({Metadata::Node, Metadata::Vector, Metadata::Derived,
+                             Metadata::OneCopy, Metadata::CoordinatesVec},
+                            std::vector<int>{3}));
+    riot->UserWorkBeforeOutputMesh = FillNodeCoordinatesMesh;
+  }
+
   // call package initializers here and enroll operator split tasks
   if (do_hydro) {
     auto mat_pkg = Materials::Initialize(pin.get());
@@ -224,6 +276,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
         "Enable implicit integration of thermal radiation transport via Jacobi");
     PARTHENON_REQUIRE(((do_explicit ^ do_jacobi) && !(do_explicit && do_jacobi)),
                       "*One* radiation algorithm must be specified if do_radiation");
+    PARTHENON_REQUIRE(!(do_explicit && parthenon::IsMappedCoord()),
+                      "Explicit radiation transport is not supported on mapped meshes");
     riot->AddParam("do_explicit", do_explicit);
     riot->AddParam("do_jacobi", do_jacobi);
     if (do_explicit) {

@@ -140,6 +140,8 @@ set (SRC_LIST
   riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp
   riot_utils/riot_utils.hpp
+  riot_utils/forest_mesh.hpp
+  riot_utils/forest_mesh.cpp
   riot_utils/riot_utils.cpp
   riot_utils/table_utils.cpp
   riot_utils/table_utils.hpp

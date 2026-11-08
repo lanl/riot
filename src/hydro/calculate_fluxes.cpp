@@ -49,29 +49,193 @@ using RiotLimits::MAX_MATERIALS;
 using RiotLimits::MAX_STRONG;
 
 //----------------------------------------------------------------------------------------
+//! \brief Rotation of the meridional velocity components (v1, v2) into the frame of a DIR
+//!        face: slot DIR-1 holds the face-normal component and the other slot the
+//!        tangential one. It is the identity except on mapped meshes, where the Riemann
+//!        solvers (which take slot DIR-1 as the normal) see the rotated state and their
+//!        momentum fluxes are rotated back to the global (R, z) basis.
+struct FaceFrame {
+  Real m00 = 1.0, m01 = 0.0, m10 = 0.0, m11 = 1.0;
+  KOKKOS_FORCEINLINE_FUNCTION void ToFace(Real &a, Real &b) const {
+    if constexpr (parthenon::IsMappedCoord()) {
+      const Real a0 = a;
+      a = m00 * a0 + m01 * b;
+      b = m10 * a0 + m11 * b;
+    }
+  }
+  KOKKOS_FORCEINLINE_FUNCTION void FromFace(Real &a, Real &b) const {
+    if constexpr (parthenon::IsMappedCoord()) {
+      const Real a0 = a;
+      a = m00 * a0 + m10 * b;
+      b = m01 * a0 + m11 * b;
+    }
+  }
+};
+
+//! \brief Frame of the DIR face at the lower side of cell (k, j, i). The tangent points
+//!        along the increasing transverse logical index, so the frame reduces to the
+//!        identity on rectilinear faces and is a reflection on mirrored patches (keeping
+//!        index-space stencils such as GetVdiff mirror symmetric).
+template <parthenon::CoordinateDirection DIR, typename Coords>
+KOKKOS_FORCEINLINE_FUNCTION FaceFrame MakeFaceFrame(const Coords &coords, const int k,
+                                                    const int j, const int i) {
+  FaceFrame f;
+  if constexpr (parthenon::IsMappedCoord() && DIR != X3DIR) {
+    Real n1, n2, n3;
+    coords.template FaceNormal<DIR>(k, j, i, n1, n2, n3);
+    const Real o = coords.Orientation();
+    if constexpr (DIR == X1DIR) {
+      f.m00 = n1;
+      f.m01 = n2;
+      f.m10 = -o * n2;
+      f.m11 = o * n1;
+    } else {
+      f.m00 = o * n2;
+      f.m01 = -o * n1;
+      f.m10 = n1;
+      f.m11 = n2;
+    }
+  }
+  return f;
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Velocity reconstruction on mapped meshes in the frame of the face being
+//!        reconstructed to: the stencil's meridional velocities are rotated into that
+//!        face's (normal, tangent) frame, reconstructed, and the face state is rotated
+//!        back to the global (R, z) basis. The frame is the mesh's own, i.e. spherical
+//!        (e_r, e_theta) on polar patches and cylindrical (R, z) on rectilinear ones. A
+//!        uniform velocity is reconstructed exactly (one rotation per stencil), and the
+//!        frame depends only on the face, so the two blocks sharing a face compute
+//!        identical states. Fills all velocity components (velocity(2) is not rotated).
+template <parthenon::CoordinateDirection DIR, typename PackView, typename IdxRange,
+          typename delta_t, typename Coords, typename scratch_t>
+KOKKOS_INLINE_FUNCTION void
+ReconVelocityFaceFrame(const PackView &pv, const IdxRange &halo_range, const delta_t delta,
+                       const Coords &coords, scratch_t &minus, scratch_t &plus,
+                       const RiotReconstruction::Type t) {
+  namespace RR = RiotReconstruction;
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  constexpr int di = (DIR == X1DIR), dj = (DIR == X2DIR), dk = (DIR == X3DIR);
+  // op(q, l, r) reconstructs the stencil q[0..2W] (centered on q[W]) to its l/r states
+  auto run = [&](auto width, auto op) {
+    constexpr int W = decltype(width)::value;
+    RiotLoop::inner(halo_range, [&](const auto kji) {
+      const auto [k, j, i] = halo_range.GetKJI(kji);
+      // the minus state lives on the lower face of the cell, the plus state on the upper
+      const FaceFrame fm = MakeFaceFrame<DIR>(coords, k, j, i);
+      const FaceFrame fp = MakeFaceFrame<DIR>(coords, k + dk, j + dj, i + di);
+      Real am[2 * W + 1], bm[2 * W + 1], ap[2 * W + 1], bp[2 * W + 1], c[2 * W + 1];
+      for (int s = -W; s <= W; ++s) {
+        am[s + W] = ap[s + W] = pv(ccbulk::velocity(0), kji + s * delta);
+        bm[s + W] = bp[s + W] = pv(ccbulk::velocity(1), kji + s * delta);
+        c[s + W] = pv(ccbulk::velocity(2), kji + s * delta);
+        fm.ToFace(am[s + W], bm[s + W]);
+        fp.ToFace(ap[s + W], bp[s + W]);
+      }
+      Real pa, pb, ma, mb, unused;
+      op(ap, pa, unused);
+      op(bp, pb, unused);
+      op(am, unused, ma);
+      op(bm, unused, mb);
+      fp.FromFace(pa, pb);
+      fm.FromFace(ma, mb);
+      plus(ccbulk::velocity(0), 0, kji) = pa;
+      plus(ccbulk::velocity(1), 0, kji) = pb;
+      minus(ccbulk::velocity(0), 0, kji) = ma;
+      minus(ccbulk::velocity(1), 0, kji) = mb;
+      op(c, plus(ccbulk::velocity(2), 0, kji), minus(ccbulk::velocity(2), 0, kji));
+    });
+  };
+  using W0 = std::integral_constant<int, 0>;
+  using W1 = std::integral_constant<int, 1>;
+  using W2 = std::integral_constant<int, 2>;
+  switch (t) {
+  case RR::Type::CONSTANT:
+    run(W0(), [](const Real *q, Real &l, Real &r) { RR::PiecewiseConstant(q[0], l, r); });
+    break;
+  case RR::Type::PLM:
+    run(W1(), [](const Real *q, Real &l, Real &r) {
+      RR::PiecewiseLinear(q[0], q[1], q[2], l, r, THETA);
+    });
+    break;
+  case RR::Type::PPM4:
+    run(W2(), [](const Real *q, Real &l, Real &r) {
+      RR::PPM4(q[0], q[1], q[2], q[3], q[4], l, r);
+    });
+    break;
+  case RR::Type::WENO5:
+    run(W2(), [](const Real *q, Real &l, Real &r) {
+      RR::WENO5(q[0], q[1], q[2], q[3], q[4], l, r);
+    });
+    break;
+  case RR::Type::MP5:
+    run(W2(), [](const Real *q, Real &l, Real &r) {
+      RR::MP5(q[0], q[1], q[2], q[3], q[4], l, r);
+    });
+    break;
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \brief Transverse velocity differences (dvn, dvt) used by the low-Mach solvers
 //!        (chllc/lhllc). Reads the (already-ghost-filled) state velocities at neighbor
 //!        cells -- a wide input stencil on available data, not a producer halo -- and
 //!        writes one dvn/dvt per face cell. Normal/transverse offsets+components come
 //!        from the (cyclic) DirBasis, so this body is direction-agnostic.
 template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
-          typename Basis, typename Scratch>
+          typename Basis, typename Coords, typename Scratch>
 KOKKOS_INLINE_FUNCTION void GetVdiff(const Pack_t &v, const IdxRange &idx_range,
-                                     const Basis &basis, Scratch &dvn, Scratch &dvt) {
+                                     const Basis &basis, const Coords &coords,
+                                     const IndexRange &ib, const IndexRange &jb,
+                                     const IndexRange &kb, Scratch &dvn, Scratch &dvt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   auto pv = RiotLoop::make_pack_view(idx_range, v);
   const auto dn = basis.normal();
   RiotLoop::inner(idx_range, [&](const auto kji) {
-    auto V = [&](int c, auto idx) { return pv(ccbulk::velocity(c), idx); };
+    const auto [k, j, i] = idx_range.GetKJI(kji);
+    const FaceFrame frame = MakeFaceFrame<DIR>(coords, k, j, i);
+    // velocity component c in the frame of this face
+    auto V = [&](int c, auto idx) -> Real {
+      if constexpr (parthenon::IsMappedCoord()) {
+        if (c < 2) {
+          Real a = pv(ccbulk::velocity(0), idx), b = pv(ccbulk::velocity(1), idx);
+          frame.ToFace(a, b);
+          return (c == 0) ? a : b;
+        }
+      }
+      return pv(ccbulk::velocity(c), idx);
+    };
+    // On mapped meshes the two blocks sharing a block boundary face must compute the same
+    // flux, but at the ends of the face row the transverse stencil reads a corner ghost
+    // that each block fills differently (or not at all where fewer than four trees meet
+    // at a vertex), so both drop the transverse differences on that side
+    bool use_lo[3] = {true, true, true}, use_hi[3] = {true, true, true};
+    if constexpr (parthenon::IsMappedCoord()) {
+      const int n[3] = {i, j, k};
+      const IndexRange bnd[3] = {ib, jb, kb};
+      constexpr int nc = Basis::nc;
+      if (n[nc] == bnd[nc].s || n[nc] == bnd[nc].e + 1) {
+        for (const int c : {Basis::tac, Basis::tbc}) {
+          use_lo[c] = n[c] > bnd[c].s;
+          use_hi[c] = n[c] < bnd[c].e;
+        }
+      }
+    }
+    constexpr Real BIG = std::numeric_limits<Real>::max();
     // Min-limited transverse gradient of velocity component c along offset t (normal dn).
     auto trans = [&](int c, auto t) {
-      return std::min(
-          std::min(V(c, kji - dn) - V(c, kji - dn - t), V(c, kji) - V(c, kji - t)),
-          std::min(V(c, kji + t - dn) - V(c, kji - dn), V(c, kji + t) - V(c, kji)));
+      Real d = BIG;
+      if (use_lo[c])
+        d = std::min(d, std::min(V(c, kji - dn) - V(c, kji - dn - t),
+                                 V(c, kji) - V(c, kji - t)));
+      if (use_hi[c])
+        d = std::min(d, std::min(V(c, kji + t - dn) - V(c, kji - dn),
+                                 V(c, kji + t) - V(c, kji)));
+      return d;
     };
     dvn(kji) = V(Basis::nc, kji) - V(Basis::nc, kji - dn);
 
-    constexpr Real BIG = std::numeric_limits<Real>::max();
     Real t = BIG;
     if (!RiotUtils::IsZeroOffset(basis.trans_a()))
       t = std::min(t, trans(Basis::tac, basis.trans_a()));
@@ -116,10 +280,10 @@ KOKKOS_FORCEINLINE_FUNCTION void StoreFaceVelocity(const PackView &pv, const Ind
 //!        by the (solver-independent) material-density flux loop, and stores the signal
 //!        speed. Templated on DIR and the solver function FLUX_FN.
 template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
-          typename IdxRange, typename Delta, typename SetBulk, typename SumBulk,
-          typename Scratch>
+          typename IdxRange, typename Coords, typename Delta, typename SetBulk,
+          typename SumBulk, typename Scratch>
 KOKKOS_INLINE_FUNCTION void
-BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
+BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, const Coords &coords, Delta delta,
                   const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
                   const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
                   Scratch &face_vel, Scratch &riemann_vel, const bool store_vf) {
@@ -136,14 +300,20 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
     const Real cs_R = BulkSoundSpeed(sum_bulk_minus(ccbulk::bulk_modulus(), kji_R),
                                      sum_bulk_minus(ccbulk::rho(), kji_R));
 
+    // velocities in the frame of this face
+    const auto [k, j, i] = idx_range.GetKJI(kji);
+    const FaceFrame frame = MakeFaceFrame<DIR>(coords, k, j, i);
+    Real v1l = set_bulk_plus(ccbulk::velocity(0), kji_L);
+    Real v2l = set_bulk_plus(ccbulk::velocity(1), kji_L);
+    Real v1r = set_bulk_minus(ccbulk::velocity(0), kji_R);
+    Real v2r = set_bulk_minus(ccbulk::velocity(1), kji_R);
+    frame.ToFace(v1l, v2l);
+    frame.ToFace(v1r, v2r);
+
     Real f_v1, f_v2, f_v3, f_eng, v1face, v2face, v3face;
     const Real signal_speed =
         FLUX_FN(sum_bulk_plus(ccbulk::rho(), kji_L), sum_bulk_minus(ccbulk::rho(), kji_R),
-                set_bulk_plus(ccbulk::velocity(0), kji_L),
-                set_bulk_minus(ccbulk::velocity(0), kji_R),
-                set_bulk_plus(ccbulk::velocity(1), kji_L),
-                set_bulk_minus(ccbulk::velocity(1), kji_R),
-                set_bulk_plus(ccbulk::velocity(2), kji_L),
+                v1l, v1r, v2l, v2r, set_bulk_plus(ccbulk::velocity(2), kji_L),
                 set_bulk_minus(ccbulk::velocity(2), kji_R),
                 sum_bulk_plus(ccbulk::internal_energy(), kji_L),
                 sum_bulk_minus(ccbulk::internal_energy(), kji_R),
@@ -151,11 +321,15 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                 set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R, f_v1, f_v2, f_v3,
                 f_eng, v1face, v2face, v3face, riemann_vel(kji));
 
+    // the normal face velocity, then the momentum flux and face velocity back in the
+    // global basis
+    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
+    frame.FromFace(f_v1, f_v2);
+    frame.FromFace(v1face, v2face);
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
-    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
   });
@@ -167,10 +341,10 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
 //!        feeds the per-face transverse velocity differences dvn/dvt (from GetVdiff)
 //!        into the solver's extended signature.
 template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
-          typename IdxRange, typename Delta, typename SetBulk, typename SumBulk,
-          typename Scratch>
+          typename IdxRange, typename Coords, typename Delta, typename SetBulk,
+          typename SumBulk, typename Scratch>
 KOKKOS_INLINE_FUNCTION void
-BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
+BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, const Coords &coords, Delta delta,
                     const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
                     const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
                     Scratch &face_vel, Scratch &riemann_vel, Scratch &dvn, Scratch &dvt,
@@ -188,14 +362,20 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
     const Real cs_R = BulkSoundSpeed(sum_bulk_minus(ccbulk::bulk_modulus(), kji_R),
                                      sum_bulk_minus(ccbulk::rho(), kji_R));
 
+    // velocities in the frame of this face
+    const auto [k, j, i] = idx_range.GetKJI(kji);
+    const FaceFrame frame = MakeFaceFrame<DIR>(coords, k, j, i);
+    Real v1l = set_bulk_plus(ccbulk::velocity(0), kji_L);
+    Real v2l = set_bulk_plus(ccbulk::velocity(1), kji_L);
+    Real v1r = set_bulk_minus(ccbulk::velocity(0), kji_R);
+    Real v2r = set_bulk_minus(ccbulk::velocity(1), kji_R);
+    frame.ToFace(v1l, v2l);
+    frame.ToFace(v1r, v2r);
+
     Real f_v1, f_v2, f_v3, f_eng, v1face, v2face, v3face;
     const Real signal_speed =
         FLUX_FN(sum_bulk_plus(ccbulk::rho(), kji_L), sum_bulk_minus(ccbulk::rho(), kji_R),
-                set_bulk_plus(ccbulk::velocity(0), kji_L),
-                set_bulk_minus(ccbulk::velocity(0), kji_R),
-                set_bulk_plus(ccbulk::velocity(1), kji_L),
-                set_bulk_minus(ccbulk::velocity(1), kji_R),
-                set_bulk_plus(ccbulk::velocity(2), kji_L),
+                v1l, v1r, v2l, v2r, set_bulk_plus(ccbulk::velocity(2), kji_L),
                 set_bulk_minus(ccbulk::velocity(2), kji_R),
                 sum_bulk_plus(ccbulk::internal_energy(), kji_L),
                 sum_bulk_minus(ccbulk::internal_energy(), kji_R),
@@ -203,11 +383,15 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                 set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R, f_v1, f_v2, f_v3,
                 f_eng, v1face, v2face, v3face, riemann_vel(kji), dvn(kji), dvt(kji));
 
+    // the normal face velocity, then the momentum flux and face velocity back in the
+    // global basis
+    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
+    frame.FromFace(f_v1, f_v2);
+    frame.FromFace(v1face, v2face);
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
-    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
   });
@@ -537,7 +721,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                          const RiotReconstruction::Type vfrac_recon_tag,
                          const RiemannSolver rsolver_tag, const bool store_vf,
                          const StrengthArr &mat_strength, const bool do_viscosity,
-                         const Real thinc_beta, const bool do_electrons) {
+                         const Real thinc_beta, const bool do_electrons,
+                         const bool face_frame) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -580,9 +765,13 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
   const auto delta3 = idx_space.GetDelta(X3DIR);
   // Directional basis (normal + cyclic transverse offsets/components) for GetVdiff.
   auto basis = RiotUtils::MakeDirBasis<DIR>(idx_space);
+  const IndexRange ibc = md->GetBoundsI(IndexDomain::interior);
+  const IndexRange jbc = md->GetBoundsJ(IndexDomain::interior);
+  const IndexRange kbc = md->GetBoundsK(IndexDomain::interior);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         const int nmat = v.GetSize(b, ccmat::volume_fraction());
+        const auto &coords = v.GetCoordinates(b);
 
         // Index range over which quantities are reconstructed on plus and minus faces
         auto halo_range = idx_range.template AddHalo<halo>();
@@ -734,8 +923,15 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         auto set_bulk_plus =
             GetTypeIndexedPerPointScratch<Real, set_bulk_recon_types>(halo_range);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
-        ReconCells<ccbulk::pressure, ccbulk::velocity>(
-            pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
+        if (parthenon::IsMappedCoord() && face_frame) {
+          ReconCells<ccbulk::pressure>(pv, halo_range, delta, set_bulk_minus,
+                                       set_bulk_plus, recon_tag);
+          ReconVelocityFaceFrame<DIR>(pv, halo_range, delta, coords, set_bulk_minus,
+                                      set_bulk_plus, recon_tag);
+        } else {
+          ReconCells<ccbulk::pressure, ccbulk::velocity>(
+              pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
+        }
         halo_range.TeamBarrier();
 
         ThincFaceStates<DIR, DoTHINC>(
@@ -754,32 +950,32 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         switch (rsolver_tag) {
         case RiemannSolver::hllc:
           BulkRiemannFluxes<DIR, lr_to_flux_hllc<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              v, idx_range, coords, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, store_vf);
           break;
         case RiemannSolver::hllcf:
           BulkRiemannFluxes<DIR, lr_to_flux_fleischmann<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              v, idx_range, coords, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, store_vf);
           break;
         case RiemannSolver::hll:
           BulkRiemannFluxes<DIR, lr_to_flux_hll<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              v, idx_range, coords, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, store_vf);
           break;
         case RiemannSolver::chllc:
-          GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetVdiff<DIR>(v, idx_range, basis, coords, ibc, jbc, kbc, dvn, dvt);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_chllc<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
+              v, idx_range, coords, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
           break;
         case RiemannSolver::lhllc:
-          GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetVdiff<DIR>(v, idx_range, basis, coords, ibc, jbc, kbc, dvn, dvt);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_lhllc<dir>>(
-              v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
+              v, idx_range, coords, delta, set_bulk_minus, set_bulk_plus,
+              sum_bulk_minus, sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
           break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG, DoTHINC>(
@@ -859,6 +1055,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
   if (do_strength) rsolver_tag = RiemannSolver::strong;
   const bool store_vf = options->Param<bool>("store_vf");
+  const bool face_frame = options->Param<bool>("recon_face_frame");
   const auto &mat_strength =
       pm->packages.Get("materials")->Param<parthenon::ParArray1D<bool>>("d.strong");
   const auto &strength_mats =
@@ -901,15 +1098,15 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
 
   CalculateFluxesDir<X1DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                             rsolver_tag, store_vf, mat_strength, do_viscosity, thinc_beta,
-                            do_ionization);
+                            do_ionization, face_frame);
   if (ndim > 1)
     CalculateFluxesDir<X2DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                               rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              thinc_beta, do_ionization);
+                              thinc_beta, do_ionization, face_frame);
   if (ndim > 2)
     CalculateFluxesDir<X3DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
                               rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              thinc_beta, do_ionization);
+                              thinc_beta, do_ionization, face_frame);
 
   return TaskStatus::complete;
 }

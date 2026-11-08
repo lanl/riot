@@ -214,7 +214,7 @@ Real EstimateTimestep(MeshData<Real> *md, const Real dt_ratio_hyperbolic) {
         KOKKOS_LAMBDA(const int b, const int aa, const int k, const int j, const int i,
                       Real &ldt) {
           auto &coords = vmesh.GetCoordinates(b);
-          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, i);
+          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, k, j, i);
           const Real &n1 = cp(aa, NDIR[X1DIR - 1]);
           const Real &n2 = cp(aa, NDIR[X2DIR - 1]);
           const Real &n3 = cp(aa, NDIR[X3DIR - 1]);
@@ -576,7 +576,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         [[maybe_unused]] auto &arcw_ = arcw;
         if constexpr (do_angular_fluxes) {
           Real &divfa = da_(b, n, k, j, i) = 0.0;
-          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, k, j, i) / wght_(aa);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb);
             const Real &iu = (na > 0) ? ii(b, n, k, j, i)

@@ -104,6 +104,32 @@ FaceTauWeights(V1 &pack, const parthenon::Coordinates_t &coords, const int ndim,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  Real FaceCosine
+//! \brief Direction cosine of angle aa with the SDIR face at the lower side of (k, j, i):
+//!        the SDIR component of the angle on rectilinear meshes, and its projection on
+//!        the face normal on mapped meshes
+template <int SDIR>
+KOKKOS_FORCEINLINE_FUNCTION static Real
+FaceCosine(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+           const std::array<int, 3> &NDIR, const int &aa, const int k, const int j,
+           const int i) {
+  if constexpr (parthenon::IsMappedCoord() && SDIR != X3DIR) {
+    Real n1, n2, n3;
+    coords.FaceNormal<SDIR>(k, j, i, n1, n2, n3);
+    return n1 * cp(aa, NDIR[X1DIR - 1]) + n2 * cp(aa, NDIR[X2DIR - 1]);
+  }
+  return cp(aa, NDIR[SDIR - 1]);
+}
+KOKKOS_FORCEINLINE_FUNCTION static Real
+FaceCosine(const int dir, const parthenon::Coordinates_t &coords,
+           const ParArrayND<Real> &cp, const std::array<int, 3> &NDIR, const int &aa,
+           const int k, const int j, const int i) {
+  if (dir == X1DIR) return FaceCosine<X1DIR>(coords, cp, NDIR, aa, k, j, i);
+  if (dir == X2DIR) return FaceCosine<X2DIR>(coords, cp, NDIR, aa, k, j, i);
+  return FaceCosine<X3DIR>(coords, cp, NDIR, aa, k, j, i);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void GCoef
 //! \brief Computes matrix coefficients for Jacobi
 template <int SDIR>
@@ -112,14 +138,15 @@ GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
       const std::array<int, 3> &NDIR, const Real &ivol, const bool &split_g1,
       const std::array<Real, 6> &tw, const int &aa, const int &k, const int &j,
       const int &i, Real &g1p, Real &g1pp, Real &glra, Real &glrb) {
-  // Directions
-  const Real &nn = cp(aa, NDIR[SDIR - 1]);
-  const bool up = (nn >= 0.0);
-  const bool down = (nn < 0.0);
-  const int sgnn = up - down;
   constexpr bool x1d = (SDIR == X1DIR);
   constexpr bool x2d = (SDIR == X2DIR);
   constexpr bool x3d = (SDIR == X3DIR);
+
+  // Directions (per face, since faces need not be parallel on mapped meshes)
+  Real nn = FaceCosine<SDIR>(coords, cp, NDIR, aa, k, j, i);
+  bool up = (nn >= 0.0);
+  bool down = (nn < 0.0);
+  int sgnn = up - down;
 
   // Compute L and R wave speeds at i face
   Real ww = ivol * nn * coords.FaceArea<SDIR>(k, j, i);
@@ -129,6 +156,10 @@ GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
   glra = -ww * (1.0 + ss);
 
   // Compute L and R wave speeds at i+1 face
+  nn = FaceCosine<SDIR>(coords, cp, NDIR, aa, k + x3d, j + x2d, i + x1d);
+  up = (nn >= 0.0);
+  down = (nn < 0.0);
+  sgnn = up - down;
   ww = ivol * nn * coords.FaceArea<SDIR>(k + x3d, j + x2d, i + x1d);
   ss = sgnn * tw[2 * (SDIR - 1) + 1];
   g1p += ww * (ss + (!split_g1 || up));
@@ -151,14 +182,15 @@ G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
   // Contributions from each spatial flux direction
   Real g1p = 1.0;
   for (int dir = X1DIR; dir <= ndim; ++dir) {
-    // Directions
-    const Real &nn = cp(aa, NDIR[dir - 1]);
-    const bool up = (nn >= 0.0);
-    const bool down = (nn < 0.0);
-    const int sgnn = up - down;
     const bool x1d = (dir == X1DIR);
     const bool x2d = (dir == X2DIR);
     const bool x3d = (dir == X3DIR);
+
+    // Directions (per face, since faces need not be parallel on mapped meshes)
+    Real nn = FaceCosine(dir, coords, cp, NDIR, aa, k, j, i);
+    bool up = (nn >= 0.0);
+    bool down = (nn < 0.0);
+    int sgnn = up - down;
 
     // Compute L and R wave speeds at i face
     Real ww = ivol * nn * coords.FaceArea(dir, k, j, i);
@@ -166,6 +198,10 @@ G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
     g1p += ww * (ss - (!split_g1 || down));
 
     // Compute L and R wave speeds at i+1 face
+    nn = FaceCosine(dir, coords, cp, NDIR, aa, k + x3d, j + x2d, i + x1d);
+    up = (nn >= 0.0);
+    down = (nn < 0.0);
+    sgnn = up - down;
     ww = ivol * nn * coords.FaceArea(dir, k + x3d, j + x2d, i + x1d);
     ss = sgnn * tw[2 * (dir - 1) + 1];
     g1p += ww * (ss + (!split_g1 || up));

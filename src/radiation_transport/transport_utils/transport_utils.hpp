@@ -47,7 +47,7 @@
 
 // Curvilinear geometry?
 static constexpr bool do_angular_fluxes =
-    parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+    parthenon::IsCylindricalCoord() ||
     parthenon::IsCoord<parthenon::UniformSpherical>();
 
 // Initialization nulls

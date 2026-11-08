@@ -162,7 +162,7 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
 
   // Angular mesh
   const std::string default_amesh =
-      (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+      (parthenon::IsCylindricalCoord() ||
        parthenon::IsCoord<parthenon::UniformSpherical>())
           ? "latlon"
           : "geodesic";

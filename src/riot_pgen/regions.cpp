@@ -21,7 +21,7 @@ std::tuple<Real, Real, Real> to_cartesian(const Real x0, const Real x1, const Re
     // TODO(JCD): do this right if we ever want to support spherical beyond 1d
     return {x0, 0.0, 0.0};
   }
-  if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+  if constexpr (parthenon::IsCylindricalCoord()) {
     // TODO(JCD): same as above for 3d cylindrical
     return {x0, 0.0, x1};
   }
@@ -498,7 +498,7 @@ auto get_subcell_volume(std::array<Real, 3> &xlo, std::array<Real, 3> &xhi, Real
   if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
     return 4.0 / 3.0 * M_PI * (std::pow(xhi[0], 3) - std::pow(xlo[0], 3));
   }
-  if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+  if constexpr (parthenon::IsCylindricalCoord()) {
     return M_PI * (std::pow(xhi[0], 2) - std::pow(xlo[0], 2)) * (ndim > 1 ? dx[1] : 1);
   }
   return dx[0] * (ndim > 1 ? dx[1] : 1) * (ndim > 2 ? dx[2] : 1);
