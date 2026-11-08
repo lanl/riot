@@ -23,6 +23,7 @@
 #include <parthenon/package.hpp>
 
 // Riot headers
+#include "forest/mapped_geometry.hpp"
 #include "radiation_transport/angular_grids/geodesic_grid.hpp"
 #include "radiation_transport/angular_grids/latlon_grid.hpp"
 
@@ -101,7 +102,7 @@ inline void BuildReflectionMaps(StateDescriptor *pkg, const std::array<bool, 3> 
 //! (2D RZ and 1D spherical reorder the components; Cartesian is the identity).  The
 //! result is indexed by NDIR[DIR - 1].
 KOKKOS_FORCEINLINE_FUNCTION std::array<int, 3> AngularFluxDirs() {
-  if constexpr (parthenon::IsCylindricalCoord()) { // (2D RZ)
+  if constexpr (RiotForest::IsCylindricalCoord()) { // (2D RZ)
     return {0, 2, 1};
   } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) { // (1D sph)
     return {2, 0, 1};
@@ -115,17 +116,13 @@ KOKKOS_FORCEINLINE_FUNCTION std::array<int, 3> AngularFluxDirs() {
 //! \brief Face-averaged inverse radius used to build the angular-flux geometric
 //! coefficient in curvilinear coordinates.  This is a purely spatial quantity, but it
 //! only enters the angular-flux divergence term (it is 2/(r1+r2) in general, with a
-//! spherical-shell correction under 1D spherical coordinates).  On mapped (R, z) blocks
-//! it is the planar area over the volume per radian, which reduces to 2/(r1+r2) on
-//! rectilinear cells and keeps an isotropic field in exact balance on curved ones.
+//! spherical-shell correction under 1D spherical coordinates).
 template <typename Coords>
 KOKKOS_FORCEINLINE_FUNCTION Real InverseRadiusForAngularFlux(const Coords &coords,
                                                              const int k, const int j,
                                                              const int i) {
-  if constexpr (parthenon::IsMappedCoord()) {
-    return coords.template FaceArea<X3DIR>(k, j, i) * coords.template Dx<X3DIR>() /
-           coords.CellVolume(k, j, i);
-  }
+  if constexpr (parthenon::IsMappedCoord())
+    return RiotForest::InverseRadius(coords, k, j, i);
   const Real r1 = coords.template Xf<X1DIR>(i);
   const Real r2 = coords.template Xf<X1DIR>(i + 1);
   if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {

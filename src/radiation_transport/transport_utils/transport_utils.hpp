@@ -47,8 +47,7 @@
 
 // Curvilinear geometry?
 static constexpr bool do_angular_fluxes =
-    parthenon::IsCylindricalCoord() ||
-    parthenon::IsCoord<parthenon::UniformSpherical>();
+    RiotForest::IsCylindricalCoord() || parthenon::IsCoord<parthenon::UniformSpherical>();
 
 // Initialization nulls
 static const std::string snull = "UNINITIALIZED STRING";

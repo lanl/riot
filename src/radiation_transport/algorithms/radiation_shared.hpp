@@ -161,11 +161,10 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
   params.Add("nlevel", nlevel);
 
   // Angular mesh
-  const std::string default_amesh =
-      (parthenon::IsCylindricalCoord() ||
-       parthenon::IsCoord<parthenon::UniformSpherical>())
-          ? "latlon"
-          : "geodesic";
+  const std::string default_amesh = (RiotForest::IsCylindricalCoord() ||
+                                     parthenon::IsCoord<parthenon::UniformSpherical>())
+                                        ? "latlon"
+                                        : "geodesic";
   const std::string amesh =
       pin->GetOrAddString(radiation_block, "angular_mesh", default_amesh,
                           "Choose which angular mesh to use for SN");

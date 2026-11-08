@@ -23,6 +23,8 @@
 
 #include <parthenon/package.hpp>
 
+#include "forest/mapped_geometry.hpp"
+
 using namespace parthenon;
 
 //----------------------------------------------------------------------------------------
@@ -39,11 +41,9 @@ class LatLonGrid {
   static Resolution ResolutionForLevel(int nlevel) {
     PARTHENON_REQUIRE(nlevel >= 1, "Lat-lon nlevel must be at least 1.");
     const int ntheta = 2 * nlevel;
-    const int nphi =
-        parthenon::IsCoord<parthenon::UniformSpherical>()
-            ? 1
-            : (parthenon::IsCylindricalCoord() ? 2 * nlevel
-                                                                   : 4 * nlevel);
+    const int nphi = parthenon::IsCoord<parthenon::UniformSpherical>()
+                         ? 1
+                         : (RiotForest::IsCylindricalCoord() ? 2 * nlevel : 4 * nlevel);
     return {ntheta, nphi};
   }
 
@@ -80,8 +80,7 @@ class LatLonGrid {
   Real DCosTheta() const { return 2.0 / ntheta_; }
   // In RZ each stored cell represents both signs of the azimuthal direction cosine.
   Real DPhi() const {
-    return (parthenon::IsCylindricalCoord() ? M_PI : 2.0 * M_PI) /
-           nphi_;
+    return (RiotForest::IsCylindricalCoord() ? M_PI : 2.0 * M_PI) / nphi_;
   }
   void ComputeThetaLevels(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &theta_f,
                           ParArrayHost<Real> &costheta_v, ParArrayHost<Real> &costheta_f);

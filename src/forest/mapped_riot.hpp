@@ -10,30 +10,25 @@
 // license in this material to reproduce, prepare derivative works, distribute copies to
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
-#ifndef RIOT_UTILS_FOREST_MESH_HPP_
-#define RIOT_UTILS_FOREST_MESH_HPP_
+#ifndef FOREST_MAPPED_RIOT_HPP_
+#define FOREST_MAPPED_RIOT_HPP_
 // This file was made in part with generative AI.
 
-#include <optional>
-
-#include <mesh/forest/forest.hpp>
+#include <interface/state_descriptor.hpp>
 #include <parameter_input.hpp>
 
-namespace RiotMesh {
+namespace RiotForest {
 
 //----------------------------------------------------------------------------------------
-//! \fn  std::optional<ForestDefinition> MakeForest
-//! \brief Build a forest-of-trees mesh definition from <riot/forest>, or return nullopt
-//! for the default hyper-rectangular mesh.
-//!
-//! type = ball2d: axisymmetric (R >= 0, z) "cube-in-sphere" mesh for MappedCylindrical
-//! coordinates. A half square core [0, a] x [-a, a] (two trees) is surrounded by four
-//! wedge trees that blend to the circle r = r_inner, followed by polar shells (four
-//! 45-degree trees each) at the radii shell_radii, which start at r_inner. Every tree has
-//! logical x1 along the polar angle and x2 outward (in the core, x1 = R and x2 = |z|),
-//! so the axis is always an inner-x1 boundary and the outer sphere an outer-x2 boundary.
-std::optional<parthenon::forest::ForestDefinition> MakeForest(parthenon::ParameterInput *pin);
+//! \fn  void Initialize
+//! \brief Mapped-mesh setup of the riot package, called once its physics params are set
+//! (a no-op unless the coordinates are mapped):
+//!   - requires that only the physics written for mapped meshes is enabled,
+//!   - marks the geometry curvilinear,
+//!   - adds the param mapped_face_frame (<hydro>/mapped_velocity_frame),
+//!   - adds the physical node positions n.coordinates, the output geometry.
+void Initialize(parthenon::ParameterInput *pin, parthenon::StateDescriptor *riot);
 
-} // namespace RiotMesh
+} // namespace RiotForest
 
-#endif // RIOT_UTILS_FOREST_MESH_HPP_
+#endif // FOREST_MAPPED_RIOT_HPP_

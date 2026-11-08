@@ -29,6 +29,16 @@ set (SRC_LIST
   diagnostics/riot_viz.hpp
   diagnostics/stb_impl.c
 
+  forest/forest_mesh.cpp
+  forest/forest_mesh.hpp
+  forest/mapped_geometry.hpp
+  forest/mapped_hydro.hpp
+  forest/mapped_radiation.cpp
+  forest/mapped_radiation.hpp
+  forest/mapped_regions.hpp
+  forest/mapped_riot.cpp
+  forest/mapped_riot.hpp
+
   gravity/gravity.cpp
   gravity/gravity.hpp
 
@@ -140,8 +150,6 @@ set (SRC_LIST
   riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp
   riot_utils/riot_utils.hpp
-  riot_utils/forest_mesh.hpp
-  riot_utils/forest_mesh.cpp
   riot_utils/riot_utils.cpp
   riot_utils/table_utils.cpp
   riot_utils/table_utils.hpp

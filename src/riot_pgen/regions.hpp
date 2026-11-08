@@ -26,6 +26,8 @@
 #include <utils/constants.hpp>
 #include <utils/error_checking.hpp>
 
+#include "forest/mapped_geometry.hpp"
+#include "forest/mapped_regions.hpp"
 #include "ionization/ionization.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "multiphysics/fill_shared_derived.hpp"
@@ -605,33 +607,6 @@ inline std::array<Real, 4> get_subcell_moments(const std::array<Real, 3> &xlo,
   return moments;
 }
 
-// the physical position of the logical position (x1, x2) on mapped meshes, where
-// subcells are on the logical lattice of the block, and a no-op otherwise
-template <typename Coords>
-inline void map_logical_position(const Coords &coords, Real &x1, Real &x2) {
-  if constexpr (parthenon::IsMappedCoord()) {
-    Real r, z;
-    coords.Map(x1, x2, r, z);
-    x1 = r;
-    x2 = z;
-  }
-}
-
-// physical volume and first moments of the subcell with (logical) bounds [xlo, xhi]
-template <typename Coords>
-inline std::array<Real, 4> get_subcell_moments(const Coords &coords,
-                                               const std::array<Real, 3> &xlo,
-                                               const std::array<Real, 3> &xhi,
-                                               const int ndim) {
-  if constexpr (parthenon::IsMappedCoord()) {
-    // as for cylindrical, the volume, int R dV and int z dV
-    Real m0, m1, m2;
-    coords.LogicalQuadMoments(xlo[0], xlo[1], xhi[0], xhi[1], m0, m1, m2);
-    return {2.0 * M_PI * m0, 2.0 * M_PI * m1, 2.0 * M_PI * m2, 0.0};
-  }
-  return get_subcell_moments(xlo, xhi, ndim);
-}
-
 class BlockInitData {
   enum region_loop_bounds { state = 0, mask = 1 };
 
@@ -653,7 +628,7 @@ class BlockInitData {
   bool do_3t, fully_ionized;
 
   inline auto coordinate_velocities(Real *v) {
-    if constexpr (parthenon::IsCylindricalCoord()) {
+    if constexpr (RiotForest::IsCylindricalCoord()) {
       // convert cartesian vector components to cylindrical
       // we'll assume we're on the x-z plane at y = 0, so theta = 0
       return std::make_tuple(v[0], v[2], v[1]);
@@ -1026,11 +1001,10 @@ class BlockInitData {
     // max number of faces in the fully refined mesh
     const std::int64_t n1 = (nx1 + 2 * nghost) * nref + 1;
     const std::int64_t n2 = ndim > 1 ? (nx2 + 2 * nghost) * nref + 1 : 1;
-    // subcells are on the lattice of the block's logical coordinates, which are mapped to
-    // physical positions on mapped meshes
-    xlo[0] = coords->Xf<X1DIR>(0);
-    xlo[1] = coords->Xf<X2DIR>(0);
-    xlo[2] = coords->Xf<X3DIR>(0);
+    xlo[0] = coords->Xf<X1DIR>(0, 0, 0);
+    xlo[1] = coords->Xf<X2DIR>(0, 0, 0);
+    xlo[2] = coords->Xf<X3DIR>(0, 0, 0);
+    RiotForest::LogicalOrigin(*coords, xlo);
     // assume dx is constant on the block
     dx[0] = coords->Dxf<X1DIR>(0) / nref;
     dx[1] = coords->Dxf<X2DIR>(0) / nref;
@@ -1071,7 +1045,7 @@ class BlockInitData {
       for (std::size_t n = 0; n < distinct.size(); n++) {
         for (int d = 0; d < 3; d++)
           xs(n, d) = xlo[d] + distinct[n][d] * dx[d];
-        map_logical_position(*coords, xs(n, 0), xs(n, 1));
+        RiotForest::MapLogicalPosition(*coords, xs(n, 0), xs(n, 1), xs(n, 2));
       }
       if (distinct.size() > 0) {
         const auto reg_id = set_mask(xs);
@@ -1191,7 +1165,8 @@ class BlockInitData {
       if (s.child < 0) {
         std::array<Real, 3> lo, hi;
         bounds(s, l, lo, hi);
-        auto moments = get_subcell_moments(*coords, lo, hi, ndim);
+        auto moments = get_subcell_moments(lo, hi, ndim);
+        RiotForest::SubcellMoments(*coords, lo, hi, moments);
         Real wgt = 1.0 / (1 << ndim);
         // add each corner's share in turn, holding the sums in registers over runs of
         // corners in the same region
@@ -1227,7 +1202,8 @@ class BlockInitData {
       {
         std::array<Real, 3> lo, hi;
         bounds(c, 0, lo, hi);
-        auto moments = get_subcell_moments(*coords, lo, hi, ndim);
+        auto moments = get_subcell_moments(lo, hi, ndim);
+        RiotForest::SubcellMoments(*coords, lo, hi, moments);
         auto norm = 1.0 / moments[0];
         for (int r = 0; r < vol_moments.size(); r++) {
           for (int m = 0; m < 4; m++)

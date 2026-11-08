@@ -576,7 +576,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         [[maybe_unused]] auto &arcw_ = arcw;
         if constexpr (do_angular_fluxes) {
           Real &divfa = da_(b, n, k, j, i) = 0.0;
-          const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, k, j, i) / wght_(aa);
+          const Real mcw_ix1 =
+              -cc * InverseRadiusForAngularFlux(coords, k, j, i) / wght_(aa);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb);
             const Real &iu = (na > 0) ? ii(b, n, k, j, i)

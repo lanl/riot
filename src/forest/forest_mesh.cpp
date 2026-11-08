@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -23,11 +24,12 @@
 #include <coordinates/coordinates.hpp>
 #include <utils/error_checking.hpp>
 
-#include "riot_utils/forest_mesh.hpp"
+#include "forest/forest_mesh.hpp"
 
-namespace RiotMesh {
+namespace RiotForest {
 
 using parthenon::MappedPatch;
+using parthenon::MappedPatch3D;
 using parthenon::Real;
 using parthenon::forest::Edge;
 using parthenon::forest::ForestDefinition;
@@ -67,8 +69,9 @@ ForestDefinition MakeBall2D(parthenon::ParameterInput *pin) {
       (wedge_edge == "line") ? MappedPatch::Line : MappedPatch::EquiAngle;
   PARTHENON_REQUIRE(a > 0.0 && a < r_inner / std::sqrt(2.0),
                     "riot/forest/core_half_width must be in (0, r_inner/sqrt(2))");
-  PARTHENON_REQUIRE(radii.size() >= 2 && std::abs(radii[0] - r_inner) <= 1.e-12 * r_inner,
-                    "riot/forest/shell_radii must start at r_inner and have >= 2 entries");
+  PARTHENON_REQUIRE(
+      radii.size() >= 2 && std::abs(radii[0] - r_inner) <= 1.e-12 * r_inner,
+      "riot/forest/shell_radii must start at r_inner and have >= 2 entries");
   for (int s = 1; s < radii.size(); ++s)
     PARTHENON_REQUIRE(radii[s] > radii[s - 1], "riot/forest/shell_radii must increase");
 
@@ -164,15 +167,107 @@ ForestDefinition MakeBall2D(parthenon::ParameterInput *pin) {
   return fd;
 }
 
+ForestDefinition MakeBall3D(parthenon::ParameterInput *pin) {
+  constexpr char block[] = "riot/forest";
+  const Real r_inner = pin->GetReal(block, "r_inner");
+  const Real a = pin->GetOrAddReal(block, "core_half_width", 0.45 * r_inner);
+  auto radii = pin->GetVector<Real>(block, "shell_radii");
+  const bool log_radial = pin->GetOrAddBoolean(block, "log_radial", true);
+  PARTHENON_REQUIRE(pin->GetOrAddString(block, "core_edge", "line") == "line",
+                    "riot/forest/core_edge must be line for type = ball3d");
+  PARTHENON_REQUIRE(a > 0.0 && a < r_inner / std::sqrt(3.0),
+                    "riot/forest/core_half_width must be in (0, r_inner/sqrt(3))");
+  PARTHENON_REQUIRE(
+      radii.size() >= 2 && std::abs(radii[0] - r_inner) <= 1.e-12 * r_inner,
+      "riot/forest/shell_radii must start at r_inner and have >= 2 entries");
+  for (int s = 1; s < radii.size(); ++s)
+    PARTHENON_REQUIRE(radii[s] > radii[s - 1], "riot/forest/shell_radii must increase");
+
+  ForestDefinition fd;
+  fd.SetRootLevel(pin->GetOrAddInteger(block, "root_level", 0));
+  const std::array<Real, 3> lmin{0.0, 0.0, 0.0};
+  const std::array<Real, 3> lmax{1.0, 1.0, 1.0};
+
+  // Every node is a cube corner direction c in {-1, 1}^3 at a layer: 0 for the corners
+  // a c of the core and 1 + s for the points radii[s] c / sqrt(3) of the shells
+  auto key = [](int layer, const Real c[3]) -> std::int64_t {
+    auto sgn = [](Real x) { return x > 0.0 ? 2 : 0; };
+    return 27 * layer + 9 * sgn(c[0]) + 3 * sgn(c[1]) + sgn(c[2]);
+  };
+
+  // Core: x1, x2, x3 = x, y, z
+  std::int64_t id = 0;
+  {
+    std::array<std::int64_t, 8> nodes;
+    for (int n = 0; n < 8; ++n) {
+      const Real c[3] = {2.0 * (n & 1) - 1.0, 2.0 * ((n >> 1) & 1) - 1.0,
+                         2.0 * ((n >> 2) & 1) - 1.0};
+      nodes[n] = key(0, c);
+    }
+    const Real xlo[3] = {-a, -a, -a}, xhi[3] = {a, a, a};
+    fd.AddHex(id++, nodes, lmin, lmax, MappedPatch3D::MakeBox(xlo, xhi));
+  }
+
+  // The trees over the cube face with outward normal n = s e_d have logical frame
+  // (x1, x2, x3) = (u, v, outward) with u = e_(d+1), v = s e_(d+2), which is right handed,
+  // so the outer sphere is always an outer-x3 boundary
+  const int nshell = radii.size() - 1;
+  for (int d = 0; d < 3; ++d) {
+    for (const int s : {-1, 1}) {
+      Real nn[3] = {0.0, 0.0, 0.0}, uu[3] = {0.0, 0.0, 0.0}, vv[3] = {0.0, 0.0, 0.0};
+      nn[d] = s;
+      uu[(d + 1) % 3] = 1.0;
+      vv[(d + 2) % 3] = s;
+      // nodes of the tree between layers l and l + 1
+      auto nodes = [&](int l) {
+        std::array<std::int64_t, 8> out;
+        for (int n = 0; n < 8; ++n) {
+          const Real A = 2.0 * (n & 1) - 1.0, B = 2.0 * ((n >> 1) & 1) - 1.0;
+          Real c[3];
+          for (int e = 0; e < 3; ++e)
+            c[e] = nn[e] + A * uu[e] + B * vv[e];
+          out[n] = key(l + ((n >> 2) & 1), c);
+        }
+        return out;
+      };
+      fd.AddHex(id++, nodes(0), lmin, lmax,
+                MappedPatch3D::MakeWedge(nn, uu, vv, a, radii[0]));
+      for (int sh = 0; sh < nshell; ++sh) {
+        fd.AddHex(id++, nodes(1 + sh), lmin, lmax,
+                  MappedPatch3D::MakeShell(nn, uu, vv, radii[sh], radii[sh + 1],
+                                           log_radial));
+      }
+      // Outer sphere: the upper (x3) face of the outermost shell
+      const auto top = nodes(nshell);
+      fd.AddBC(std::array<std::int64_t, 4>{top[4], top[5], top[6], top[7]});
+    }
+  }
+  return fd;
+}
+
 } // namespace
 
 std::optional<ForestDefinition> MakeForest(parthenon::ParameterInput *pin) {
   const std::string type = pin->GetOrAddString("riot/forest", "type", "none");
   if (type == "none") return std::nullopt;
-  PARTHENON_REQUIRE(type == "ball2d", "Unknown riot/forest/type " + type);
+  PARTHENON_REQUIRE(type == "ball2d" || type == "ball3d",
+                    "Unknown riot/forest/type " + type);
+  if (type == "ball3d") {
+    PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::MappedCartesian>(),
+                      "riot/forest/type = ball3d requires MappedCartesian coordinates");
+    return MakeBall3D(pin);
+  }
   PARTHENON_REQUIRE(parthenon::IsCoord<parthenon::MappedCylindrical>(),
                     "riot/forest/type = ball2d requires MappedCylindrical coordinates");
   return MakeBall2D(pin);
 }
 
-} // namespace RiotMesh
+std::optional<ForestDefinition> MakeForest(parthenon::ParthenonManager &pman) {
+  auto forest_def = MakeForest(pman.pinput.get());
+  PARTHENON_REQUIRE_THROWS(
+      !(forest_def && (pman.restartReader || pman.IsAnalysis())),
+      "Restarts and analysis are not supported on riot/forest meshes");
+  return forest_def;
+}
+
+} // namespace RiotForest

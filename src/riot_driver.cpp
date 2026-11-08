@@ -64,8 +64,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
     PARTHENON_FAIL(
         "riot does not support more than one dimension with spherical coordinates");
   }
-  if ((parthenon::IsCoord<parthenon::UniformCylindrical>() || parthenon::IsMappedCoord()) &&
-      pm->ndim > 2) {
+  if (parthenon::IsCoord<parthenon::UniformCylindrical>() && pm->ndim > 2) {
     PARTHENON_FAIL(
         "riot does not support more than two dimensions with cylindrical coordinates");
   }

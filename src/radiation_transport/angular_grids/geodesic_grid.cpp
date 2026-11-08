@@ -31,6 +31,7 @@
 #include <parthenon/package.hpp>
 
 // Riot headers
+#include "forest/mapped_geometry.hpp"
 #include "radiation_transport/angular_grids/geodesic_grid.hpp"
 
 using namespace parthenon;
@@ -423,7 +424,7 @@ void GeodesicGrid::ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
   // solid-angle average <n_curv>.  Confirm it agrees to round-off with g_a built from the
   // exact symmetrized edge arrays the divfa operator uses (both equal the same
   // divergence-theorem integral); this validates the edge gflux/arc_weights construction.
-  if constexpr (parthenon::IsCylindricalCoord() ||
+  if constexpr (RiotForest::IsCylindricalCoord() ||
                 parthenon::IsCoord<parthenon::UniformSpherical>()) {
     constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
     constexpr Real kappa = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2.0 : 1.0;

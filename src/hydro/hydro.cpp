@@ -26,6 +26,7 @@
 #include <pack/sparse_pack/sparse_pack.hpp>
 #include <parthenon/package.hpp>
 
+#include "forest/mapped_hydro.hpp"
 #include "hydro.hpp"
 #include "materials/materials.hpp"
 #include "microphysics/eos_riot.hpp"
@@ -92,12 +93,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   int stencil_width = std::max(recon_width, vfrac_recon_width);
   params.Add("recon", recon_tag);
   params.Add("vfrac_recon", vfrac_recon_tag);
-  // On mapped (forest) meshes, reconstruct the meridional velocity in the frame of each
-  // face (the mesh's own basis) rather than the global (R, z) basis
-  const std::string vel_frame = pin->GetOrAddString(
-      "hydro", "mapped_velocity_frame", "face", std::vector<std::string>{"face", "global"},
-      "Velocity reconstruction basis on mapped meshes");
-  params.Add("recon_face_frame", vel_frame == "face");
   const bool do_thinc = pin->GetOrAddBoolean("physics", "thinc", false);
   if (do_thinc) stencil_width = std::max(stencil_width, 1);
   params.Add("stencil_width", stencil_width);
@@ -604,10 +599,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
           } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
             geom(kji) = 1.0 / r0;
           } else if constexpr (parthenon::IsMappedCoord()) {
-            // planar area over volume per radian, which balances the flux divergence of
-            // a uniform pressure exactly (and is 1 / r0 on rectilinear cells)
-            geom(kji) = coords.FaceArea<X3DIR>(k, j, i) * coords.Dx<X3DIR>() /
-                        coords.CellVolume(k, j, i);
+            geom(kji) = RiotForest::InverseRadius(coords, k, j, i);
           } else {
             PARTHENON_FAIL("Unknown coordinate system!");
           }
@@ -753,20 +745,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           for (int d = 0; d < ndim; d++) {
             Real vphys =
                 pv(ccbulk::velocity(d), idx) * coords.Scale<TE::CC>(d + 1, k, j, i);
-            if constexpr (parthenon::IsMappedCoord()) {
-              // logical directions are not aligned with (R, z): use the velocity
-              // normal to the lower face in direction d
-              if (d < 2) {
-                Real n1, n2, n3;
-                if (d == 0) {
-                  coords.FaceNormal<X1DIR>(k, j, i, n1, n2, n3);
-                } else {
-                  coords.FaceNormal<X2DIR>(k, j, i, n1, n2, n3);
-                }
-                vphys = n1 * pv(ccbulk::velocity(0), idx) +
-                        n2 * pv(ccbulk::velocity(1), idx);
-              }
-            }
+            RiotForest::FaceNormalVelocity(coords, pv, idx, d, k, j, i, vphys);
             const Real csig = std::abs(vphys) + cs;
             const Real max_sig = std::max(csig, pv(ccbulk::max_signal(d), idx));
             denom += max_sig / coords.CellWidth(d + 1, k, j, i);

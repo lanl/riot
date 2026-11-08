@@ -138,7 +138,7 @@ void LatLonGrid::ApplyFiniteVolumeCorrections(
   // solid-angle average <n_curv>.  Confirm it agrees to round-off with g_a built from the
   // exact symmetrized edge arrays the divfa operator uses (both equal the same
   // divergence-theorem integral); this validates the edge gflux/arc_weights construction.
-  if constexpr (parthenon::IsCylindricalCoord() ||
+  if constexpr (RiotForest::IsCylindricalCoord() ||
                 parthenon::IsCoord<parthenon::UniformSpherical>()) {
     constexpr int curv_comp = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 0;
     constexpr Real kappa = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2.0 : 1.0;
@@ -211,8 +211,7 @@ void LatLonGrid::ComputeWeights(ParArrayHost<Real> &costheta_f, ParArrayHost<Rea
       const int idx = it * nphi_ + ip;
       const Real omega =
           (costheta_f(it) - costheta_f(it + 1)) * (phi_f(ip + 1) - phi_f(ip));
-      const Real multiplicity =
-          parthenon::IsCylindricalCoord() ? 2.0 : 1.0;
+      const Real multiplicity = RiotForest::IsCylindricalCoord() ? 2.0 : 1.0;
       weights_h(idx) = multiplicity * omega / (4.0 * M_PI);
     }
   }
@@ -234,7 +233,7 @@ void LatLonGrid::ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
     for (int ip = 0; ip < nphi_; ++ip) {
       const int idx = it * nphi_ + ip;
       int nneigh = 0;
-      constexpr bool folded = parthenon::IsCylindricalCoord();
+      constexpr bool folded = RiotForest::IsCylindricalCoord();
       const int j_left =
           (folded && (ip == 0)) ? idx : it * nphi_ + ((ip - 1 + nphi_) % nphi_);
       if (folded || (j_left != idx)) ind_neighbors_h(idx, nneigh++) = j_left;
@@ -255,7 +254,7 @@ void LatLonGrid::ComputeNeighborConnectivity(ParArrayHost<int> &num_neighbors_h,
   for (int n = 0; n < nangles; ++n) {
     for (int nb = 0; nb < num_neighbors_h(n); ++nb) {
       const int j = ind_neighbors_h(n, nb);
-      if ((nphi_ > 1 || parthenon::IsCylindricalCoord()) && nb < 2) {
+      if ((nphi_ > 1 || RiotForest::IsCylindricalCoord()) && nb < 2) {
         ind_neighbors_edges_h(n, nb) = (j == n) ? nb : 1 - nb;
         continue;
       }
@@ -314,8 +313,7 @@ void LatLonGrid::ComputeArcLengths(ParArrayHost<Real> &theta_f, ParArrayHost<Rea
         cart_pos_mid_h(idx, nb, 1) = sintheta * std::sin(phi_edge);
         cart_pos_mid_h(idx, nb, 2) = std::cos(theta_edge);
         // Scale face and cell measures together to preserve the angular divergence.
-        const Real multiplicity =
-            parthenon::IsCylindricalCoord() ? 2.0 : 1.0;
+        const Real multiplicity = RiotForest::IsCylindricalCoord() ? 2.0 : 1.0;
         arc_weights_h(idx, nb) = multiplicity * arc_weight;
       }
     }
@@ -366,7 +364,7 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
           unit_zeta = (it_j < it) ? -1.0 : +1.0;
         }
 
-        if constexpr (parthenon::IsCylindricalCoord()) {
+        if constexpr (RiotForest::IsCylindricalCoord()) {
           if (j == idx) continue;
           const Real sinth = std::sqrt(SQR(xm) + SQR(ym));
           const Real sin_phi = (sinth > 0.0) ? ym / sinth : 0.0;
@@ -404,7 +402,7 @@ void LatLonGrid::ComputeUnitFluxes(ParArrayHost<Real> &theta_v, ParArrayHost<Rea
 //! permutation (it, ip) -> (ntheta-1-it, ip) for n_z, phi -> pi-phi for n_x, and
 //! phi -> -phi for n_y (the identity in RZ, where cells represent both signs of n_y).
 void LatLonGrid::BuildReflectionMaps(const std::array<bool, 3> &comps) {
-  constexpr bool folded = parthenon::IsCylindricalCoord();
+  constexpr bool folded = RiotForest::IsCylindricalCoord();
   const int nhalf = folded ? nphi_ : nphi_ / 2;
   PARTHENON_REQUIRE(!comps[0] || folded || nphi_ % 2 == 0,
                     "Lat-lon reflection about n_x requires an even nphi.");

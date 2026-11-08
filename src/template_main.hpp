@@ -18,9 +18,9 @@
 #include <parthenon_manager.hpp>
 
 #include "diagnostics/diagnostics.hpp"
+#include "forest/forest_mesh.hpp"
 #include "riot.hpp"
 #include "riot_pgen/pgen.hpp"
-#include "riot_utils/forest_mesh.hpp"
 #ifdef RIOT_ENABLE_PYTHON
 #include "riot_utils/py_init.hpp"
 #endif
@@ -57,11 +57,8 @@ int main(parthenon::ParthenonManager &pman) {
   }
   pman.app_input->PostStepDiagnosticsInLoop = diagnostics::PostStepDiagnosticsInLoop;
 
-  // call ParthenonInit to set up the mesh, on a forest of trees if requested
-  auto forest_def = RiotMesh::MakeForest(pman.pinput.get());
-  PARTHENON_REQUIRE_THROWS(!(forest_def && (pman.restartReader || pman.IsAnalysis())),
-                           "Restarts and analysis are not supported on riot/forest meshes");
-  pman.ParthenonInitPackagesAndMesh(forest_def);
+  // call ParthenonInit to set up the mesh
+  pman.ParthenonInitPackagesAndMesh(RiotForest::MakeForest(pman));
 
   // Initialize the driver
   T driver(pman.pinput.get(), pman.app_input.get(), pman.pmesh.get());
