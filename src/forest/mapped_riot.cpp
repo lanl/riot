@@ -26,6 +26,19 @@ namespace RiotForest {
 namespace {
 constexpr char node_coordinates_name[] = "n.coordinates";
 
+// Physical (R, z, 0) (or (x, y, z)) of node (k, j, i). Not in the kernel, as nvcc does
+// not let a device lambda first capture a variable in an if constexpr branch
+template <typename Coords>
+KOKKOS_INLINE_FUNCTION void NodePosition(const Coords &coords, const int k, const int j,
+                                         const int i, Real p[3]) {
+  if constexpr (parthenon::IsCoord<parthenon::MappedCartesian>()) {
+    coords.Vertex(k, j, i, p[0], p[1], p[2]);
+  } else {
+    coords.Vertex(j, i, p[0], p[1]);
+    p[2] = 0.0;
+  }
+}
+
 template <typename Coords>
 void FillNodeCoordinates(MeshBlock *pmb, const Coords &coords) {
   if constexpr (parthenon::IsMappedCoord()) {
@@ -38,19 +51,10 @@ void FillNodeCoordinates(MeshBlock *pmb, const Coords &coords) {
     pmb->par_for(
         "FillNodeCoordinates", kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
         KOKKOS_LAMBDA(const int k, const int j, const int i) {
-          if constexpr (parthenon::IsCoord<parthenon::MappedCartesian>()) {
-            Real xx, yy, zz;
-            coords.Vertex(k, j, i, xx, yy, zz);
-            x(0, k, j, i) = xx;
-            x(1, k, j, i) = yy;
-            x(2, k, j, i) = zz;
-          } else {
-            Real r, z;
-            coords.Vertex(j, i, r, z);
-            x(0, k, j, i) = r;
-            x(1, k, j, i) = z;
-            x(2, k, j, i) = 0.0;
-          }
+          Real p[3];
+          NodePosition(coords, k, j, i, p);
+          for (int d = 0; d < 3; ++d)
+            x(d, k, j, i) = p[d];
         });
   }
 }

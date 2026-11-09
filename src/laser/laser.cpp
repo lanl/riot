@@ -779,6 +779,7 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
   const std::array<Real, 3> mesh_xmin = pm->mesh_size.xmin_;
   const std::array<Real, 3> mesh_xmax = pm->mesh_size.xmax_;
   const int ndim = pm->ndim;
+  constexpr bool check_domain = !parthenon::IsMappedCoord();
   int dj = ndim > 1 ? 1 : 0;
   int dk = ndim > 2 ? 1 : 0;
 
@@ -871,8 +872,10 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
 
           // A particle that leaves the domain is done, even through a periodic boundary
           p.store_position(pack, n);
-          // (on mapped meshes, where the mesh size is logical, Locate finds that it left)
-          if constexpr (!parthenon::IsMappedCoord()) {
+          // (on mapped meshes, where the mesh size is logical, Locate finds that it left).
+          // Not if constexpr, as nvcc does not let a device lambda first capture a
+          // variable in one
+          if (check_domain) {
             const Real xm[3] = {pack(lukewarm::x(), n), pack(lukewarm::y(), n),
                                 pack(lukewarm::z(), n)};
             bool outside_domain = false;
