@@ -28,6 +28,7 @@
 #include <singularity-eos/eos/eos.hpp>
 
 // Riot headers
+#include "forest/mapped_radiation.hpp"
 #include "hydro/hydro.hpp"
 #include "microphysics/eos_riot.hpp"
 #include "microphysics/opacity_models.hpp"
@@ -188,6 +189,7 @@ Real EstimateTimestep(MeshData<Real> *md, const Real dt_ratio_hyperbolic) {
                                    threed * 1.0 / coords.CellWidth(X3DIR, 0, 0, 0)));
       },
       Kokkos::Min<Real>(min_dx));
+  RiotForest::MinCellWidth(md, min_dx);
   const Real min_sdt = min_dx / cc;
 
   // Angular fluxes
@@ -535,10 +537,12 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         // Calculate fluxes
         Real cn = cc * cp(aa, NDIR[X1DIR - 1]);
         Real dx = coords.CellWidth<X1DIR>(k, j, i);
+        RiotForest::FaceSpeed<X1DIR>(coords, cp, NDIR, cc, aa, k, j, i, cn);
         ii.flux(b, X1DIR, n, k, j, i) =
             SpatialFlux<X1DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
         if (i == ib.e) {
           dx = coords.CellWidth<X1DIR>(k, j, i + 1);
+          RiotForest::FaceSpeed<X1DIR>(coords, cp, NDIR, cc, aa, k, j, i + 1, cn);
           ii.flux(b, X1DIR, n, k, j, i + 1) =
               SpatialFlux<X1DIR>(ii, cn, b, n, k, j, i + 1, op, gg, beta, dx, tmax);
         }
@@ -546,10 +550,12 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         if (multid) { // Cartesian or RZ
           cn = cc * cp(aa, NDIR[X2DIR - 1]);
           dx = coords.CellWidth<X2DIR>(k, j, i);
+          RiotForest::FaceSpeed<X2DIR>(coords, cp, NDIR, cc, aa, k, j, i, cn);
           ii.flux(b, X2DIR, n, k, j, i) =
               SpatialFlux<X2DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
           if (j == jb.e) {
             dx = coords.CellWidth<X2DIR>(k, j + 1, i);
+            RiotForest::FaceSpeed<X2DIR>(coords, cp, NDIR, cc, aa, k, j + 1, i, cn);
             ii.flux(b, X2DIR, n, k, j + 1, i) =
                 SpatialFlux<X2DIR>(ii, cn, b, n, k, j + 1, i, op, gg, beta, dx, tmax);
           }
@@ -558,10 +564,12 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         if (threed) { // 3D Cartesian only
           cn = cc * cp(aa, NDIR[X3DIR - 1]);
           dx = coords.CellWidth<X3DIR>(k, j, i);
+          RiotForest::FaceSpeed<X3DIR>(coords, cp, NDIR, cc, aa, k, j, i, cn);
           ii.flux(b, X3DIR, n, k, j, i) =
               SpatialFlux<X3DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
           if (k == kb.e) {
             dx = coords.CellWidth<X3DIR>(k + 1, j, i);
+            RiotForest::FaceSpeed<X3DIR>(coords, cp, NDIR, cc, aa, k + 1, j, i, cn);
             ii.flux(b, X3DIR, n, k + 1, j, i) =
                 SpatialFlux<X3DIR>(ii, cn, b, n, k + 1, j, i, op, gg, beta, dx, tmax);
           }

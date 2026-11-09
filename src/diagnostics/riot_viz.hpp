@@ -633,12 +633,13 @@ bool LayerMayShow(const RenderingParams &rp, const int cam, const int ilay, cons
   return true;
 }
 
-// Rays step exactly from face to face of Cartesian cells, of 2D cylindrical (R, z) cells
-// and of 1D spherical shells, so a layer that cannot show in a block cannot be met in a
-// step through it either
+// Rays step exactly from face to face of Cartesian cells, of 2D cylindrical (R, z) cells,
+// of 1D spherical shells and of mapped cells, so a layer that cannot show in a block
+// cannot be met in a step through it either
 KOKKOS_INLINE_FUNCTION
 bool CullsBlocks(const int ndim) {
   return parthenon::IsCoord<parthenon::UniformCartesian>() ||
+         parthenon::IsMappedCoord() ||
          (parthenon::IsCoord<parthenon::UniformCylindrical>() && ndim == 2) ||
          (parthenon::IsCoord<parthenon::UniformSpherical>() && ndim == 1);
 }
@@ -650,6 +651,13 @@ bool CullsBlocks(const int ndim) {
 // r <= box(cam, 1) on spherical ones. A ray crosses the hull along one stretch, and before
 // and after it there is nothing to draw.
 struct ShowVolume {
+  // the hulls of mapped meshes are those of the mesh coordinates they hold positions in
+  static constexpr bool kCartesianHull =
+      parthenon::IsCoord<parthenon::UniformCartesian>() ||
+      parthenon::IsCoord<parthenon::MappedCartesian>();
+  static constexpr bool kCylindricalHull =
+      parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+      parthenon::IsCoord<parthenon::MappedCylindrical>();
   parthenon::ParArray2D<Real> box;
   // how far the hull is grown, which keeps its faces off those of the blocks
   Real margin = 0.0;
@@ -694,10 +702,10 @@ struct ShowVolume {
       t0 = std::max(t0, (-qb - s) / qa);
       t1 = std::min(t1, (-qb + s) / qa);
     };
-    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+    if constexpr (kCartesianHull) {
       for (int d = 0; d < 3; d++)
         slab(x[d], n[d], box(cam, 2 * d) - grow, box(cam, 2 * d + 1) + grow);
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    } else if constexpr (kCylindricalHull) {
       ball(2, box(cam, 1) + grow);
       slab(x[2], n[2], box(cam, 2) - grow, box(cam, 3) + grow);
     } else {
@@ -713,9 +721,9 @@ struct ShowVolume {
       return x0 >= box(cam, 2 * d) - grow && x0 <= box(cam, 2 * d + 1) + grow;
     };
     const Real rmax = box(cam, 1) + grow;
-    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+    if constexpr (kCartesianHull) {
       return in(x[0], 0) && in(x[1], 1) && in(x[2], 2);
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    } else if constexpr (kCylindricalHull) {
       return x[0] * x[0] + x[1] * x[1] <= rmax * rmax && in(x[2], 1);
     } else {
       return x[0] * x[0] + x[1] * x[1] + x[2] * x[2] <= rmax * rmax;
@@ -779,6 +787,11 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     const bool cull = CullsBlocks(ndim);
     const uint32_t may = cull ? may_show(blk, cam_id) : ~uint32_t(0);
     int ninteract = 0;
+    // slices in one plane meet the ray at one point, so whether it is on the block is
+    // found once for them
+    std::array<Real, max_layers> seen_ht;
+    std::array<bool, max_layers> seen_on;
+    int nseen = 0;
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
       data_cell[ilay] = -1;
       mask_slo[ilay] = std::numeric_limits<Real>::infinity();
@@ -799,10 +812,18 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
                          rp.slice_n(cam_id, ilay, 2) * zp;
           Real ht = n_dot_p / n_dot_v;
           if (ht > -kMarchTiny && a < rp.ac(cam_id, ilay, 0)) {
-            std::array<Real, 3> temp;
-            for (int d = 0; d < 3; d++)
-              temp[d] = x[d] + ht * v[d];
-            interact[ilay] = on_block_fuzzy(temp);
+            int k = 0;
+            while (k < nseen && seen_ht[k] != ht)
+              k++;
+            if (k == nseen) {
+              std::array<Real, 3> temp;
+              for (int d = 0; d < 3; d++)
+                temp[d] = x[d] + ht * v[d];
+              seen_ht[k] = ht;
+              seen_on[k] = on_block_fuzzy(temp);
+              nseen++;
+            }
+            interact[ilay] = seen_on[k];
           }
         }
       }
@@ -828,11 +849,19 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   KOKKOS_INLINE_FUNCTION
   bool on_block_fuzzy(std::array<Real, 3> &xp) {
     constexpr Real tol = RayTrace::kFaceEps;
+    if constexpr (parthenon::IsMappedCoord()) {
+      // as for the slice a ray meets far from the block
+      const Real lo[3] = {bounds.x_min, bounds.y_min, bounds.z_min};
+      const Real hi[3] = {bounds.x_max, bounds.y_max, bounds.z_max};
+      if (RiotForest::FarFromBlock(this->coords, xp.data(), lo, hi)) return false;
+    }
     const auto xb = cart_to_coord(xp);
     if (xb[0] < bounds.x_min - tol || xb[0] > bounds.x_max + tol) return false;
     if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) return true;
     if (xb[1] < bounds.y_min - tol || xb[1] > bounds.y_max + tol) return false;
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) return true;
+    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                  RiotForest::IsMappedCylindrical())
+      return true;
     if (xb[2] < bounds.z_min - tol || xb[2] > bounds.z_max + tol) return false;
     return true;
   }
@@ -868,6 +897,10 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     xc[0] = 0.5 * (bounds.x_min + bounds.x_max);
     xc[1] = 0.5 * (bounds.y_min + bounds.y_max);
     xc[2] = 0.5 * (bounds.z_min + bounds.z_max);
+    if constexpr (parthenon::IsMappedCoord()) {
+      // commit writes the position
+      RiotForest::LogicalToCart(this->coords, xc.data(), x.data(), x.data());
+    }
   }
 
   // The masks of layer ilay at the point xp on the ray. Each layer keeps the stretch of
@@ -950,6 +983,15 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
             v[d - 1];
         h = std::min(h, ht);
       });
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      using Base = RayTrace::IntegratorBase<VarPack_t>;
+      // the cell is curved, but its faces are where the logical coordinates are
+      const Real lo[3] = {Base::template xlo<X1DIR>(), Base::template xlo<X2DIR>(),
+                          Base::template xlo<X3DIR>()};
+      const Real hi[3] = {Base::template xhi<X1DIR>(), Base::template xhi<X2DIR>(),
+                          Base::template xhi<X3DIR>()};
+      h = RiotForest::CellExit(this->coords, this->ndim, x.data(), v.data(), lo, hi,
+                               xc.data());
     } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
       using Base = RayTrace::IntegratorBase<VarPack_t>;
       // R(h)^2 = r2 + bq h + aq h^2 along the straight ray
@@ -1072,6 +1114,10 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     int layer_id = -1;
     int contour_id = -1;
     int slice_id = -1;
+    // the coordinates of the end of the step, shared by the contour layers until a layer
+    // shortens the step
+    Real final_h = -1.0;
+    std::array<Real, 3> final_coords;
     for (int ilay = 0; ilay < rp.nlayers(cam_id); ilay++) {
       if (!interact[ilay]) continue;
       // first distance to slices OR construct the cell interpolant
@@ -1117,7 +1163,10 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         // }
         load_data(ilay);
         Real initial = get_value(ilay);
-        auto final_coords = cart_to_coord(final_x);
+        if (h != final_h) {
+          final_coords = cart_to_coord(final_x);
+          final_h = h;
+        }
         Real final = get_value(ilay, final_coords[0], final_coords[1], final_coords[2]);
         Real ht_min = 1.0;
         Real h0 = h;
@@ -1330,6 +1379,8 @@ struct CameraPointOnBlock {
   // start(p, :) in mesh coordinates (start_inside), or not at all
   parthenon::ParArray1D<int> kind;
   parthenon::ParArray2D<Real> start;
+  // on mapped meshes, the local block each point is in, or -1
+  parthenon::ParArray1D<int> owner;
   static constexpr int start_none = 0, start_at_point = 1, start_inside = 2;
   // the directions rays are traced along, as in CullsBlocks()
   static constexpr int start_dims = parthenon::IsCoord<parthenon::UniformCartesian>() ? 3
@@ -1346,6 +1397,7 @@ struct CameraPointOnBlock {
   KOKKOS_INLINE_FUNCTION
   bool operator()(const int b, const int p) const {
     if (kind(p) == start_none) return false;
+    if constexpr (parthenon::IsMappedCoord()) return owner(p) == b;
     if (kind(p) == start_inside) {
       for (int d = 0; d < start_dims; d++) {
         if (!Inside(b, d, start(p, d))) return false;
@@ -1374,6 +1426,19 @@ struct CameraPointOnBlock {
       return true;
     }
   }
+};
+
+// The rays of the cameras on a MeshData, made a batch of camera points at a time as the
+// tracing goes rather than all at first, so that they pass from rank to rank in a
+// stream: each rank traces a batch while those it passed on are traced further on,
+// rather than every rank waiting on the slowest to finish all of its rays
+struct CameraRays {
+  std::optional<CameraPointOnBlock> on_block;
+  // the camera points that could start on the MeshData, and where in them each batch
+  // starts, after which the last ends
+  parthenon::ParArray1D<int> cand;
+  std::vector<int> batch_start = {0};
+  int NumBatches() const { return static_cast<int>(batch_start.size()) - 1; }
 };
 struct TracerInfo {
   using DescriptorType =

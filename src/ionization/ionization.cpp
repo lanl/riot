@@ -23,6 +23,7 @@
 
 #include <singularity-eos/eos/eos.hpp>
 
+#include "forest/mapped_hydro.hpp"
 #include "hydro/hydro.hpp"
 #include "ionization.hpp"
 #include "ionization_base.hpp"
@@ -472,6 +473,7 @@ TaskStatus CalculateElectronPDVWork(MeshData<Real> *u0, MeshData<Real> *dudt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
+  using RiotForest::StoredFaceNormalVelocity;
 
   auto pm = u0->GetParentPointer();
   const int ndim = pm->ndim;
@@ -505,21 +507,25 @@ TaskStatus CalculateElectronPDVWork(MeshData<Real> *u0, MeshData<Real> *dudt) {
           const auto [k, j, i] = idx_range.GetKJI(kji);
           const Real area1_lo = coords.template FaceArea<X1DIR>(k, j, i);
           const Real area1_hi = coords.template FaceArea<X1DIR>(k, j, i + 1);
-          Real div = area1_lo * pv(ccbulk::face_velocity(0), kji) -
-                     area1_hi * pv(ccbulk::face_velocity(0), kji + di); // -PdV: -1 moved
+          Real div =
+              area1_lo * StoredFaceNormalVelocity<X1DIR>(coords, pv, kji, k, j, i) -
+              area1_hi * StoredFaceNormalVelocity<X1DIR>(coords, pv, kji + di, k, j,
+                                                         i + 1); // -PdV: -1 moved
 
           if (ndim > 1) {
             const Real area2_lo = coords.template FaceArea<X2DIR>(k, j, i);
             const Real area2_hi = coords.template FaceArea<X2DIR>(k, j + 1, i);
-            div += area2_lo * pv(ccbulk::face_velocity(4), kji) -
-                   area2_hi * pv(ccbulk::face_velocity(4), kji + dj);
+            div += area2_lo * StoredFaceNormalVelocity<X2DIR>(coords, pv, kji, k, j, i) -
+                   area2_hi *
+                       StoredFaceNormalVelocity<X2DIR>(coords, pv, kji + dj, k, j + 1, i);
           }
 
           if (ndim > 2) {
             const Real area3_lo = coords.template FaceArea<X3DIR>(k, j, i);
             const Real area3_hi = coords.template FaceArea<X3DIR>(k + 1, j, i);
-            div += area3_lo * pv(ccbulk::face_velocity(8), kji) -
-                   area3_hi * pv(ccbulk::face_velocity(8), kji + dk);
+            div += area3_lo * StoredFaceNormalVelocity<X3DIR>(coords, pv, kji, k, j, i) -
+                   area3_hi *
+                       StoredFaceNormalVelocity<X3DIR>(coords, pv, kji + dk, k + 1, j, i);
           }
 
           pdv(ccbulk::electron_internal_energy(), kji) =

@@ -68,8 +68,26 @@ FaceDirection(const int dir, const Coords &coords, const CP &cp,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void FaceSpeed
+//! \brief Hook in the explicit fluxes: as in FaceDirection, the speed cn of angle aa
+//!        across the SDIR face at the lower side of (k, j, i) is c times the projection
+//!        of the angle on the normal of that face, rather than on the SDIR axis.
+template <int SDIR, typename Coords, typename CP>
+KOKKOS_FORCEINLINE_FUNCTION void
+FaceSpeed(const Coords &coords, const CP &cp, const std::array<int, 3> &NDIR,
+          const Real cc, const int aa, const int k, const int j, const int i, Real &cn) {
+  if constexpr (IsMappedDir<SDIR>()) {
+    Real nn;
+    bool up, down;
+    int sgnn;
+    FaceDirection<SDIR>(coords, cp, NDIR, aa, k, j, i, nn, up, down, sgnn);
+    cn = cc * nn;
+  }
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void MinCellWidth
-//! \brief Hook in the Jacobi timestep: mapped cells vary within a block and the
+//! \brief Hook in the radiation timesteps: mapped cells vary within a block and the
 //!        (0, 0, 0) ghost may lie outside the patch, so min_dx is replaced by the minimum
 //!        over the interior cells of 1 / sum_d (1 / CellWidth_d).
 void MinCellWidth(parthenon::MeshData<Real> *md, Real &min_dx);

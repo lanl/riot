@@ -620,7 +620,8 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
               const Real syy = pv_n(cm::deviatoric_stress(3), kji);
               if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
                 stress(kji) += 0.5 * vfrac * sxx;
-              } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+              } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                                   parthenon::IsCoord<parthenon::MappedCylindrical>()) {
                 stress(kji) += vfrac * (sxx + syy);
               }
             });

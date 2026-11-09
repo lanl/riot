@@ -20,6 +20,7 @@
 #include <string>
 #include <tuple>
 
+#include "forest/mapped_strength.hpp"
 #include "hydro/advection.hpp"
 #include <kokkos_abstraction.hpp>
 #include <parthenon/package.hpp>
@@ -297,6 +298,7 @@ void CalculateStrainRate(MeshData<Real> *state, const PACK &vb) {
           pvb(ccbulk::strain_rate(3), k, j, i) = dvyy - vdiv;
           pvb(ccbulk::strain_rate(4), k, j, i) = 0.5 * (dvyz + dvzy);
           pvb(ccbulk::strain_rate(5), k, j, i) = dvzz - vdiv;
+          RiotForest::MappedStrainRate(coords, pvb, k, j, i);
         });
       });
 }

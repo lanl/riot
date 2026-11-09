@@ -42,10 +42,14 @@ namespace RiotForest {
 std::optional<parthenon::forest::ForestDefinition>
 MakeForest(parthenon::ParameterInput *pin);
 
-//! \brief MakeForest from the manager's input, which requires that this is not a restart
-//! or analysis run on a forest.
+//! \brief MakeForest from the manager's input (on restarts and analysis, that of the
+//! file).
 std::optional<parthenon::forest::ForestDefinition>
 MakeForest(parthenon::ParthenonManager &pman);
+
+//! \brief Radius of the sphere that bounds the ball2d (revolved about the axis) and
+//! ball3d meshes, the last of riot/forest/shell_radii
+parthenon::Real OuterRadius(parthenon::ParameterInput *pin);
 
 } // namespace RiotForest
 

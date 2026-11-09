@@ -23,6 +23,8 @@ using namespace parthenon::package::prelude;
 using namespace parthenon::driver::prelude;
 using pc = parthenon::constants::PhysicalConstants<parthenon::constants::CGS>;
 
+#include "forest/mapped_geometry.hpp"
+#include "forest/mapped_rays.hpp"
 #include "laser_props.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
@@ -66,7 +68,7 @@ struct LaserParticle : public PhaseArray {
                    s(particles::laser::vz(), n)),
         energy(s(particles::laser::energy(), n)),
         lambda(s(particles::laser::wavelength(), n)) {
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    if constexpr (RiotForest::IsCylindricalCoord()) {
       // the lukewarm holds (r, z, phi), while particles move in Cartesian coordinates
       const Real r = s(lukewarm::x(), n);
       const Real phi = s(lukewarm::z(), n);
@@ -79,7 +81,7 @@ struct LaserParticle : public PhaseArray {
   // Store the position in the mesh's coordinates, as the lukewarm needs to locate it
   template <typename T>
   KOKKOS_INLINE_FUNCTION void store_position(T &s, const int n) const {
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    if constexpr (RiotForest::IsCylindricalCoord()) {
       Real phi = std::atan2(x[1], x[0]);
       phi += (phi < 0.0) * 2.0 * M_PI;
       s(lukewarm::x(), n) = std::sqrt(x[0] * x[0] + x[1] * x[1]);
@@ -119,7 +121,8 @@ struct CellInfo {
   using nen_t = node_variables::electron_number_density;
   KOKKOS_FUNCTION
   CellInfo(T &vin, const int cb, const Real x, const Real y, const Real z, const Real vx,
-           const Real vy, const Real vz, const int cdj, const int cdk, const int nghost)
+           const Real vy, const Real vz, const int cdj, const int cdk, const int nghost,
+           const std::array<int, 3> &iend)
       : v(vin), b(cb), dj(cdj), dk(cdk), ndim(1 + cdj + cdk) {
     // assume Dxf is constant
     auto &coords = v.GetCoordinates(b);
@@ -142,6 +145,26 @@ struct CellInfo {
       i = get_index(r, vr, coords.template Xf<X1DIR>(0), coords.template Dxf<X1DIR>(0));
       j = get_index(z, vz, coords.template Xf<X2DIR>(0), coords.template Dxf<X2DIR>(0));
       k = 0;
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // cells are uniform in the logical coordinates of the tree of the block, where the
+      // faces below are too. Locate finds a position just outside a block in it, so the
+      // cell is kept to the interior, whose last cells are iend.
+      const Real xp[3] = {x, y, z};
+      Real l[3];
+      RiotForest::CartToLogical(coords, xp, l);
+      auto interior = [&](const int c, const int e) {
+        return c < nghost ? nghost : (c > e ? e : c);
+      };
+      i = interior(get_index(l[0], 0.0, coords.template Xf<X1DIR>(0),
+                             coords.template Dxf<X1DIR>(0)),
+                   iend[0]);
+      j = interior(get_index(l[1], 0.0, coords.template Xf<X2DIR>(0),
+                             coords.template Dxf<X2DIR>(0)),
+                   iend[1]);
+      k = ndim > 2 ? interior(get_index(l[2], 0.0, coords.template Xf<X3DIR>(0),
+                                        coords.template Dxf<X3DIR>(0)),
+                              iend[2])
+                   : 0;
     } else {
       PARTHENON_FAIL("Unsupported coordinate system for the laser package.");
     }
@@ -189,11 +212,14 @@ struct CellInfo {
 
   KOKKOS_INLINE_FUNCTION
   Real ne(const Real x, const Real y, const Real z) const {
-    Real wxb = (x - xlo<X1DIR>()) * inv_dx;
+    // the position in the frame the nodes are uniform in
+    Real f[3] = {x, y, z};
+    to_frame(f);
+    Real wxb = (f[0] - xlo<X1DIR>()) * inv_dx;
     wxb = std::max(0.0, std::min(wxb, 1.0));
-    Real wyb = (ndim > 1) * (y - xlo<X2DIR>()) * inv_dy;
+    Real wyb = (ndim > 1) * (f[1] - xlo<X2DIR>()) * inv_dy;
     wyb = std::max(0.0, std::min(wyb, 1.0));
-    Real wzb = (ndim > 2) * (z - xlo<X3DIR>()) * inv_dz;
+    Real wzb = (ndim > 2) * (f[2] - xlo<X3DIR>()) * inv_dz;
     wzb = std::max(0.0, std::min(wzb, 1.0));
 
     Real val = 0.0;
@@ -213,9 +239,11 @@ struct CellInfo {
 
   KOKKOS_INLINE_FUNCTION
   std::array<Real, 3> grad_ne(const Real x, const Real y, const Real z) const {
-    Real wxb = (x - xlo<X1DIR>()) * inv_dx;
-    Real wyb = (ndim > 1) * (y - xlo<X2DIR>()) * inv_dy;
-    Real wzb = (ndim > 2) * (z - xlo<X3DIR>()) * inv_dz;
+    Real f[3] = {x, y, z};
+    to_frame(f);
+    Real wxb = (f[0] - xlo<X1DIR>()) * inv_dx;
+    Real wyb = (ndim > 1) * (f[1] - xlo<X2DIR>()) * inv_dy;
+    Real wzb = (ndim > 2) * (f[2] - xlo<X3DIR>()) * inv_dz;
     std::array<Real, 3> gne{0.0, 0.0, 0.0};
     for (int d = 0; d < ndim; d++) {
       for (int kk = 0; kk <= (ndim > 2); kk++) {
@@ -241,8 +269,23 @@ struct CellInfo {
       const Real gnr = gne[0] / r;
       gne[0] = gnr * x;
       gne[1] = gnr * y;
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // from the gradient in the logical coordinates
+      const Real xp[3] = {x, y, z};
+      const Real gl[3] = {gne[0], gne[1], gne[2]};
+      RiotForest::GradientToCart(v.GetCoordinates(b), xp, f, gl, gne.data());
     }
     return gne;
+  }
+
+  // On mapped meshes, the logical coordinates in the tree of the block of the Cartesian
+  // position f
+  KOKKOS_FORCEINLINE_FUNCTION
+  void to_frame(Real f[3]) const {
+    if constexpr (parthenon::IsMappedCoord()) {
+      const Real xp[3] = {f[0], f[1], f[2]};
+      RiotForest::CartToLogical(v.GetCoordinates(b), xp, f);
+    }
   }
 
   int b, i, j, k;
@@ -292,6 +335,12 @@ class ParticlePusher {
     auto speed = 0.5 * (vmag0 + vmag1);
     Real path = 0.5 * h * speed;
 
+    // on mapped meshes a step may stop short of the faces of the cell, see
+    // RiotForest::CellExit, and the next one goes on from there
+    if constexpr (parthenon::IsMappedCoord()) {
+      if (!to_face) return {path, speed};
+    }
+
     // finish it off
     path += rk1(lp, accel, vmag1);
 
@@ -305,6 +354,40 @@ class ParticlePusher {
   LaserParticle &lp;
   T &c;
   Real accel_coeff;
+  // on mapped meshes, whether the last cell_exit() was to a face of the cell
+  bool to_face = true;
+
+  // On mapped meshes: the distance h along p.x + h w to where it leaves the logical cell,
+  // or to where it stops short, along with to_face
+  KOKKOS_INLINE_FUNCTION
+  Real cell_exit(const LaserParticle &p, const Real w[3]) {
+    const auto &coords = c.v.GetCoordinates(c.b);
+    const Real lo[3] = {c.xb[0], c.xb[2], c.xb[4]};
+    const Real hi[3] = {c.xb[1], c.xb[3], c.xb[5]};
+    Real h = RiotForest::CellExit(coords, c.ndim, p.x.data(), w, lo, hi);
+    Real xe[3], l[3];
+    for (int i = 0; i < 3; i++)
+      xe[i] = p.x[i] + h * w[i];
+    RiotForest::CartToLogical(coords, xe, l);
+    to_face = false;
+    for (int i = 0; i < c.ndim; i++)
+      to_face = to_face || !(l[i] > lo[i] && l[i] < hi[i]);
+    if (!to_face) {
+      // a step that stops short, at the closest approach of the ray to the origin (or
+      // the axis), goes at least a little past it, as a ray bent towards the origin would
+      // otherwise take ever shorter steps towards it
+      Real lc[3], dl[3];
+      for (int i = 0; i < 3; i++) {
+        lc[i] = 0.5 * (lo[i] + hi[i]);
+        dl[i] = hi[i] - lo[i];
+      }
+      const Real wmag = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+      const Real hmin = RiotForest::kSnapBand *
+                        RiotForest::PhysicalWidth(coords, c.ndim, lc, dl) / wmag;
+      h = std::max(h, hmin);
+    }
+    return h;
+  }
 
   KOKKOS_INLINE_FUNCTION
   void snap_to_face(LaserParticle &p) {
@@ -338,6 +421,13 @@ class ParticlePusher {
         p.x[2] = c.xb[2] + 10 * sign(p.v[2]) * fuzzy_nudge;
       if (std::abs(p.x[2] - c.xb[3]) < fuzzy_face)
         p.x[2] = c.xb[3] + 10 * sign(p.v[2]) * fuzzy_nudge;
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      const auto &coords = c.v.GetCoordinates(c.b);
+      const Real lo[3] = {c.xb[0], c.xb[2], c.xb[4]};
+      const Real hi[3] = {c.xb[1], c.xb[3], c.xb[5]};
+      Real l[3];
+      RiotForest::CartToLogical(coords, p.x.data(), l);
+      RiotForest::SnapToFace(coords, c.ndim, p.x.data(), p.v.data(), l, lo, hi);
     } else {
       PARTHENON_FAIL("Unsupported coordinate system in lasers.");
     }
@@ -359,6 +449,9 @@ class ParticlePusher {
       hmin = std::min(h, hmin);
       h = (c.xb[2 + (p.v[2] > 0)] - p.x[2]) / p.v[2];
       hmin = std::min(h, hmin);
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // zero if the last step went past the faces
+      hmin = cell_exit(p, p.v.data());
     } else {
       PARTHENON_FAIL("Unsupported coordinate system in lasers.");
     }
@@ -414,6 +507,23 @@ class ParticlePusher {
     Real hnew = std::numeric_limits<Real>::max();
     Real dh = std::numeric_limits<Real>::max();
     int iter = 0;
+    if constexpr (parthenon::IsMappedCoord()) {
+      // the same, with the distances to the curved faces along the ray
+      Real hk = cell_exit(p, p.v.data());
+      const Real amag =
+          std::sqrt(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2]);
+      if (hk == 0.0 || hk * amag < a_tol * p.vmag()) return hk;
+      do {
+        Real vs[3];
+        for (int i = 0; i < 3; i++)
+          vs[i] = p.v[i] + 0.5 * hk * accel[i];
+        hnew = cell_exit(p, vs);
+        dh = std::abs(hnew - hk) / hk;
+        hk = hnew;
+        iter++;
+      } while (iter < max_iter && dh > h_tol);
+      return hnew;
+    }
     // simple estimate of step size
     auto [hk, hdir] = get_rk1_hdir(p);
     // only iterate if v will change appreciably

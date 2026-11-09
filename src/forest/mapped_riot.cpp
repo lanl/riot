@@ -68,16 +68,34 @@ void Initialize(ParameterInput *pin, StateDescriptor *riot) {
     auto on = [&](const std::string &key) {
       return riot->AllParams().hasKey(key) && riot->Param<bool>(key);
     };
-    for (const std::string key :
-         {"do_thinc", "do_strength", "do_mix", "do_lasers", "do_ionization",
-          "do_multigroup_diffusion", "do_levelsets", "do_gravity", "do_tracers"}) {
+    for (const std::string key : {"do_mix", "do_multigroup_diffusion", "do_levelsets"}) {
       PARTHENON_REQUIRE(!on(key), std::string(parthenon::Coordinates_t::name_) +
-                                      " coordinates only support hydro, radiation "
-                                      "transport, tn burn and passive scalars (" +
+                                      " coordinates only support hydro, strength, thinc, "
+                                      "gravity, radiation transport, tn burn, passive "
+                                      "scalars, tracers, lasers and ionization (" +
                                       key + ")");
     }
-    PARTHENON_REQUIRE(!on("do_explicit"),
-                      "Explicit radiation transport is not supported on mapped meshes");
+    // ... and of ionization, the transport of electrons and ions
+    for (const std::string key :
+         {"electron_thermal_conduction", "ion_thermal_conduction", "plasma_viscosity"}) {
+      PARTHENON_REQUIRE(!on("do_ionization") ||
+                            !pin->GetOrAddBoolean("ionization", key, false),
+                        "Thermal conduction and plasma viscosity are not supported on "
+                        "mapped meshes (" +
+                            key + ")");
+    }
+    // The reflecting radiation boundary flips the component of the angles along the axis
+    // of its direction, which on mapped meshes is the normal of the boundary only on the
+    // axis of (R, z) meshes, the inner x1 faces of their trees
+    for (const std::string key :
+         {"ix1_bc", "ox1_bc", "ix2_bc", "ox2_bc", "ix3_bc", "ox3_bc"}) {
+      const bool axis =
+          !parthenon::IsCoord<parthenon::MappedCartesian>() && key == "ix1_bc";
+      PARTHENON_REQUIRE(axis || !pin->DoesParameterExist("radiation_transport/bc", key) ||
+                            pin->GetString("radiation_transport/bc", key) != "reflect",
+                        "On mapped meshes radiation_transport/bc/" + key +
+                            " cannot be reflect");
+    }
     if constexpr (parthenon::IsCoord<parthenon::MappedCartesian>()) {
       PARTHENON_REQUIRE(pin->GetOrAddInteger("parthenon/mesh", "nx3", 1) > 1,
                         "MappedCartesian coordinates require a 3D mesh");

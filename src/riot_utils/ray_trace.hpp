@@ -25,6 +25,8 @@ using namespace parthenon::driver::prelude;
 
 #include <variables.hpp>
 
+#include "forest/mapped_rays.hpp"
+
 using Coordinates_t = parthenon::Coordinates_t;
 
 namespace RayTrace {
@@ -93,14 +95,24 @@ struct CellInfo {
     cell_k = ndim > 2 ? get_index(x3, coords.Xf<X3DIR>(0), coords.Dxf<X3DIR>(0)) : 0;
   }
 
+  // On mapped meshes, the faces in the logical coordinates rays are followed in there
   template <int dir>
   KOKKOS_FORCEINLINE_FUNCTION Real xlo() const {
-    return coords.Xf<dir>(cell_k, cell_j, cell_i);
+    if constexpr (parthenon::IsMappedCoord()) {
+      return coords.Xf<dir>(dir == X1DIR ? cell_i : (dir == X2DIR ? cell_j : cell_k));
+    } else {
+      return coords.Xf<dir>(cell_k, cell_j, cell_i);
+    }
   }
   template <int dir>
   KOKKOS_FORCEINLINE_FUNCTION Real xhi() const {
-    return coords.Xf<dir>(cell_k + (dir == X3DIR), cell_j + (dir == X2DIR),
-                          cell_i + (dir == X1DIR));
+    if constexpr (parthenon::IsMappedCoord()) {
+      return coords.Xf<dir>((dir == X1DIR ? cell_i : (dir == X2DIR ? cell_j : cell_k)) +
+                            1);
+    } else {
+      return coords.Xf<dir>(cell_k + (dir == X3DIR), cell_j + (dir == X2DIR),
+                            cell_i + (dir == X1DIR));
+    }
   }
   template <int dir>
   KOKKOS_FORCEINLINE_FUNCTION Real dx() const {
@@ -137,6 +149,25 @@ class IntegratorBase : public CellInfo {
       : CellInfo(vp.GetCoordinates(b), b, ndim), vp(vp), pidx(pidx),
         xc{ps(lukewarm::x(), pidx), ps(lukewarm::y(), pidx), ps(lukewarm::z(), pidx)},
         v{ps(rt::vx(), pidx), ps(rt::vy(), pidx), ps(rt::vz(), pidx)}, bounds(bounds) {
+    if constexpr (parthenon::IsMappedCoord()) {
+      // the pack has the physical position, and xc is logical in the tree of the block
+      if (xcart != nullptr) {
+        x = *xcart;
+      } else {
+        const Real m[3] = {xc[0], xc[1], xc[2]};
+        RiotForest::MeshToCart(m, x.data());
+      }
+      RiotForest::CartToLogical(coords, x.data(), xc.data());
+      geom = &ps.GetGeometry();
+      const Real lc[3] = {0.5 * (bounds.x_min + bounds.x_max),
+                          0.5 * (bounds.y_min + bounds.y_max),
+                          0.5 * (bounds.z_min + bounds.z_max)};
+      const Real dl[3] = {coords.Dxf<X1DIR>(0), coords.Dxf<X2DIR>(0),
+                          coords.Dxf<X3DIR>(0)};
+      min_dx = RiotForest::PhysicalWidth(coords, ndim, lc, dl);
+      set_cell();
+      return;
+    }
     init_cell(xc[0], xc[1], xc[2]);
     if (xcart != nullptr && !parthenon::IsCoord<parthenon::UniformCartesian>()) {
       // the angles in the pack along inactive directions may not have been written
@@ -164,7 +195,26 @@ class IntegratorBase : public CellInfo {
   }
 
   KOKKOS_INLINE_FUNCTION
-  void set_cell() { init_cell(xc[0], xc[1], xc[2]); }
+  void set_cell() {
+    init_cell(xc[0], xc[1], xc[2]);
+    if constexpr (parthenon::IsMappedCoord()) {
+      // a ray on a block can be just outside of it, see on_block, so its cell is kept to
+      // the interior
+      auto clamp = [](int &c, const Real lo, const Real hi, const Real x0, const Real d) {
+        const int c0 = static_cast<int>((lo - x0) / d + 0.5);
+        const int c1 = static_cast<int>((hi - x0) / d + 0.5) - 1;
+        c = c < c0 ? c0 : (c > c1 ? c1 : c);
+      };
+      clamp(cell_i, bounds.x_min, bounds.x_max, coords.Xf<X1DIR>(0),
+            coords.Dxf<X1DIR>(0));
+      if (ndim > 1)
+        clamp(cell_j, bounds.y_min, bounds.y_max, coords.Xf<X2DIR>(0),
+              coords.Dxf<X2DIR>(0));
+      if (ndim > 2)
+        clamp(cell_k, bounds.z_min, bounds.z_max, coords.Xf<X3DIR>(0),
+              coords.Dxf<X3DIR>(0));
+    }
+  }
 
   template <typename F>
   KOKKOS_INLINE_FUNCTION void loop_3d(F &&func) const {
@@ -211,6 +261,10 @@ class IntegratorBase : public CellInfo {
         x[2] = xhi<X2DIR>() + sign(v[2]) * kFaceNudge;
         xc[1] = x[2];
       }
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      const Real lo[3] = {xlo<X1DIR>(), xlo<X2DIR>(), xlo<X3DIR>()};
+      const Real hi[3] = {xhi<X1DIR>(), xhi<X2DIR>(), xhi<X3DIR>()};
+      RiotForest::SnapToFace(coords, ndim, x.data(), v.data(), xc.data(), lo, hi);
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
       Real vr = (x[0] * v[0] + x[1] * v[1] + x[2] * v[2]) / xc[0];
       if (std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps) {
@@ -236,7 +290,7 @@ class IntegratorBase : public CellInfo {
   void push_to_block_boundary() {
     if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
       // Where every face the ray can leave the block through is tracked, as for 2D
-      // cylindrical and 1D spherical blocks, the ray crosses the block in one go.
+      // cylindrical, 1D spherical and mapped blocks, the ray crosses the block in one go.
       // Otherwise it is left to step through.
       const Real h = block_exit_distance();
       if (h < 0.0) return;
@@ -316,6 +370,16 @@ class IntegratorBase : public CellInfo {
       if (ndim > 1) return -1.0;
       radial(v[0] * v[0] + v[1] * v[1] + v[2] * v[2], x[0] * v[0] + x[1] * v[1] + x[2] * v[2],
              x[0] * x[0] + x[1] * x[1] + x[2] * x[2], bounds.x_min, bounds.x_max);
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // the block is curved, but its faces are where the logical coordinates are, so it
+      // is left as a cell is, just past its faces (or a step may stop short inside it, at
+      // the closest approach to the origin or axis, which may be where the ray already
+      // is, so it is moved on at least as far as a step through a cell is)
+      const Real lo[3] = {bounds.x_min, bounds.y_min, bounds.z_min};
+      const Real hi[3] = {bounds.x_max, bounds.y_max, bounds.z_max};
+      const Real h =
+          RiotForest::CellExit(coords, ndim, x.data(), v.data(), lo, hi, xc.data());
+      return h < big ? std::max(h, kStepOvershoot * min_size()) : -1.0;
     } else {
       return -1.0;
     }
@@ -351,12 +415,29 @@ class IntegratorBase : public CellInfo {
       if (xc[1] < bounds.y_min || xc[1] > bounds.y_max) return false;
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
       if (xc[0] < bounds.x_min || xc[0] > bounds.x_max) return false;
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // as Locate finds it, but further out, so a ray that is off a block is not
+      // located back in it
+      const Real lo[3] = {bounds.x_min, bounds.y_min, bounds.z_min};
+      const Real hi[3] = {bounds.x_max, bounds.y_max, bounds.z_max};
+      for (int d = 0; d < ndim; d++) {
+        const Real tol = RiotForest::kOnBlockTolerance * (hi[d] - lo[d]);
+        if (!(xc[d] >= lo[d] - tol && xc[d] < hi[d] + tol)) return false;
+      }
     }
     return true;
   }
 
   KOKKOS_INLINE_FUNCTION
   bool on_mesh() const {
+    if constexpr (parthenon::IsMappedCoord()) {
+      // the mesh is the trees, which only their connectivity knows how to cross
+      if (on_block()) return true;
+      Real m[3];
+      RiotForest::CartToMesh(x.data(), m);
+      const auto loc = geom->Locate(cell_b, m[0], m[1], m[2]);
+      return !(loc.LeftMesh() || loc.Lost());
+    }
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       if (xc[0] < bounds.x_min_global || xc[0] > bounds.x_max_global) return false;
       if (xc[1] < bounds.y_min_global || xc[1] > bounds.y_max_global) return false;
@@ -383,10 +464,19 @@ class IntegratorBase : public CellInfo {
   // which is handed the Cartesian position, can follow, and it does not look at them.
   template <typename Pack_t>
   KOKKOS_INLINE_FUNCTION void commit(Pack_t &ps, const bool full = true) {
-    if (full) commit_angles(ps);
-    ps(lukewarm::x(), pidx) = xc[0];
-    ps(lukewarm::y(), pidx) = xc[1];
-    ps(lukewarm::z(), pidx) = xc[2];
+    if constexpr (parthenon::IsMappedCoord()) {
+      // the physical position, as lukewarms hold it
+      Real m[3];
+      RiotForest::CartToMesh(x.data(), m);
+      ps(lukewarm::x(), pidx) = m[0];
+      ps(lukewarm::y(), pidx) = m[1];
+      ps(lukewarm::z(), pidx) = m[2];
+    } else {
+      if (full) commit_angles(ps);
+      ps(lukewarm::x(), pidx) = xc[0];
+      ps(lukewarm::y(), pidx) = xc[1];
+      ps(lukewarm::z(), pidx) = xc[2];
+    }
     ps(rt::vx(), pidx) = v[0];
     ps(rt::vy(), pidx) = v[1];
     ps(rt::vz(), pidx) = v[2];
@@ -410,7 +500,14 @@ class IntegratorBase : public CellInfo {
   KOKKOS_INLINE_FUNCTION
   std::array<Real, 3> cart_to_coord(std::array<Real, 3> &x, const bool full = false) {
     std::array<Real, 3> xout{x[0], x[1], x[2]};
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    if constexpr (parthenon::IsMappedCoord()) {
+      // logical in the tree of the block, near where the ray is
+      if (full) {
+        RiotForest::CartToLogical(coords, x.data(), xout.data(), full);
+      } else {
+        RiotForest::CartToLogicalNear(coords, x.data(), xout.data(), xc.data());
+      }
+    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
       xout[0] = std::sqrt(x[0] * x[0] + x[1] * x[1]);
       xout[1] = x[2];
       xout[2] = 0.0;
@@ -455,7 +552,8 @@ class IntegratorBase : public CellInfo {
     xc[0] = xcoord[0];
     xc[1] = xcoord[1];
     xc[2] = xcoord[2];
-    if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
+    if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>() &&
+                  !parthenon::IsMappedCoord()) {
       angles_stale = ndim < 3;
     }
   }
@@ -463,7 +561,11 @@ class IntegratorBase : public CellInfo {
   KOKKOS_INLINE_FUNCTION
   std::array<Real, 3> transform_coord_to_cart(Real n1, Real n2, Real n3) {
     std::array<Real, 3> nc{n1, n2, n3};
-    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+    if constexpr (parthenon::IsMappedCoord()) {
+      // from the gradient in the logical coordinates
+      const Real gl[3] = {n1, n2, n3};
+      RiotForest::GradientToCart(coords, x.data(), xc.data(), gl, nc.data());
+    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
       // the angle from the Cartesian position, which is kept even when xc[2] is not
       const Real sph = xc[0] > 0.0 ? x[1] / xc[0] : 0.0;
       const Real cph = xc[0] > 0.0 ? x[0] / xc[0] : 1.0;
@@ -492,6 +594,8 @@ class IntegratorBase : public CellInfo {
   bool removed = false;
   // whether xc holds zero for the angles along inactive directions, see cart_to_coord
   bool angles_stale = false;
+  // on mapped meshes, where xc is logical, x is the position, and on_mesh locates it
+  const parthenon::LukewarmGeometry *geom = nullptr;
 
  private:
   template <int current, int max, typename F>

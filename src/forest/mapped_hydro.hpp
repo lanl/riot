@@ -305,6 +305,31 @@ FaceNormalVelocity(const Coords &coords, const PackView &pv, const Index &idx,
   }
 }
 
+//----------------------------------------------------------------------------------------
+//! \brief The velocity normal to the lower DIR face of cell (k, j, i) from the stored
+//!        face velocity at idx, for divergences by the divergence theorem: component
+//!        DIR-1 of it, except on mapped meshes, where FluxesToGlobalFrame has rotated it
+//!        to the global basis.
+template <parthenon::CoordinateDirection DIR, typename Coords, typename PackView,
+          typename Index>
+KOKKOS_FORCEINLINE_FUNCTION Real StoredFaceNormalVelocity(const Coords &coords,
+                                                          const PackView &pv,
+                                                          const Index &idx, const int k,
+                                                          const int j, const int i) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  constexpr int base = 3 * (static_cast<int>(DIR) - 1);
+  if constexpr (IsMappedDir<DIR>()) {
+    Real n[3];
+    coords.template FaceNormal<DIR>(k, j, i, n[0], n[1], n[2]);
+    Real vn = 0.0;
+    for (int c = 0; c < FrameDims(); ++c)
+      vn += n[c] * pv(ccbulk::face_velocity(base + c), idx);
+    return vn;
+  } else {
+    return pv(ccbulk::face_velocity(base + static_cast<int>(DIR) - 1), idx);
+  }
+}
+
 } // namespace RiotForest
 
 #endif // FOREST_MAPPED_HYDRO_HPP_

@@ -263,11 +263,13 @@ std::optional<ForestDefinition> MakeForest(parthenon::ParameterInput *pin) {
 }
 
 std::optional<ForestDefinition> MakeForest(parthenon::ParthenonManager &pman) {
-  auto forest_def = MakeForest(pman.pinput.get());
-  PARTHENON_REQUIRE_THROWS(
-      !(forest_def && (pman.restartReader || pman.IsAnalysis())),
-      "Restarts and analysis are not supported on riot/forest meshes");
-  return forest_def;
+  // on restarts the input is that of the file, so the forest is that of the run that
+  // wrote it
+  return MakeForest(pman.pinput.get());
+}
+
+Real OuterRadius(parthenon::ParameterInput *pin) {
+  return pin->GetVector<Real>("riot/forest", "shell_radii").back();
 }
 
 } // namespace RiotForest
