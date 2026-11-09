@@ -48,8 +48,8 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             std::shared_ptr<MeshData<Real>> riter,
                             std::shared_ptr<MeshData<Real>> rout,
                             std::shared_ptr<MeshData<Real>> ubase, const Real dt);
-TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *riter,
-                            MeshData<Real> *rout);
+TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *rbase,
+                            MeshData<Real> *riter, MeshData<Real> *rout);
 TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *vresidual, Mesh *pmesh);
 TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real> *riter,
                               MeshData<Real> *rout);
