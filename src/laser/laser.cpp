@@ -13,6 +13,9 @@
 // This file was made in part with generative AI.
 
 #include "laser.hpp"
+#include "forest/forest_mesh.hpp"
+#include "forest/mapped_hydro.hpp"
+#include "forest/mapped_particles.hpp"
 #include "riot_utils/riot_utils.hpp"
 #include "variables.hpp"
 
@@ -209,6 +212,17 @@ void AddLaser(ParameterInput *pbase, const std::string &laser_name, LaserInfo &l
       } else {
         lambda_use = std::numeric_limits<Real>::max();
       }
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // the mesh is the ball inside the sphere of radius rout, which the ray enters
+      // where it first crosses it
+      const Real rout = RiotForest::OuterRadius(pbase);
+      const Real b = xl[0] * nray[0] + xl[1] * nray[1] + xl[2] * nray[2];
+      const Real c = xl[0] * xl[0] + xl[1] * xl[1] + xl[2] * xl[2] - rout * rout;
+      if (b * b - c > 0.0) {
+        lambda_use = -b - std::sqrt(b * b - c);
+        for (int j = 0; j < 3; j++)
+          trial[j] = xl[j] + lambda_use * nray[j];
+      }
     } else {
       PARTHENON_THROW("Unsupported coordinate system in laser.");
     }
@@ -219,6 +233,7 @@ void AddLaser(ParameterInput *pbase, const std::string &laser_name, LaserInfo &l
     // set coordinates = ndim and up
     for (int j = ndim; j < 3; j++)
       trial[j] = xl[j] + lambda_use * nray[j];
+    // all on face 0 on mapped meshes
     int face_id = 0;
     // reset position so it falls *exactly* on boundary
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
@@ -237,6 +252,13 @@ void AddLaser(ParameterInput *pbase, const std::string &laser_name, LaserInfo &l
         trial[1] *= xmax[0] / r;
         face_id = 1;
       }
+    } else if constexpr (parthenon::IsMappedCoord()) {
+      // just inside the sphere, where a block holds it, see InitializeLaserSweep
+      const Real rout = RiotForest::OuterRadius(pbase);
+      const Real r =
+          std::sqrt(trial[0] * trial[0] + trial[1] * trial[1] + trial[2] * trial[2]);
+      for (int j = 0; j < 3; j++)
+        trial[j] *= (1.0 - 1.0e-12) * rout / r;
     }
     laser_info.face_pts[face_id][sample::x].push_back(trial[0]);
     laser_info.face_pts[face_id][sample::y].push_back(trial[1]);
@@ -369,8 +391,15 @@ bool CheckDt(Mesh *pm, Real *dt) {
         Real cmax = 0.0;
         auto &coord = v.GetCoordinates(b);
         for (int d = 0; d < ndim; d++) {
-          cmax = std::max(cmax, coord.Dx(d + 1) / dt0 -
-                                    std::abs(v(b, ccbulk::velocity(d), k, j, i)));
+          Real width = coord.Dx(d + 1);
+          Real vd = v(b, ccbulk::velocity(d), k, j, i);
+          if constexpr (parthenon::IsMappedCoord()) {
+            // the physical width, and the velocity normal to the faces across it
+            width = coord.CellWidth(d + 1, k, j, i);
+            auto cell = [&](const auto var, const int) { return v(b, var, k, j, i); };
+            RiotForest::FaceNormalVelocity(coord, cell, 0, d, k, j, i, vd);
+          }
+          cmax = std::max(cmax, width / dt0 - std::abs(vd));
         }
         const Real c0sq =
             v(b, ccbulk::bulk_modulus(), k, j, i) / v(b, ccbulk::rho(), k, j, i);
@@ -568,6 +597,23 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
     }
     if (!is_boundary) continue;
 
+    if constexpr (parthenon::IsMappedCoord()) {
+      // the points are just inside the mesh, see AddLaser, and each is in one block
+      for (int j = 0; j < li.face_pts[0][sample::x].size(); j++) {
+        const Real xp[3] = {li.face_pts[0][sample::x][j], li.face_pts[0][sample::y][j],
+                            li.face_pts[0][sample::z][j]};
+        Real m[3];
+        RiotForest::CartToMesh(xp, m);
+        if (!RiotForest::HoldsSeed(pmb, m)) continue;
+        for (int n = 0; n < sample::nvalues; n++) {
+          pts_host.push_back(li.face_pts[0][n][j]);
+        }
+        id_host.push_back(li.id[0][j]);
+        block_host.push_back(b);
+      }
+      continue;
+    }
+
     auto &coords = pmb->coords;
     const std::array<Real, 3> block_xmin(
         {coords.Xf<X1DIR>(ib.s), coords.Xf<X2DIR>(jb.s), coords.Xf<X3DIR>(kb.s)});
@@ -667,6 +713,9 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
           md, PL::particles::name());
   auto pack = desc.GetPack(md);
   const int nghost = parthenon::Globals::nghost;
+  const std::array<int, 3> iend = {md->GetBoundsI(IndexDomain::interior).e,
+                                   md->GetBoundsJ(IndexDomain::interior).e,
+                                   md->GetBoundsK(IndexDomain::interior).e};
 
   // set the particle properties
   parthenon::par_for(
@@ -684,8 +733,8 @@ TaskStatus InitializeLaserSweep(MeshData<Real> *md, MeshData<Real> *md_dudt,
         // The particle starts on a face of the mesh, which may be the upper face of
         // block b, so it is not located until it has moved into the mesh
         pack(PL::source_block(), pidx) = b;
-        CellInfo ci(v, b, p.x[0], p.x[1], p.x[2], p.v[0], p.v[1], p.v[2], dj, dk,
-                    nghost);
+        CellInfo ci(v, b, p.x[0], p.x[1], p.x[2], p.v[0], p.v[1], p.v[2], dj, dk, nghost,
+                    iend);
 
         // interpolate ne to the initial location to determine initial speed
         const Real ne = ci.ne(p.x[0], p.x[1], p.x[2]);
@@ -762,6 +811,9 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
   Real tstop = 1.e300; // t0 + dt;
 
   const int nghost = parthenon::Globals::nghost;
+  const std::array<int, 3> iend = {md->GetBoundsI(IndexDomain::interior).e,
+                                   md->GetBoundsJ(IndexDomain::interior).e,
+                                   md->GetBoundsK(IndexDomain::interior).e};
 
   parthenon::par_for(
       DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), range.s, range.e,
@@ -774,7 +826,7 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
 
         while (p.t < tstop) {
           CellInfo ci(v, b, p.x[0], p.x[1], p.x[2], p.v[0], p.v[1], p.v[2], dj, dk,
-                      nghost);
+                      nghost, iend);
 
           // just deposit energy if ne > ne_crit and move on
           if (ci.ne() >= ncrit) {
@@ -819,16 +871,19 @@ TaskStatus Update(MeshData<Real> *md, MeshData<Real> *md_dudt, const Real dt,
 
           // A particle that leaves the domain is done, even through a periodic boundary
           p.store_position(pack, n);
-          const Real xm[3] = {pack(lukewarm::x(), n), pack(lukewarm::y(), n),
-                              pack(lukewarm::z(), n)};
-          bool outside_domain = false;
-          for (int d = 0; d < ndim; d++) {
-            outside_domain =
-                outside_domain || xm[d] < mesh_xmin[d] || xm[d] > mesh_xmax[d];
-          }
-          if (outside_domain) {
-            pack.MarkForRemoval(n);
-            break;
+          // (on mapped meshes, where the mesh size is logical, Locate finds that it left)
+          if constexpr (!parthenon::IsMappedCoord()) {
+            const Real xm[3] = {pack(lukewarm::x(), n), pack(lukewarm::y(), n),
+                                pack(lukewarm::z(), n)};
+            bool outside_domain = false;
+            for (int d = 0; d < ndim; d++) {
+              outside_domain =
+                  outside_domain || xm[d] < mesh_xmin[d] || xm[d] > mesh_xmax[d];
+            }
+            if (outside_domain) {
+              pack.MarkForRemoval(n);
+              break;
+            }
           }
 
           // Keep going while the particle is in this MeshData. Otherwise the exchange

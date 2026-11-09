@@ -22,6 +22,7 @@
 #include "parthenon/driver.hpp"
 #include <parthenon/package.hpp>
 
+#include "forest/mapped_particles.hpp"
 #include "reconstruction/reconstruction.hpp"
 
 using namespace parthenon::package::prelude;
@@ -189,10 +190,12 @@ ReconstructVelocity(const Pack &pack_vel, const int b, const int k, const int j,
   using RiotReconstruction::ComputeMCSlope;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
 
-  // Cell center position
-  const Real x1c = coords.template Xc<X1DIR>(k, j, i);
-  const Real x2c = coords.template Xc<X2DIR>(k, j, i);
-  const Real x3c = coords.template Xc<X3DIR>(k, j, i);
+  // Position and cell center, logical on mapped meshes
+  Real x[3];
+  RiotForest::ParticleFrame(coords, x1, x2, x3, x);
+  const Real x1c = RiotForest::FrameXc<X1DIR>(coords, k, j, i);
+  const Real x2c = RiotForest::FrameXc<X2DIR>(coords, k, j, i);
+  const Real x3c = RiotForest::FrameXc<X3DIR>(coords, k, j, i);
 
   // Cell spacing (minus = from neighbor-1 to current, plus = from current to neighbor+1)
   const Real dx1m = coords.Dxc(X1DIR, k, j, i);
@@ -203,7 +206,7 @@ ReconstructVelocity(const Pack &pack_vel, const int b, const int k, const int j,
   const Real dx3p = coords.Dxc(X3DIR, k + three_d, j, i);
 
   // Displacement from cell center
-  const std::array<Real, 3> delta = {x1 - x1c, x2 - x2c, x3 - x3c};
+  const std::array<Real, 3> delta = {x[0] - x1c, x[1] - x2c, x[2] - x3c};
 
   // Cell-centered velocities (reused in slope computation and final reconstruction)
   const std::array<Real, 3> vi = {pack_vel(b, ccbulk::velocity(0), k, j, i),

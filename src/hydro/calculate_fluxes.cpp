@@ -317,9 +317,19 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
   // Bulk strength Riemann solve.
   auto pv = RiotLoop::make_pack_view(idx_range, v);
   auto fv = RiotLoop::make_flux_pack_view(idx_range, v, DIR);
+  auto &coords = v.GetCoordinates(b);
   RiotLoop::inner(idx_range, [&](const auto kji) {
     const auto kji_L = kji - delta;
     const auto kji_R = kji;
+    // stresses of the left and right states, in the frame of the face on mapped meshes
+    Real stl[5], str[5];
+    for (int c = 0; c < 5; ++c) {
+      stl[c] = sbulk_plus(cm::deviatoric_stress(c), kji_L);
+      str[c] = sbulk_minus(cm::deviatoric_stress(c), kji_R);
+    }
+    const auto [k, j, i] = idx_range.GetKJI(kji);
+    RiotForest::StressToFaceFrame<DIR>(coords, k, j, i, stl);
+    RiotForest::StressToFaceFrame<DIR>(coords, k, j, i, str);
     // Sound speed stiffened by shear modulus: bmod += (4/3) gmod.
     constexpr Real tiny_cs = 1.e-12;
     const Real gmodl = sbulk_plus(cm::shear_modulus(), kji_L);
@@ -347,18 +357,9 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
         sum_bulk_plus(ccbulk::internal_energy(), kji_L),
         sum_bulk_minus(ccbulk::internal_energy(), kji_R),
         set_bulk_plus(ccbulk::pressure(), kji_L),
-        set_bulk_minus(ccbulk::pressure(), kji_R), csl, csr, gmodl, gmodr,
-        sbulk_plus(cm::deviatoric_stress(0), kji_L),
-        sbulk_minus(cm::deviatoric_stress(0), kji_R),
-        sbulk_plus(cm::deviatoric_stress(1), kji_L),
-        sbulk_minus(cm::deviatoric_stress(1), kji_R),
-        sbulk_plus(cm::deviatoric_stress(2), kji_L),
-        sbulk_minus(cm::deviatoric_stress(2), kji_R),
-        sbulk_plus(cm::deviatoric_stress(3), kji_L),
-        sbulk_minus(cm::deviatoric_stress(3), kji_R),
-        sbulk_plus(cm::deviatoric_stress(4), kji_L),
-        sbulk_minus(cm::deviatoric_stress(4), kji_R), f_v1, f_v2, f_v3, f_eng, v1face,
-        v2face, v3face, riemann_vel(kji));
+        set_bulk_minus(ccbulk::pressure(), kji_R), csl, csr, gmodl, gmodr, stl[0], str[0],
+        stl[1], str[1], stl[2], str[2], stl[3], str[3], stl[4], str[4], f_v1, f_v2, f_v3,
+        f_eng, v1face, v2face, v3face, riemann_vel(kji));
 
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;

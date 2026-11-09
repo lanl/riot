@@ -20,6 +20,8 @@
 
 #include <riot_utils/riot_loops.hpp>
 
+#include "forest/forest_mesh.hpp"
+
 // the stb implementations are compiled as C, in stb_impl.c
 #include <stb_image_write.h>
 #include <stb_image_resize2.h>
@@ -276,6 +278,9 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   xmax[1] = pin->GetReal("parthenon/mesh", "x2max");
   xmin[2] = pin->GetReal("parthenon/mesh", "x3min");
   xmax[2] = pin->GetReal("parthenon/mesh", "x3max");
+  // the radius of the ball rays enter, a forest mesh on mapped coordinates
+  Real rball = xmax[0];
+  if constexpr (parthenon::IsMappedCoord()) rball = RiotForest::OuterRadius(pin);
 
   Real dx = width / camera.nwidth;
   Real dy = height / camera.nheight;
@@ -359,11 +364,12 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
         } else {
           lambda_use = std::numeric_limits<Real>::max();
         }
-      } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+      } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>() ||
+                           parthenon::IsMappedCoord()) {
         auto r_l_sq = cloc[0] * cloc[0] + cloc[1] * cloc[1] + cloc[2] * cloc[2];
         auto a = nray[0] * nray[0] + nray[1] * nray[1] + nray[2] * nray[2];
         auto b = 2 * (cloc[0] * nray[0] + cloc[1] * nray[1] + cloc[2] * nray[2]);
-        auto c = r_l_sq - xmax[0] * xmax[0];
+        auto c = r_l_sq - rball * rball;
         auto det = b * b - 4.0 * a * c;
         if (det > 0.0) {
           det = std::sqrt(det);
@@ -417,11 +423,12 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
           trial[1] *= xmax[0] / r;
           face_id = 1;
         }
-      } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+      } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>() ||
+                           parthenon::IsMappedCoord()) {
         face_id = 1;
         auto r =
             std::sqrt(trial[0] * trial[0] + trial[1] * trial[1] + trial[2] * trial[2]);
-        auto rb = xmax[0] * (1.0 - kGeomTol);
+        auto rb = rball * (1.0 - kGeomTol);
         trial[0] *= rb / r;
         trial[1] *= rb / r;
         trial[2] *= rb / r;
@@ -547,6 +554,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("nodal_bounds", std::vector<impl::NodalBounds>(), true);
   params.Add("show_volume", ShowVolume(), true);
   params.Add("trace_iterations", std::vector<int>(), true);
+  params.Add("camera_rays", std::vector<impl::CameraRays>(), true);
 
   return pkg;
 }
@@ -568,7 +576,7 @@ bool TimeToRender(Mesh *pm, Real time) {
   return render;
 }
 
-TaskStatus InitializeCameras(MeshData<Real> *md) {
+TaskStatus InitializeCameras(MeshData<Real> *md, impl::CameraRays *cam) {
   namespace prt = particles::ray_tracer;
   namespace pvr = particles::riot_viz;
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -587,6 +595,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
   // Every ray of the last render is done, so the rays created here are all there are
   auto &lukewarm = md->GetLukewarm(pvr::particles::name());
   lukewarm.Clear();
+  cam->batch_start.assign(1, 0);
 
   // Every camera point, face by face, with the mesh face it lies on
   int npts = 0;
@@ -664,6 +673,8 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
             xm[1] = xm[0] > 0.0 ? std::acos(xs[2] / xm[0]) : 0.0;
             xm[2] = std::atan2(xs[1], xs[0]);
             xm[2] += (xm[2] < 0.0) * 2.0 * M_PI;
+          } else if constexpr (parthenon::IsMappedCoord()) {
+            RiotForest::CartToMesh(xs, xm);
           }
           // the hull is grown past the mesh where the blocks that may show reach it, and
           // a ray that only meets it out there meets nothing that shows
@@ -672,8 +683,15 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
                               mesh_bounds.z_min_global};
           const Real hi[3] = {mesh_bounds.x_max_global, mesh_bounds.y_max_global,
                               mesh_bounds.z_max_global};
-          for (int d = 0; d < nd; d++)
-            miss = miss || xm[d] < lo[d] || xm[d] > hi[d];
+          if constexpr (parthenon::IsMappedCoord()) {
+            // the bounds of the mesh are logical, but its boundary is the sphere the
+            // camera points are on
+            miss = miss || xs[0] * xs[0] + xs[1] * xs[1] + xs[2] * xs[2] >=
+                               x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+          } else {
+            for (int d = 0; d < nd; d++)
+              miss = miss || xm[d] < lo[d] || xm[d] > hi[d];
+          }
           for (int d = 0; d < 3; d++)
             start(p, d) = xm[d];
           start_kind(p) = OnBlock::start_inside;
@@ -689,8 +707,41 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
         }
       });
 
-  const OnBlock on_block{md->GetLukewarmGeometry(), camera_pts, camera_idx, on_boundary,
-                         start_kind, start};
+  // On mapped meshes, where the faces of the mesh are not those of the coordinates, the
+  // block each ray starts in (at its camera point, or where it enters the volume) is
+  // found as lukewarms are, and -1 if not on this MeshData or if it does not start.
+  // Locating each from scratch inverts the map of every block, so only the blocks whose
+  // boxes hold it are tried.
+  parthenon::ParArray1D<int> owner("camera owners", npts);
+  if constexpr (parthenon::IsMappedCoord()) {
+    const auto geom = md->GetLukewarmGeometry();
+    const auto boxes = RiotForest::BlockBoxes(v, geom, nblocks, ndim);
+    parthenon::par_for(
+        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, npts - 1,
+        KOKKOS_LAMBDA(const int p) {
+          if (start_kind(p) == OnBlock::start_none) {
+            owner(p) = -1;
+            return;
+          }
+          const Real xp[3] = {camera_pts(p, sample::x), camera_pts(p, sample::y),
+                              camera_pts(p, sample::z)};
+          Real m[3];
+          RiotForest::CartToMesh(xp, m);
+          if (start_kind(p) == OnBlock::start_inside) {
+            for (int d = 0; d < 3; d++)
+              m[d] = start(p, d);
+          }
+          owner(p) = RiotForest::OwnerBlock(v, geom, boxes, ndim, m);
+        });
+  }
+
+  const OnBlock on_block{md->GetLukewarmGeometry(),
+                         camera_pts,
+                         camera_idx,
+                         on_boundary,
+                         start_kind,
+                         start,
+                         owner};
 
   // Only the points that could start on this MeshData are tried on each of its blocks:
   // those inside the box of its blocks, or on a mesh face one of them is on
@@ -718,7 +769,9 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
       PARTHENON_AUTO_LABEL, Kokkos::RangePolicy<DevExecSpace>(0, npts),
       KOKKOS_LAMBDA(const int p, int &k, const bool final) {
         bool c = false;
-        if (start_kind(p) == OnBlock::start_inside) {
+        if (parthenon::IsMappedCoord()) {
+          c = owner(p) >= 0;
+        } else if (start_kind(p) == OnBlock::start_inside) {
           c = true;
           for (int d = 0; d < OnBlock::start_dims; d++)
             c = c && start(p, d) >= md_lo[d] && start(p, d) <= md_hi[d];
@@ -730,6 +783,49 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
       },
       ncand);
 
+  // The rays are made batch by batch of the camera points, the same on every rank, by
+  // CreateCameraRays(). Each batch takes every nbatch-th point, so that it is spread
+  // over the whole image, and so over every rank, rather than all on the few ranks one
+  // patch of it looks through.
+  constexpr int nbatch = 64;
+  auto cand_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), cand);
+  std::vector<int> batch_start(nbatch + 1, 0);
+  for (int k = 0; k < ncand; k++)
+    batch_start[cand_host(k) % nbatch + 1]++;
+  for (int n = 0; n < nbatch; n++)
+    batch_start[n + 1] += batch_start[n];
+  parthenon::ParArray1D<int> batched("camera batches", std::max(ncand, 1));
+  auto batched_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), batched);
+  std::vector<int> next(batch_start.begin(), batch_start.end() - 1);
+  for (int k = 0; k < ncand; k++)
+    batched_host(next[cand_host(k) % nbatch]++) = cand_host(k);
+  Kokkos::deep_copy(batched, batched_host);
+  cam->on_block = on_block;
+  cam->cand = batched;
+  cam->batch_start = batch_start;
+  return TaskStatus::complete;
+}
+
+// Make the rays of batch n of the camera points on md, and give the range they are at
+IndexRange CreateCameraRays(MeshData<Real> *md, const impl::CameraRays &cam,
+                            const int n) {
+  namespace prt = particles::ray_tracer;
+  namespace pvr = particles::riot_viz;
+  using OnBlock = impl::CameraPointOnBlock;
+  if (n >= cam.NumBatches()) return IndexRange{0, -1};
+  const int k0 = cam.batch_start[n], k1 = cam.batch_start[n + 1];
+  if (k1 <= k0) return IndexRange{0, -1};
+
+  auto &lukewarm = md->GetLukewarm(pvr::particles::name());
+  const int nold = lukewarm.NumParticles();
+  const int nblocks = md->NumBlocks();
+  const auto on_block = *cam.on_block;
+  const auto cand = cam.cand;
+  const auto camera_pts = on_block.pts;
+  const auto camera_idx = on_block.idx;
+  const auto start_kind = on_block.kind;
+  const auto start = on_block.start;
+
   // Every block creates a ray at each camera point on its part of the mesh boundary, or
   // in it
   parthenon::ParArray1DRaw<int> counts("camera counts", nblocks);
@@ -738,7 +834,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
       KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
         int count = 0;
         Kokkos::parallel_reduce(
-            Kokkos::TeamThreadRange(member, ncand),
+            Kokkos::TeamThreadRange(member, k0, k1),
             [&](const int k, int &c) { c += on_block(b, cand(k)); }, count);
         Kokkos::single(Kokkos::PerTeam(member), [&]() { counts(b) = count; });
       });
@@ -759,7 +855,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
       PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
       KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
         Kokkos::parallel_scan(
-            Kokkos::TeamThreadRange(member, ncand),
+            Kokkos::TeamThreadRange(member, k0, k1),
             [&](const int k, int &offset, const bool final) {
               const int n = cand(k);
               const bool on = on_block(b, n);
@@ -800,6 +896,13 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
                   x = rsph;
                   y = th;
                   z = phi_sph;
+                } else if constexpr (parthenon::IsMappedCoord()) {
+                  const Real xp[3] = {px, py, pz};
+                  Real m[3];
+                  RiotForest::CartToMesh(xp, m);
+                  x = m[0];
+                  y = m[1];
+                  z = m[2];
                 } else {
                   PARTHENON_FAIL("Unsupported coordinate system");
                 }
@@ -820,20 +923,21 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
             });
       });
 
-  return TaskStatus::complete;
+  return IndexRange{nold, lukewarm.NumParticles() - 1};
 }
 
-TaskStatus Tracer(MeshData<Real> *md, const impl::NodalBounds *bounds, int *iteration) {
+TaskStatus Tracer(MeshData<Real> *md, const impl::NodalBounds *bounds, int *iteration,
+                  const impl::CameraRays *cam) {
   namespace rt = particles::ray_tracer;
   namespace vr = particles::riot_viz;
 
-  // First trace every ray the cameras created, and after that only the ones the last
-  // exchange delivered, since every other ray is done
-  const bool first = (*iteration)++ == 0;
-  const IndexRange range =
-      first ? IndexRange{0, md->GetLukewarm(vr::particles::name()).NumParticles() - 1}
-            : parthenon::GetLastReceived(md, vr::particles::name());
-  if (range.size() <= 0) return TaskStatus::complete;
+  // Trace the rays the last exchange delivered, since every other ray is done or passed
+  // on, and the next batch of camera rays
+  const int it = (*iteration)++;
+  const IndexRange received =
+      it == 0 ? IndexRange{0, -1} : parthenon::GetLastReceived(md, vr::particles::name());
+  const IndexRange created = CreateCameraRays(md, *cam, it);
+  if (received.size() <= 0 && created.size() <= 0) return TaskStatus::complete;
 
   auto pm = md->GetParentPointer();
   auto viz = pm->packages.Get("riot_viz");
@@ -844,11 +948,13 @@ TaskStatus Tracer(MeshData<Real> *md, const impl::NodalBounds *bounds, int *iter
 
   auto [v, ps] = tinfo->GetPacks(md);
 
-  return RayTrace::Trace<Composer>(ps, v, md->GetParentPointer(), range, first,
-                                   tinfo->render_params, tinfo->pack_idx_view,
-                                   bounds->may_show,
-                                   viz->Param<ShowVolume>("show_volume"),
-                                   scene_info.images);
+  for (const bool first : {false, true}) {
+    RayTrace::Trace<Composer>(ps, v, md->GetParentPointer(), first ? created : received,
+                              first, tinfo->render_params, tinfo->pack_idx_view,
+                              bounds->may_show, viz->Param<ShowVolume>("show_volume"),
+                              scene_info.images);
+  }
+  return TaskStatus::complete;
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md, impl::NodalBounds *bounds) {
@@ -980,6 +1086,13 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md, impl::NodalBounds *bounds) 
   constexpr Real big = std::numeric_limits<Real>::max();
   auto &box = bounds->show_box;
   box.assign(6 * ncam, 0.0);
+  // on mapped meshes, whose block_size is logical, the physical boxes of the blocks
+  parthenon::ParArray2D<Real>::HostMirror mapped_box_h;
+  if constexpr (parthenon::IsMappedCoord()) {
+    const auto mapped_box = RiotForest::BlockBoxes(vorig, md->GetLukewarmGeometry(),
+                                                   md->NumBlocks(), pm->ndim);
+    mapped_box_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), mapped_box);
+  }
   for (int cam = 0; cam < ncam; cam++) {
     for (int d = 0; d < 3; d++) {
       box[6 * cam + 2 * d] = big;
@@ -990,8 +1103,13 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md, impl::NodalBounds *bounds) 
       const auto &bs = md->GetBlockData(b)->GetBlockPointer()->block_size;
       for (int d = 0; d < 3; d++) {
         const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
-        box[6 * cam + 2 * d] = std::min(box[6 * cam + 2 * d], bs.xmin(dir));
-        box[6 * cam + 2 * d + 1] = std::max(box[6 * cam + 2 * d + 1], bs.xmax(dir));
+        Real lo = bs.xmin(dir), hi = bs.xmax(dir);
+        if constexpr (parthenon::IsMappedCoord()) {
+          lo = mapped_box_h(b, 2 * d);
+          hi = mapped_box_h(b, 2 * d + 1);
+        }
+        box[6 * cam + 2 * d] = std::min(box[6 * cam + 2 * d], lo);
+        box[6 * cam + 2 * d + 1] = std::max(box[6 * cam + 2 * d + 1], hi);
       }
     }
   }
@@ -1038,6 +1156,16 @@ TaskStatus ReduceShowVolume(Mesh *pm) {
     extent = std::max(extent, mesh_size.xmax(X2DIR) - mesh_size.xmin(X2DIR));
   if (parthenon::IsCoord<parthenon::UniformCartesian>())
     extent = std::max(extent, mesh_size.xmax(X3DIR) - mesh_size.xmin(X3DIR));
+  if constexpr (parthenon::IsMappedCoord()) {
+    // mesh_size is logical, so the physical extent of the volumes is taken instead
+    extent = 0.0;
+    for (int cam = 0; cam < ncam; cam++) {
+      for (int i = 0; i < (RiotForest::IsMappedCylindrical() ? 4 : 6); i++) {
+        if (box_h(cam, 0) <= box_h(cam, 1))
+          extent = std::max(extent, std::abs(box_h(cam, i)));
+      }
+    }
+  }
   show_volume->margin = 1.e-6 * extent;
   return TaskStatus::complete;
 }
@@ -1053,10 +1181,12 @@ TaskCollection Render(Mesh *pm, Real time) {
   auto num_active = std::make_shared<AllReduce<int>>();
   auto iterations = viz->MutableParam<std::vector<int>>("trace_iterations");
   auto bounds = viz->MutableParam<std::vector<impl::NodalBounds>>("nodal_bounds");
+  auto cameras = viz->MutableParam<std::vector<impl::CameraRays>>("camera_rays");
 
   const int num_partitions = pm->DefaultNumPartitions();
   iterations->assign(num_partitions, 0);
   bounds->resize(num_partitions);
+  cameras->resize(num_partitions);
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
@@ -1083,18 +1213,20 @@ TaskCollection Render(Mesh *pm, Real time) {
     auto md = pm->mesh_data.GetOrAdd("base", i).get();
     auto *md_bounds = &(*bounds)[i];
     int *iteration = &(*iterations)[i];
-    auto init_particles = tl.AddTask(none, InitializeCameras, md);
+    auto *cam = &(*cameras)[i];
+    auto init_particles = tl.AddTask(none, InitializeCameras, md, cam);
 
     // Trace every ray until it is done or leaves this MeshData, and exchange, until no
-    // ray on any MeshData of any rank is left to trace
+    // ray on any MeshData of any rank is left to trace or to make
     auto [itl, push] = tl.AddSublist(init_particles, {1, 100000});
-    auto transport = itl.AddTask(none, Tracer, md, md_bounds, iteration);
+    auto transport = itl.AddTask(none, Tracer, md, md_bounds, iteration, cam);
     auto exchange =
         parthenon::AddLukewarmExchangeTasks(transport, itl, md, pvr::particles::name());
     // Every ray an exchange delivers still has to be traced
     auto complete = parthenon::AddLukewarmCompletionTasks(
-        exchange, itl, md, num_active.get(), [](MeshData<Real> *md) {
-          return GetLastReceived(md, pvr::particles::name()).size();
+        exchange, itl, md, num_active.get(), [iteration, cam](MeshData<Real> *md) {
+          return GetLastReceived(md, pvr::particles::name()).size() +
+                 (*iteration < cam->NumBatches());
         });
   }
   auto &dump_reg = tc.AddRegion(1);

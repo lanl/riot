@@ -126,6 +126,8 @@ TaskStatus CalculateStrengthSource(MeshData<Real> *state, MeshData<Real> *src) {
           wxy(k, j, i) = 0.5 * (dvxy - dvyx);
           wxz(k, j, i) = 0.5 * (dvxz - dvzx);
           wyz(k, j, i) = 0.5 * (dvyz - dvzy);
+          RiotForest::RotationTensor(coords, pvb, k, j, i, wxy(k, j, i), wxz(k, j, i),
+                                     wyz(k, j, i));
         });
 
         idx_range.TeamBarrier();

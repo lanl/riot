@@ -173,16 +173,19 @@ TaskStatus TransportParticles(MeshData<Real> *md, const std::string &lukewarm_na
 
         // Cell indices for midpoint. It may be outside block b, so unlike
         // GetCellIndices() these are not clamped to the interior, and the velocity there
-        // is reconstructed from the ghost cells of block b.
+        // is reconstructed from the ghost cells of block b. On mapped meshes they come
+        // from its logical position.
+        Real xm[3];
+        RiotForest::ParticleFrame(coords, x1_tmp, x2_tmp, x3_tmp, xm);
         const int im = is + static_cast<int>(Kokkos::floor(
-                                (x1_tmp - geometry.Xmin(b, X1DIR)) / coords.Dx<X1DIR>()));
+                                (xm[0] - geometry.Xmin(b, X1DIR)) / coords.Dx<X1DIR>()));
         const int jm =
             multi_d ? js + static_cast<int>(Kokkos::floor(
-                               (x2_tmp - geometry.Xmin(b, X2DIR)) / coords.Dx<X2DIR>()))
+                               (xm[1] - geometry.Xmin(b, X2DIR)) / coords.Dx<X2DIR>()))
                     : js;
         const int km =
             three_d ? ks + static_cast<int>(Kokkos::floor(
-                               (x3_tmp - geometry.Xmin(b, X3DIR)) / coords.Dx<X3DIR>()))
+                               (xm[2] - geometry.Xmin(b, X3DIR)) / coords.Dx<X3DIR>()))
                     : ks;
 
         // Reconstruct velocity at midpoint
@@ -276,11 +279,13 @@ TaskStatus SampleFieldsAtTracers(MeshData<Real> *md, const std::string &lukewarm
         const Real x3 = pack_pos(lukewarm::z(), n);
         const auto [kp, jp, ip] = pack_pos.GetCellIndices(b, n);
 
-        // Cell center position
+        // Position and cell center, logical on mapped meshes
         const auto &coords = pack_field.GetCoordinates(b);
-        const Real x1c = coords.Xc<X1DIR>(kp, jp, ip);
-        const Real x2c = coords.Xc<X2DIR>(kp, jp, ip);
-        const Real x3c = coords.Xc<X3DIR>(kp, jp, ip);
+        Real x[3];
+        RiotForest::ParticleFrame(coords, x1, x2, x3, x);
+        const Real x1c = RiotForest::FrameXc<X1DIR>(coords, kp, jp, ip);
+        const Real x2c = RiotForest::FrameXc<X2DIR>(coords, kp, jp, ip);
+        const Real x3c = RiotForest::FrameXc<X3DIR>(coords, kp, jp, ip);
 
         // Cell spacing (minus = from neighbor-1 to current, plus = from current to
         // neighbor+1)
@@ -292,9 +297,9 @@ TaskStatus SampleFieldsAtTracers(MeshData<Real> *md, const std::string &lukewarm
         const Real dx3p = coords.Dxc(X3DIR, kp + three_d, jp, ip);
 
         // Displacement from cell center
-        const Real delta1 = x1 - x1c;
-        const Real delta2 = x2 - x2c;
-        const Real delta3 = x3 - x3c;
+        const Real delta1 = x[0] - x1c;
+        const Real delta2 = x[1] - x2c;
+        const Real delta3 = x[2] - x3c;
 
         // Lambda for second-order reconstruction
         auto reconstruct = [&](const int pack_idx) {
@@ -397,12 +402,7 @@ void SeedTracers(Mesh *pm, ParameterInput *pin, MeshData<Real> *md) {
     for (int n = 0; n < n_particles_total; n++) {
       const std::array<Real, 3> x = {x1_list[n], x2_list[n], x3_list[n]};
       for (int b = 0; b < nblocks; b++) {
-        const auto &reg = md->GetBlockData(b)->GetBlockPointer()->block_size;
-        bool inside = true;
-        for (int d = 0; d < pm->ndim; d++) {
-          inside = inside && x[d] >= reg.xmin_[d] && x[d] < reg.xmax_[d];
-        }
-        if (inside) {
+        if (RiotForest::HoldsSeed(md->GetBlockData(b)->GetBlockPointer(), x.data())) {
           id.push_back(n);
           x1.push_back(x[0]);
           x2.push_back(x[1]);

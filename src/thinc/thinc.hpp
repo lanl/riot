@@ -14,6 +14,7 @@
 #ifndef THINC_THINC_HPP_
 #define THINC_THINC_HPP_
 
+#include "forest/mapped_thinc.hpp"
 #include "reconstruction/reconstruction.hpp"
 #include "riot_limits.hpp"
 #include "riot_utils/riot_loops.hpp"
@@ -177,7 +178,8 @@ template <typename Coords>
 KOKKOS_INLINE_FUNCTION void RadialWeights(const Coords &coords, int i, Real *radial) {
   for (int q = 0; q < 4; ++q)
     radial[q] = 1;
-  if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
+  if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>() &&
+                !parthenon::IsMappedCoord()) {
     constexpr int power = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 1;
     const Real dr = coords.template Dxf<parthenon::X1DIR>(i);
     const Real r0 = coords.template Xf<parthenon::X1DIR>(i) + .5 * dr;
@@ -204,12 +206,14 @@ KOKKOS_INLINE_FUNCTION Real ProfileFraction(Real z) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  void THINC::ReconstructProfile
-//! \brief
+//! \brief On mapped meshes density holds the volume and face-area densities of the cell
+//!        (RiotForest::ThincDensities); it is null otherwise.
 template <int N>
 KOKKOS_INLINE_FUNCTION void ReconstructProfile(int ndim, int count, const Real *alpha,
                                                const Point *gradient, const int *ids,
                                                const Real *radial, int axis, Real beta,
-                                               Real *minus, Real *plus) {
+                                               Real *minus, Real *plus,
+                                               const Real *density = nullptr) {
   // Tensor Gauss rules with 4^ndim cell points and 4^(ndim-1) face points. Base-4 digit d
   // of a cell point index selects its coordinate along direction d; face points
   // enumerate the transverse directions in increasing order.
@@ -223,7 +227,7 @@ KOKKOS_INLINE_FUNCTION void ReconstructProfile(int ndim, int count, const Real *
   };
   auto CellPoint = [&](const Point &n, int q, Real &weight) {
     Real projection = 0;
-    weight = GaussWeight(q % 4) * radial[q % 4];
+    weight = GaussWeight(q % 4) * radial[q % 4] * (density ? density[q] : 1);
     for (int d = 0; d < ndim; ++d, q /= 4) {
       projection += n[d] * GaussPoint(q % 4);
       if (d > 0) weight *= GaussWeight(q % 4);
@@ -240,13 +244,20 @@ KOKKOS_INLINE_FUNCTION void ReconstructProfile(int ndim, int count, const Real *
     return projection;
   };
   // x1 faces lie at fixed radius; other faces are averaged across radius.
-  Real face_weight[kMaxFacePoints];
+  Real face_weight[kMaxFacePoints], face_weight_plus[kMaxFacePoints];
   for (int f = 0; f < face_points; ++f) {
     face_weight[f] = 1;
     for (int d = 0, r = f; d < ndim; ++d) {
       if (d == axis) continue;
       face_weight[f] *= GaussWeight(r % 4) * (d == 0 ? radial[r % 4] : 1);
       r /= 4;
+    }
+    // ... and on mapped meshes by the area of each face
+    face_weight_plus[f] = face_weight[f];
+    if (density) {
+      face_weight[f] *= density[RiotForest::kThincCellPoints + f];
+      face_weight_plus[f] *=
+          density[RiotForest::kThincCellPoints + RiotForest::kThincFacePoints + f];
     }
   }
   int order[N], active = 0;
@@ -340,7 +351,7 @@ KOKKOS_INLINE_FUNCTION void ReconstructProfile(int ndim, int count, const Real *
       const Real zm = beta * (-.5 * normal + transverse) + offset;
       const Real zp = beta * (.5 * normal + transverse) + offset;
       minus[m] += face_weight[f] * face_minus[f] * (last ? 1 : ProfileFraction(zm));
-      plus[m] += face_weight[f] * face_plus[f] * (last ? 1 : ProfileFraction(zp));
+      plus[m] += face_weight_plus[f] * face_plus[f] * (last ? 1 : ProfileFraction(zp));
       face_minus[f] *= last ? 0 : ProfileFraction(-zm);
       face_plus[f] *= last ? 0 : ProfileFraction(-zp);
     }
@@ -444,11 +455,20 @@ ReconstructFractions(const Pack &v, const BaseRange &base, const Range &range, i
     const auto [k, j, i] = range.GetKJI(idx);
     Real radial[4];
     RadialWeights(coords, i, radial);
+    Real density[RiotForest::kThincDensities];
+    if constexpr (parthenon::IsMappedCoord()) {
+      Real point[4], weight[4];
+      for (int q = 0; q < 4; ++q) {
+        point[q] = GaussPoint(q);
+        weight[q] = GaussWeight(q);
+      }
+      RiotForest::ThincDensities(coords, ndim, axis, k, j, i, point, weight, density);
+    }
     // Project once onto the per-material bounds and simplex below. Applying
     // the common-factor enrichment limiter first lets a trace material flatten
     // all the other materials, even when their geometric faces are admissible.
     ReconstructProfile<N>(ndim, count, alpha, gradient, ids, radial, axis, beta, minus,
-                          plus);
+                          plus, parthenon::IsMappedCoord() ? density : nullptr);
     if (ndim > 1) {
       ProjectStencilFace(count, alpha, minimum, maximum, minus, kMaxGeometricEnrichment);
       ProjectStencilFace(count, alpha, minimum, maximum, plus, kMaxGeometricEnrichment);
