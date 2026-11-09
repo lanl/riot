@@ -83,6 +83,22 @@ KOKKOS_INLINE_FUNCTION void GetVdiff(const Pack_t &v, const IdxRange &idx_range,
 }
 
 //----------------------------------------------------------------------------------------
+//! \brief GetVdiff, or RiotForest::GetVdiff on mapped meshes. Dispatched here rather than
+//!        in the flux kernel, as nvcc does not let a device lambda first capture a
+//!        variable in an if constexpr branch.
+template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
+          typename Basis, typename Coords, typename Scratch>
+KOKKOS_INLINE_FUNCTION void
+GetVdiffAny(const Pack_t &v, const IdxRange &idx_range, const Basis &basis,
+            const Coords &coords, const RiotForest::FluxContext &ctx, Scratch &dvn,
+            Scratch &dvt) {
+  if constexpr (parthenon::IsMappedCoord())
+    RiotForest::GetVdiff<DIR>(v, idx_range, basis, coords, ctx, dvn, dvt);
+  else
+    GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+}
+
+//----------------------------------------------------------------------------------------
 //! \brief Bulk sound speed on a reconstructed face: max(sqrt(|bmod/rho|), tiny).
 KOKKOS_FORCEINLINE_FUNCTION Real BulkSoundSpeed(const Real &bmod, const Real &rho) {
   constexpr Real tiny_cs = 1.e-12;
@@ -775,20 +791,14 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
               sum_bulk_plus, face_vel, riemann_vel, store_vf);
           break;
         case RiemannSolver::chllc:
-          if constexpr (parthenon::IsMappedCoord())
-            RiotForest::GetVdiff<DIR>(v, idx_range, basis, coords, mapped, dvn, dvt);
-          else
-            GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetVdiffAny<DIR>(v, idx_range, basis, coords, mapped, dvn, dvt);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_chllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
               sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
           break;
         case RiemannSolver::lhllc:
-          if constexpr (parthenon::IsMappedCoord())
-            RiotForest::GetVdiff<DIR>(v, idx_range, basis, coords, mapped, dvn, dvt);
-          else
-            GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetVdiffAny<DIR>(v, idx_range, basis, coords, mapped, dvn, dvt);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_lhllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
