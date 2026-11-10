@@ -394,6 +394,8 @@ struct RenderingParams {
   parthenon::ParArray1D<int> nlayers;
   VectorView2D<int> ncontours;
   VectorView2D<int> nmasks;
+  // write the opacity a ray gathered in the images' alpha channel, else opaque images
+  bool write_alpha = false;
 };
 
 class VizData {
@@ -1015,16 +1017,12 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
   KOKKOS_FORCEINLINE_FUNCTION void commit(Pack_t &ps, const bool full = true) {
     RayTrace::IntegratorBase<VarPack_t>::commit(ps, full);
     if (!is_active()) {
-      Real alpha = std::abs(a);
-      // replace this if check with rp.flatten
-      if (true) alpha = 1.0;
-      Real red = (alpha > 0.0) ? r / alpha : 0.0;
-      Real green = (alpha > 0.0) ? g / alpha : 0.0;
-      Real blue = (alpha > 0.0) ? b / alpha : 0.0;
-
-      images(cam_id, 4 * pix_id + 0) = real_to_uint8_t(red);
-      images(cam_id, 4 * pix_id + 1) = real_to_uint8_t(green);
-      images(cam_id, 4 * pix_id + 2) = real_to_uint8_t(blue);
+      // The colors are composited over black, so with the opacity written too they are
+      // premultiplied by it, and composite over any other background
+      const Real alpha = rp.write_alpha ? std::abs(a) : 1.0;
+      images(cam_id, 4 * pix_id + 0) = real_to_uint8_t(r);
+      images(cam_id, 4 * pix_id + 1) = real_to_uint8_t(g);
+      images(cam_id, 4 * pix_id + 2) = real_to_uint8_t(b);
       images(cam_id, 4 * pix_id + 3) = real_to_uint8_t(alpha);
       RayTrace::IntegratorBase<VarPack_t>::remove(ps);
     }
@@ -1036,6 +1034,11 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     const bool initial_mask = any_mask(x, s0);
     // step size til next cell face
     auto h = distance_to_face();
+    // A ray stopped right on an upper face of the block is located in the ghost cell past
+    // it, and stepping through that cell would cross part of the next block, which the
+    // layers culled here may show in. So it only steps across the face.
+    const Real hb = this->block_exit_distance();
+    if (hb >= 0.0) h = std::min(h, hb);
     // std::max binds by reference, which device code cannot do to a host constexpr
     h = std::max(h, Real(kMarchTiny));
     if (!initial_mask) {
@@ -1049,7 +1052,6 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         // Where the masks are known to let nothing through past the end of the step,
         // nothing is drawn there either, so go on to where they might or out of the block
         if (any_slo <= s0 && any_shi > s0 + h * vv) {
-          const Real hb = this->block_exit_distance();
           if (hb > h) {
             const Real hj = std::min(hb, (any_shi - s0) / vv);
             if (hj > h) {
@@ -1268,7 +1270,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
         load_data(layer_id, true);
         auto [dfdx1, dfdx2, dfdx3] = data[layer_id].grad_val(xc[0], xc[1], xc[2]);
         auto [dfdx, dfdy, dfdz] = transform_coord_to_cart(dfdx1, dfdx2, dfdx3);
-        Real gdotl = dfdx * dlx + dfdy * dly + dfdz * dlz;
+        // the surface normal is the unit gradient
+        const Real grad_mag = std::sqrt(dfdx * dfdx + dfdy * dfdy + dfdz * dfdz);
+        Real gdotl = (dfdx * dlx + dfdy * dly + dfdz * dlz) / (grad_mag + 1.e-100);
         Real lum = rp.ambient(cam_id) +
                    rp.diffuse(cam_id) / (dist * dist) * std::max(0.0, -gdotl);
         Real max_lum = std::min(std::min(1.0 / p.r, 1.0 / p.g), 1.0 / p.b);
@@ -1431,10 +1435,16 @@ struct CameraInfo {
   std::string filename;
   std::vector<LayerInfo> layer;
   int ncolorbar{0};
+  // where the camera is and what it frames, unless it moves between keyframes
+  std::vector<Real> location, focus, up;
+  Real width, height;
+  std::vector<Real> key_t, key_location, key_focus, key_up, key_width;
 };
 
 struct SceneInfo {
-  // entry points by domain face for all camera rays
+  // the domain the rays enter
+  std::array<Real, 3> xmin, xmax;
+  // entry points by domain face for the rays of the cameras rendering now
   std::array<std::array<std::vector<Real>, sample::nvalues>, 6> face_pts;
   // corresponding camera and pixel ids to reassemble images from particles
   std::array<std::vector<int>, 6> camera_id, pixel_id;

@@ -19,6 +19,7 @@
 
 // Riot includes
 #include <array>
+#include <cmath>
 
 #include "eos_riot.hpp"
 #include "ionization/ionization.hpp"
@@ -72,6 +73,8 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
   const Real &mfrac_thr = hydro->Param<Real>("mass_frac_thresh");
   const Real &vfrac_thr = hydro->Param<Real>("vol_frac_thresh");
   const Real &tfloor = hydro->Param<Real>("temp_floor");
+  const Real tceil = hydro->Param<Real>("temperature_ceiling");
+  const Real tceil_rho = hydro->Param<Real>("temperature_ceiling_rho");
 
   // Packing and Indexing
   auto v =
@@ -189,6 +192,11 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
               pv(ccbulk::temperature(), kji) = cm_temp_s[0];
               pv(ccbulk::pressure(), kji) = mean_p;
             } else { // PTE failed
+              // A converged solution below the floor is clamped to it (by a FixedT
+              // solve at the floor); otherwise fall back to the previous temperature
+              const Real Tfix =
+                  (status.converged && cm_temp_s[0] <= tfloor) ? tfloor : Tguess;
+
               // Record failure
               if (track_pte_statistics) pv(diag::pte_nfails(), kji) += 1;
 
@@ -198,7 +206,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                        v.GetCoordinates(b).Xc<parthenon::X1DIR>(i),
                        v.GetCoordinates(b).Xc<parthenon::X2DIR>(j),
                        v.GetCoordinates(b).Xc<parthenon::X3DIR>(k));
-                printf("Trying backup with T = %g\n", Tguess);
+                printf("Trying backup with T = %g\n", Tfix);
               }
 
               // Iterate on PTE FixedT solves
@@ -229,7 +237,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                     ccmat_vfrac_s[m] =
                         v(b, ccmat::volume_fraction(mid), k, j, i) / vfrac_sum;
                     cm_rho_s[m] = v(b, ccmat::rho(mid), k, j, i) / ccmat_vfrac_s[m];
-                    cm_temp_s[m] = Tguess;
+                    cm_temp_s[m] = Tfix;
                     cm_press_s[m] = eos_fixt[m].PressureFromDensityTemperature(
                         cm_rho_s[m], cm_temp_s[m], lambda_fixt[m]);
                     cm_sie_s[m] = eos_fixt[m].InternalEnergyFromDensityTemperature(
@@ -242,7 +250,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                                                  cm_press_s.data(), pte_scratch.data()};
                   singularity::PTESolverFixedT<LocalEosIndexer<EOS>, Real *,
                                                LambdaIndexer_t>
-                      backup(nmat_backup, eos_fixt, vfrac_tot, Tguess, scr_fixt[0],
+                      backup(nmat_backup, eos_fixt, vfrac_tot, Tfix, scr_fixt[0],
                              scr_fixt[1], scr_fixt[2], scr_fixt[3], scr_fixt[4],
                              lambda_fixt, scr_fixt[5], pte_params);
                   auto status = singularity::PTESolver(backup);
@@ -260,7 +268,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                       v(b, ccmat::volume_fraction(mid), k, j, i) = ccmat_vfrac_s[m];
                       mean_p += ccmat_vfrac_s[m] * cm_press_s[m];
                     }
-                    pv(ccbulk::temperature(), kji) = Tguess;
+                    pv(ccbulk::temperature(), kji) = Tfix;
                     pv(ccbulk::pressure(), kji) = mean_p;
 
                     // PTE FixedT success; break out of iterative loop
@@ -270,7 +278,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                   // NOTE(@pdmullen): If reaching this branch, then only one active
                   // material remains in the cell.  Therefore, we call the EOS directly
                   const int mid = pte2slice[0];
-                  pv(ccbulk::temperature(), kji) = Tguess;
+                  pv(ccbulk::temperature(), kji) = Tfix;
                   v(b, ccmat::volume_fraction(mid), k, j, i) = 1.0;
 
                   // Now ccmat::rho is equivalent to cm::rho
@@ -279,7 +287,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
                   // Call EOS for pressure
                   RiotEOS::LambdaIndexerSingleCoord<decltype(v)> ll(v, b, mid, k, j, i);
                   pv(ccbulk::pressure(), kji) =
-                      eos[eos_map[mid]].PressureFromDensityTemperature(rhom, Tguess, ll);
+                      eos[eos_map[mid]].PressureFromDensityTemperature(rhom, Tfix, ll);
 
                   // Break out of iterative loop
                   break;
@@ -317,7 +325,8 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
             RiotEOS::LambdaIndexerSingleCoord<decltype(v)> ll(v, b, mid, k, j, i);
             Real tmat = eos[eos_map[mid]].TemperatureFromDensityInternalEnergy(ccbulk_rho,
                                                                                sie, ll);
-            tmat = (tmat > tfloor) ? tmat : Tguess;
+            // Clamp to the floor (falling back to the previous temperature if NaN)
+            tmat = std::isnan(tmat) ? Tguess : std::max(tmat, tfloor);
             pv(ccbulk::temperature(), kji) = tmat;
 
             // Obtain pressure directly from EOS call
@@ -340,6 +349,24 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
 
             // For now we just fail.  In future, we may consider "floors"...
             PARTHENON_FAIL("Aborting due to empty cell!");
+          }
+
+          // Temperature ceiling below a density: clamp the temperature and reset the
+          // pressure to the EOS at the ceiling, at the closure's volume fractions
+          // (PostCommsFillDerived rebuilds the energies from T)
+          if (tceil > 0.0 && pv(ccbulk::rho(), kji) < tceil_rho &&
+              pv(ccbulk::temperature(), kji) > tceil) {
+            Real p = 0.0;
+            for (int m = 0; m < nmat; m++) {
+              const Real alpha = v(b, ccmat::volume_fraction(m), k, j, i);
+              const Real rhom = v(b, ccmat::rho(m), k, j, i);
+              if (!active_mat[m] || !(alpha > 0.0 && rhom > 0.0)) continue;
+              RiotEOS::LambdaIndexerSingleCoord<decltype(v)> ll(v, b, m, k, j, i);
+              p += alpha * eos[eos_map[m]].PressureFromDensityTemperature(rhom / alpha,
+                                                                          tceil, ll);
+            }
+            pv(ccbulk::temperature(), kji) = tceil;
+            pv(ccbulk::pressure(), kji) = p;
           }
 
           // Handle PTE diagnostic averaging (if enabled)

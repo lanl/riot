@@ -308,6 +308,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src);
 TaskStatus CalculateFluxes(MeshData<Real> *rc);
 TaskStatus GuessCellVolumeFractions(MeshData<Real> *rc);
 AmrTag CheckRefinement(MeshBlockData<Real> *rc);
+AmrTag DensityRefinement(MeshBlockData<Real> *rc);
 TaskStatus CalculateMaxSignalSpeed(MeshData<Real> *state);
 Real EstimateTimestepMesh(MeshData<Real> *rc);
 PrimFluxPack MakeAdvectionPack(MeshData<Real> *md);

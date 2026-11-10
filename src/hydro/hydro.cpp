@@ -103,8 +103,31 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   // Refinement Strategy
   std::string refinement = pin->GetOrAddString("parthenon/mesh", "refinement", "none");
   bool adaptive = (!refinement.compare("adaptive") ? true : false);
-  bool amr_int = pin->GetOrAddBoolean("hydro", "amr_interface", true,
+  // Quasi-Lagrangian refinement on the bulk density: blocks with max density above
+  // amr_density_max sit at the finest level, and each level coarser covers a further
+  // drop by amr_density_factor (8 keeps the cell mass roughly fixed).  Blocks below
+  // amr_density_min go to the root level.
+  const bool amr_density = pin->GetOrAddBoolean("hydro", "amr_density", false,
+                                                "Refine on the bulk density");
+  bool amr_int = pin->GetOrAddBoolean("hydro", "amr_interface", !amr_density,
                                       "Refine on material interfaces");
+  PARTHENON_REQUIRE(!(amr_density && amr_int),
+                    "hydro/amr_density and hydro/amr_interface are exclusive");
+  if (amr_density) {
+    params.Add("amr_density_max",
+               pin->GetOrAddReal("hydro", "amr_density_max", 1.0,
+                                 "Density refined to the finest level"));
+    params.Add("amr_density_min",
+               pin->GetOrAddReal("hydro", "amr_density_min", 0.0,
+                                 "Density below which blocks go to the root level"));
+    const Real factor =
+        pin->GetOrAddReal("hydro", "amr_density_factor", 8.0,
+                          "Density drop between consecutive refinement levels");
+    PARTHENON_REQUIRE(factor > 1.0, "hydro/amr_density_factor must exceed 1");
+    params.Add("amr_density_factor", factor);
+    params.Add("amr_max_level",
+               pin->GetOrAddInteger("parthenon/mesh", "numlevel", 1) - 1);
+  }
 
   // Choose Riemann Solver
   // TODO(JMM): Move Carbuncle correction into HLLC solver
@@ -254,6 +277,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   hydro->EstimateTimestepMesh = EstimateTimestepMesh;
   if (amr_int) {
     hydro->CheckRefinementBlock = CheckRefinement;
+  } else if (amr_density) {
+    hydro->CheckRefinementBlock = DensityRefinement;
   }
 
   // Mass/Volume Fraction Thresholds
@@ -265,6 +290,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
              pin->GetOrAddReal("hydro", "mass_frac_thresh", 1.0e-12,
                                "Below this mass fraction, materials are excluded from "
                                "PTE in a cell and deleted."));
+
+  // Ceiling on the temperature of cells below a density, 0 for none, applied in the
+  // general PTE closure: the pressure is reset to the EOS at the ceiling (and the excess
+  // energy removed when PostCommsFillDerived rebuilds the energies from the temperature)
+  params.Add("temperature_ceiling",
+             pin->GetOrAddReal("hydro", "temperature_ceiling", 0.0,
+                               "The maximum temperature allowed in cells below "
+                               "temperature_ceiling_rho (0 for no ceiling)."));
+  params.Add("temperature_ceiling_rho",
+             pin->GetOrAddReal("hydro", "temperature_ceiling_rho",
+                               std::numeric_limits<Real>::max(),
+                               "The density below which temperature_ceiling holds."));
 
   // Temperature floor used in general PTE
   params.Add("temp_floor", pin->GetOrAddReal("hydro", "temp_floor", 1.0,
@@ -432,6 +469,47 @@ AmrTag CheckRefinement(MeshBlockData<Real> *md) {
 
   if (refine_flag == 1) return AmrTag::refine;
   if (refine_flag == -1) return AmrTag::derefine;
+  return AmrTag::same;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  AmrTag Hydro::DensityRefinement
+//! \brief Quasi-Lagrangian refinement on the block's maximum bulk density
+AmrTag DensityRefinement(MeshBlockData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto pmb = md->GetBlockPointer();
+  auto &params = pmb->packages.Get("hydro")->AllParams();
+  const Real rho_max = params.Get<Real>("amr_density_max");
+  const Real rho_min = params.Get<Real>("amr_density_min");
+  const Real factor = params.Get<Real>("amr_density_factor");
+  const int max_level = params.Get<int>("amr_max_level");
+  const int current_level = pmb->loc.level() - pmb->pmy_mesh->GetRootLevel();
+
+  IndexRange ib = md->GetBoundsI(IndexDomain::interior);
+  IndexRange jb = md->GetBoundsJ(IndexDomain::interior);
+  IndexRange kb = md->GetBoundsK(IndexDomain::interior);
+  static auto desc = MakePackDescriptor<ccbulk::rho>((pmb->resolved_packages).get());
+  auto v = desc.GetPack(md);
+  Real rho_blk = 0.0;
+  parthenon::par_reduce(
+      parthenon::loop_pattern_mdrange_tag, "Hydro::DensityRefinement", DevExecSpace(),
+      kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int k, const int j, const int i, Real &lmax) {
+        lmax = std::max(lmax, v(0, ccbulk::rho(), k, j, i));
+      },
+      Kokkos::Max<Real>(rho_blk));
+
+  // the level this density calls for
+  auto target = [&](const Real rho) {
+    if (rho < rho_min) return 0;
+    if (rho >= rho_max) return max_level;
+    const int drop =
+        static_cast<int>(std::ceil(std::log(rho_max / rho) / std::log(factor)));
+    return std::max(max_level - drop, 0);
+  };
+  if (current_level < target(rho_blk)) return AmrTag::refine;
+  // derefine only once the density has dropped well past the threshold (hysteresis)
+  if (current_level > target(std::sqrt(factor) * rho_blk)) return AmrTag::derefine;
   return AmrTag::same;
 }
 

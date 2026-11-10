@@ -45,6 +45,7 @@
 #include "riot_utils/fpe_trap.hpp"
 #include "riot_utils/sparse_update.hpp"
 #include "scalars/scalars.hpp"
+#include "self_gravity/self_gravity.hpp"
 #include "strength/strength.hpp"
 #include "tnburn/tnburn.hpp"
 #include "tracers/tracers.hpp"
@@ -95,6 +96,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   do_levelsets = riot_pkg->Param<bool>("do_levelsets");
   do_lasers = riot_pkg->Param<bool>("do_lasers");
   do_gravity = riot_pkg->Param<bool>("do_gravity");
+  do_self_gravity = riot_pkg->Param<bool>("do_self_gravity");
   do_ionization = riot_pkg->Param<bool>("do_ionization");
   curvilinear = riot_pkg->Param<bool>("curvilinear");
 
@@ -109,6 +111,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
   if (do_tn) tn_pkg = pm->packages.Get("TNBurn").get();
   if (do_lasers) laser_pkg = pm->packages.Get("laser").get();
   if (do_gravity) gravity_pkg = pm->packages.Get("gravity").get();
+  if (do_self_gravity) self_gravity_pkg = pm->packages.Get("self_gravity").get();
   if (do_strength) strength_pkg = pm->packages.Get("strength").get();
   if (do_ionization) ion_pkg = pm->packages.Get("ionization").get();
 
@@ -263,6 +266,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
     const Real dt = integrator->dt;
     const Real stage_time = tm.time + integrator->c[stage - 1] * dt;
 
+    // solve for the gravitational potential at the start of each stage
+    if (do_self_gravity) SelfGravity::SolvePoisson(tc, pmesh);
+
     TaskRegion &tr = tc.AddRegion(num_partitions);
     for (int i = 0; i < num_partitions; i++) {
       auto &tl = tr[i];
@@ -363,6 +369,19 @@ TaskCollection RiotDriver::RiotStepTasks() {
       auto recv_flx = tl.AddTask(start_flx_recv, parthenon::ReceiveFluxCorrections, mu0);
       auto set_flx = tl.AddTask(recv_flx, parthenon::SetFluxCorrections, mu0);
 
+      // compute self-gravity sources, if enabled. The energy source uses the (corrected)
+      // material mass fluxes, so this must follow all mass flux contributions and the
+      // whole flux correction (send, receive, and set).
+      auto self_gravity_source = none;
+      if (do_self_gravity) {
+        auto &mbase = pmesh->mesh_data.GetOrAdd("base", i);
+        self_gravity_source = tl.AddTask(
+            hydro_flx | mix_flx | plasma_viscosity_flx | send_flx | recv_flx | set_flx,
+            SelfGravity::CalculateSelfGravitySource,
+            mu0.get(), mbase.get(),
+            self_gravity_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+      }
+
       // one giant update kernel to rule them all
       // JMM: UpdateToNextStage sums every source term in dudt_args into the state
       // (weighted by beta*dt) as part of the update, so we hand it all the individual
@@ -380,8 +399,8 @@ TaskCollection RiotDriver::RiotStepTasks() {
         }
       }
       auto update_deps = hydro_flx | mix_flx | set_flx | geom_source | strength_source |
-                         gravity_source | plugin_sources | mix_source | tn_shared_source |
-                         ionization_source;
+                         gravity_source | self_gravity_source | plugin_sources |
+                         mix_source | tn_shared_source | ionization_source;
       TaskID update;
       if (kinematic_advection) {
         update = tl.AddTask(update_deps, sparse_update::UpdateToNextStage<true>,

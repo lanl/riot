@@ -148,6 +148,11 @@ set (SRC_LIST
   scalars/scalars.cpp
   scalars/scalars.hpp
 
+  self_gravity/poisson_driver.cpp
+  self_gravity/poisson_equation.hpp
+  self_gravity/self_gravity.cpp
+  self_gravity/self_gravity.hpp
+
   strength/strength.cpp
   strength/strength.hpp
 

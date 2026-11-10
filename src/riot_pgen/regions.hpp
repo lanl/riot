@@ -1207,9 +1207,10 @@ class BlockInitData {
 
       for (int r = 0; r < regions.size(); r++) {
         if (vol_moments[r][0] == 0.0) continue; // region does not overlap cell
-        xs(0, 0) = vol_moments[r][1];
-        xs(0, 1) = vol_moments[r][2];
-        xs(0, 2) = vol_moments[r][3];
+        // the state is evaluated at the centroid of the part of the cell in the region
+        xs(0, 0) = vol_moments[r][1] / vol_moments[r][0];
+        xs(0, 1) = vol_moments[r][2] / vol_moments[r][0];
+        xs(0, 2) = vol_moments[r][3] / vol_moments[r][0];
 
         // set bulk tied scalars
         for (auto &scalar : regions[r].bulk_tied_scalars) {

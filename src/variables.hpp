@@ -281,6 +281,10 @@ VARIABLE_SCALAR(ion, temperature_old, false);
 VARIABLE_SCALAR(ion, temp_tstep_criterion, false);
 } // namespace Ionization
 
+namespace SelfGravity {
+VARIABLE_SCALAR(grav, phi, false);
+} // namespace SelfGravity
+
 namespace Levelsets {
 VARIABLE_SCALAR(levelset, levelset, false);
 VARIABLE_SCALAR(levelset, levelset0, false);

@@ -31,6 +31,7 @@
 #include "riot_pgen/pgen.hpp"
 #include "riot_pgen/regions.hpp"
 #include "scalars/scalars.hpp"
+#include "self_gravity/self_gravity.hpp"
 #include "strength/strength.hpp"
 #include "thinc/thinc.hpp"
 #include "tnburn/tnburn.hpp"
@@ -99,6 +100,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                                                  "Enable levelsets (EXPERIMENTAL)");
   const bool do_gravity = pin->GetOrAddBoolean(
       "physics", "gravity", false, "Enable a constant gravitational acceleration");
+  const bool do_self_gravity = pin->GetOrAddBoolean("physics", "self_gravity", false,
+                                                   "Enable Poisson self-gravity");
   const bool do_ionization =
       pin->GetOrAddBoolean("physics", "ionization", false, "Enable partial ionization");
   const bool do_prescribed_sources =
@@ -130,6 +133,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                     "Radiation transport with ionization is not yet supported.")
   if (do_levelsets) PARTHENON_REQUIRE(do_hydro, "Levelsets config. requires hydro.")
   if (do_gravity) PARTHENON_REQUIRE(do_hydro, "Gravity config. requires hydro.")
+  if (do_self_gravity) PARTHENON_REQUIRE(do_hydro, "Self-gravity requires hydro.");
   if (do_ionization) PARTHENON_REQUIRE(do_hydro, "Ionization requires hydro.");
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
   if (do_prescribed_sources)
@@ -145,6 +149,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_levelsets", do_levelsets);
   riot->AddParam("do_lasers", do_lasers);
   riot->AddParam("do_gravity", do_gravity);
+  riot->AddParam("do_self_gravity", do_self_gravity);
   riot->AddParam("curvilinear", parthenon::IsCoord<parthenon::UniformSpherical>() ||
                                     parthenon::IsCoord<parthenon::UniformCylindrical>());
   riot->AddParam("fixed_fluid", fixed_fluid);
@@ -165,7 +170,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
 
   // add a field to track which blocks are active
   bool sparse_physics = pin->GetOrAddBoolean("physics", "sparse_physics", true);
-  if (do_multigroup_diffusion || do_radiation_transport || do_ionization) {
+  if (do_multigroup_diffusion || do_radiation_transport || do_ionization ||
+      do_self_gravity) {
     if (sparse_physics)
       PARTHENON_WARN(
           "sparse_physics being disabled because a global solver is being used.");
@@ -243,6 +249,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     packages.Add(PrescribedSources::Initialize(pin.get()));
   }
   if (do_gravity) packages.Add(Gravity::Initialize(pin.get()));
+  if (do_self_gravity) packages.Add(SelfGravity::Initialize(pin.get()));
 
   riot_plugins::Plugins::Initialize(pin.get(), packages);
 

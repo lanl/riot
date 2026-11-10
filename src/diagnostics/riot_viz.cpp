@@ -12,6 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 #include <algorithm>
+#include <cstdio>
 //#include <format>
 #include <iomanip>
 #include <sstream>
@@ -238,15 +239,86 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
 
   // now set some info at the camera/image level
   camera.filename = pin->GetString(cam_block, "name");
-  auto cloc = pin->GetVector<Real>(cam_block, "location");
-  auto floc = pin->GetVector<Real>(cam_block, "focus");
-  auto up = pin->GetOrAddVector<Real>(cam_block, "up", {0, 0, 1});
-  auto width = pin->Get<Real>(cam_block, "target_width");
-  auto height = pin->Get<Real>(cam_block, "target_height");
+  camera.location = pin->GetVector<Real>(cam_block, "location");
+  camera.focus = pin->GetVector<Real>(cam_block, "focus");
+  camera.up = pin->GetOrAddVector<Real>(cam_block, "up", {0, 0, 1});
+  camera.width = pin->Get<Real>(cam_block, "target_width");
+  camera.height = pin->Get<Real>(cam_block, "target_height");
+  // a moving camera interpolates its location, focus, up, and width between keyframes,
+  // keeping the aspect ratio of target_width and target_height
+  camera.key_t = pin->GetOrAddVector<Real>(cam_block, "keyframe_t", {});
+  const int nkey = camera.key_t.size();
+  if (nkey > 0) {
+    camera.key_location = pin->GetVector<Real>(cam_block, "keyframe_location");
+    camera.key_focus = pin->GetVector<Real>(cam_block, "keyframe_focus");
+    camera.key_up = pin->GetVector<Real>(cam_block, "keyframe_up");
+    camera.key_width = pin->GetVector<Real>(cam_block, "keyframe_width");
+    PARTHENON_REQUIRE_THROWS(camera.key_location.size() == 3 * nkey &&
+                                 camera.key_focus.size() == 3 * nkey &&
+                                 camera.key_up.size() == 3 * nkey &&
+                                 camera.key_width.size() == nkey,
+                             "Keyframes of " + cam_block +
+                                 " need 3 values of location, focus, and up and 1 "
+                                 "width per keyframe_t");
+    for (int k = 1; k < nkey; k++)
+      PARTHENON_REQUIRE_THROWS(camera.key_t[k] > camera.key_t[k - 1],
+                               "keyframe_t of " + cam_block + " must increase");
+  }
   camera.nwidth = pin->Get<int>(cam_block, "nwidth");
   camera.nheight = pin->Get<int>(cam_block, "nheight");
   camera.scale = pin->GetOrAdd<Real>(cam_block, "scale_output", 1.0);
   camera.colorbar_thickness = pin->GetOrAdd<int>(cam_block, "colorbar_thickness", 10);
+
+  scene.xmin[0] = pin->GetReal("parthenon/mesh", "x1min");
+  scene.xmax[0] = pin->GetReal("parthenon/mesh", "x1max");
+  scene.xmin[1] = pin->GetReal("parthenon/mesh", "x2min");
+  scene.xmax[1] = pin->GetReal("parthenon/mesh", "x2max");
+  scene.xmin[2] = pin->GetReal("parthenon/mesh", "x3min");
+  scene.xmax[2] = pin->GetReal("parthenon/mesh", "x3max");
+}
+
+namespace {
+// Cubic Hermite interpolation of keyframed values, n per keyframe, with the finite
+// difference slopes of a Catmull-Rom spline, held at the first and last keyframes
+std::vector<Real> Keyframe(const std::vector<Real> &t, const std::vector<Real> &val,
+                           const int n, const Real time) {
+  const int nkey = t.size();
+  auto at = [&](const int k) { return std::vector<Real>(&val[n * k], &val[n * k] + n); };
+  if (nkey == 1 || time <= t[0]) return at(0);
+  if (time >= t[nkey - 1]) return at(nkey - 1);
+  const int k = std::upper_bound(t.begin(), t.end(), time) - t.begin() - 1;
+  const Real h = t[k + 1] - t[k];
+  const Real s = (time - t[k]) / h;
+  const Real h00 = (1 + 2 * s) * (1 - s) * (1 - s), h10 = s * (1 - s) * (1 - s);
+  const Real h01 = s * s * (3 - 2 * s), h11 = s * s * (s - 1);
+  std::vector<Real> out(n);
+  for (int i = 0; i < n; i++) {
+    auto slope = [&](const int kk) {
+      const int lo = std::max(kk - 1, 0), hi = std::min(kk + 1, nkey - 1);
+      return (val[n * hi + i] - val[n * lo + i]) / (t[hi] - t[lo]);
+    };
+    out[i] = h00 * val[n * k + i] + h10 * h * slope(k) + h01 * val[n * (k + 1) + i] +
+             h11 * h * slope(k + 1);
+  }
+  return out;
+}
+} // namespace
+
+// Append the rays of camera cam_id, where it is at this time, to the scene
+void CameraRays(SceneInfo &scene, const int cam_id, const Real time) {
+  const auto &camera = scene.camera[cam_id];
+  auto cloc = camera.location;
+  auto floc = camera.focus;
+  auto up = camera.up;
+  auto width = camera.width;
+  auto height = camera.height;
+  if (camera.key_t.size() > 0) {
+    cloc = Keyframe(camera.key_t, camera.key_location, 3, time);
+    floc = Keyframe(camera.key_t, camera.key_focus, 3, time);
+    up = Keyframe(camera.key_t, camera.key_up, 3, time);
+    width = Keyframe(camera.key_t, camera.key_width, 1, time)[0];
+    height *= width / camera.width;
+  }
 
   // now setup the rays this camera's contribution to the scene
   auto normalize = [&](std::vector<Real> &vec) {
@@ -269,14 +341,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   normalize(ixhat);
   auto iyhat = cross(ixhat, nhat0);
 
-  std::array<Real, 3> xmin, xmax;
-  xmin[0] = pin->GetReal("parthenon/mesh", "x1min");
-  xmax[0] = pin->GetReal("parthenon/mesh", "x1max");
-  xmin[1] = pin->GetReal("parthenon/mesh", "x2min");
-  xmax[1] = pin->GetReal("parthenon/mesh", "x2max");
-  xmin[2] = pin->GetReal("parthenon/mesh", "x3min");
-  xmax[2] = pin->GetReal("parthenon/mesh", "x3max");
-
+  const auto &xmin = scene.xmin;
+  const auto &xmax = scene.xmax;
   Real dx = width / camera.nwidth;
   Real dy = height / camera.nheight;
   std::array<Real, 3> nray, lambda, trial;
@@ -303,7 +369,8 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
           if (lam < 0.0) return false;
           for (int dd = 0; dd < 3; dd++) {
             const Real x = cloc[dd] + lam * nray[dd];
-            if (x < xmin[dd] - kGeomTol || x > xmax[dd] + kGeomTol) return false;
+            const Real tol = kGeomTol * (xmax[dd] - xmin[dd]);
+            if (x < xmin[dd] - tol || x > xmax[dd] + tol) return false;
           }
           return true;
         };
@@ -350,8 +417,9 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
               trial[dd] = cloc[dd] + lambda[d] * nray[dd];
             }
             auto rt = std::sqrt(trial[0] * trial[0] + trial[1] * trial[1]);
-            if (rt < xmax[0] + kGeomTol &&
-                (trial[2] > xmin[1] - kGeomTol && trial[2] < xmax[1] + kGeomTol)) {
+            const Real ztol = kGeomTol * (xmax[1] - xmin[1]);
+            if (rt < xmax[0] * (1.0 + kGeomTol) &&
+                (trial[2] > xmin[1] - ztol && trial[2] < xmax[1] + ztol)) {
               face_dir = d;
               lambda_use = lambda[d];
             }
@@ -439,6 +507,37 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   }
 }
 
+// The render times of one camera: its own dt or t, else the <riot_viz> dt or t, kept to
+// [tstart, tstop]
+std::queue<Real> CameraSchedule(ParameterInput *pin, const std::string &block,
+                                const Real dt_glob, const std::vector<Real> &t_glob,
+                                const Real tlim) {
+  const bool has_dt = pin->DoesParameterExist(block, "dt");
+  const bool has_t = pin->DoesParameterExist(block, "t");
+  PARTHENON_REQUIRE_THROWS(!(has_dt && has_t),
+                           "Cannot set both dt and t for riot_viz camera " + block);
+  Real dt = has_dt ? pin->GetReal(block, "dt") : (has_t ? -1.0 : dt_glob);
+  std::vector<Real> tl = has_t ? pin->GetVector<Real>(block, "t")
+                               : (has_dt ? std::vector<Real>{} : t_glob);
+  PARTHENON_REQUIRE_THROWS(dt > 0.0 || tl.size() > 0,
+                           "Must set either dt or t in riot_viz or in camera " + block);
+  const Real tstart = pin->GetOrAddReal(block, "tstart", 0.0);
+  const Real tstop = pin->GetOrAddReal(block, "tstop", tlim);
+  std::queue<Real> tdump;
+  if (dt > 0.0) {
+    const Real tol = kMarchTiny * dt;
+    for (long k = 0; tstart + k * dt < tstop + tol; k++)
+      tdump.push(tstart + k * dt);
+    if (tdump.size() && std::abs(tstop - tdump.back()) < tol) tdump.back() = tstop;
+  } else {
+    std::sort(tl.begin(), tl.end());
+    const Real tol = kMarchTiny * std::max(std::abs(tstop), Real(1.0));
+    for (auto &tnext : tl)
+      if (tnext > tstart - tol && tnext < tstop + tol) tdump.push(tnext);
+  }
+  return tdump;
+}
+
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   namespace pvr = particles::riot_viz;
   namespace prt = particles::ray_tracer;
@@ -446,32 +545,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   riot_viz_initialized = true;
   Params &params = pkg->AllParams();
 
-  // figure out when viz should happen
+  // figure out when viz should happen: <riot_viz> dt or t is the default schedule of
+  // every camera, and each <riot_viz/cameraN> may set its own dt or t, and tstart/tstop
   auto dt_viz = pin->GetOrAdd<Real>("riot_viz", "dt", -1.0);
   auto t_viz = pin->GetOrAddVector<Real>("riot_viz", "t", {});
   auto tlim = pin->Get<Real>("parthenon/time", "tlim");
 
   if (dt_viz > 0 && t_viz.size() > 0)
     PARTHENON_FAIL("Cannot set both dt and t for riot_viz");
-  PARTHENON_REQUIRE(dt_viz > 0 || t_viz.size() > 0,
-                    "Must set either dt or t in riot_viz");
-  std::queue<Real> tdump;
-  if (dt_viz > 0.0) {
-    tdump.push(0.0);
-    while (tdump.back() + dt_viz < tlim + kMarchTiny * dt_viz)
-      tdump.push(tdump.back() + dt_viz);
-    if (std::abs(tlim - tdump.back()) < kMarchTiny * dt_viz) tdump.back() = tlim;
-  } else {
-    for (auto &tnext : t_viz)
-      tdump.push(tnext);
-  }
-  params.Add("tdump", tdump, true);
-  int dump_id = 0;
-  params.Add("dump_id", dump_id, parthenon::Params::Mutability::Restart);
-  Real next_dump_time = tdump.front();
-  params.Add("next_dump_time", next_dump_time, parthenon::Params::Mutability::Restart);
-  params.Add("first_dump_time", tdump.front());
-  params.Add("last_dump_time", tdump.back());
   bool timebar = pin->GetOrAdd<bool>("riot_viz", "timebar", false);
   params.Add("timebar", timebar);
   auto timebar_rgb =
@@ -487,6 +568,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   int max_size = 0;
   int nimages = 0;
   SceneInfo scene;
+  std::vector<std::queue<Real>> cam_tdump;
   for (const auto &block_name : blocks) {
     if (block_name.length() > block_base.size()) {
       auto suffix = block_name[block_base.size()];
@@ -495,7 +577,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         PARTHENON_REQUIRE_THROWS(cam_block_ids.count(id) == 0,
                                  "Two camera input blocks are numbered identically.");
         cam_block_ids.insert(id);
-        AddCamera(pin, nimages, ndim, scene);
+        AddCamera(pin, id, ndim, scene);
+        cam_tdump.push_back(CameraSchedule(pin, block_name, dt_viz, t_viz, tlim));
         auto &camera = scene.camera.back();
         max_size = std::max(max_size, camera.nwidth * camera.nheight +
                                           (camera.ncolorbar + timebar) *
@@ -504,6 +587,25 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       }
     }
   }
+
+  // per camera schedules, frame counters, and which cameras are due this render (all of
+  // them unless TimeToRender says otherwise, as for the analysis driver)
+  const int ncam = cam_tdump.size();
+  std::vector<Real> cam_next_time(ncam), cam_first_time(ncam), cam_last_time(ncam);
+  for (int c = 0; c < ncam; c++) {
+    const bool none = cam_tdump[c].empty();
+    cam_next_time[c] = none ? std::numeric_limits<Real>::max() : cam_tdump[c].front();
+    cam_first_time[c] = none ? 0.0 : cam_tdump[c].front();
+    cam_last_time[c] = none ? tlim : cam_tdump[c].back();
+  }
+  params.Add("cam_tdump", cam_tdump, true);
+  params.Add("cam_tdump_synced", false, true);
+  params.Add("cam_next_time", cam_next_time, parthenon::Params::Mutability::Restart);
+  params.Add("cam_frame", std::vector<int>(ncam, 0),
+             parthenon::Params::Mutability::Restart);
+  params.Add("cam_due", std::vector<int>(ncam, 1), true);
+  params.Add("cam_first_time", cam_first_time);
+  params.Add("cam_last_time", cam_last_time);
 
   // don't forget the 4 because it's 4 channels (RGBA)
   scene.images =
@@ -539,9 +641,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("scene_info", scene, true);
   params.Add("orig_fields", orig_fields);
   params.Add("analysis", analysis);
-  //RenderingParams rparams(scene.rendering_params);
-  //params.Add("rendering_params", rparams);
-  params.Add("tracer_info", impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)), true);
+  RenderingParams rparams(scene.rendering_params);
+  rparams.write_alpha = pin->GetOrAdd<bool>("riot_viz", "write_alpha", false);
+  params.Add("write_alpha", rparams.write_alpha);
+  params.Add("tracer_info", impl::TracerInfo(scene.field, std::move(rparams)), true);
 
   // One per partition, for Render
   params.Add("nodal_bounds", std::vector<impl::NodalBounds>(), true);
@@ -554,16 +657,29 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 bool TimeToRender(Mesh *pm, Real time) {
   if (!riot_viz_initialized) return false;
   auto pkg = pm->packages.Get("riot_viz");
-  auto dump_times = pkg->MutableParam<std::queue<Real>>("tdump");
-  auto &t_next_dump = *(pkg->MutableParam<Real>("next_dump_time"));
+  auto &tdump = *(pkg->MutableParam<std::vector<std::queue<Real>>>("cam_tdump"));
+  auto &next = *(pkg->MutableParam<std::vector<Real>>("cam_next_time"));
+  auto &due = *(pkg->MutableParam<std::vector<int>>("cam_due"));
+  auto &synced = *(pkg->MutableParam<bool>("cam_tdump_synced"));
+  const int ncam = tdump.size();
+  // after a restart the next times are restored, so drop the times before them
+  if (!synced) {
+    for (int c = 0; c < ncam; c++)
+      while (tdump[c].size() && tdump[c].front() < next[c])
+        tdump[c].pop();
+    synced = true;
+  }
   bool render = false;
-  while (time >= t_next_dump) {
-    render = true;
-    dump_times->pop();
-    if (dump_times->size())
-      t_next_dump = dump_times->front();
-    else
-      t_next_dump = std::numeric_limits<Real>::max();
+  for (int c = 0; c < ncam; c++) {
+    due[c] = 0;
+    // render once even if several times were stepped over
+    while (time >= next[c]) {
+      due[c] = 1;
+      while (tdump[c].size() && tdump[c].front() <= next[c])
+        tdump[c].pop();
+      next[c] = tdump[c].size() ? tdump[c].front() : std::numeric_limits<Real>::max();
+    }
+    render = render || due[c];
   }
   return render;
 }
@@ -588,10 +704,12 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
   auto &lukewarm = md->GetLukewarm(pvr::particles::name());
   lukewarm.Clear();
 
-  // Every camera point, face by face, with the mesh face it lies on
+  // Every point of the cameras due, face by face, with the mesh face it lies on
+  const auto &due = viz->Param<std::vector<int>>("cam_due");
   int npts = 0;
   for (int i = 0; i < 6; i++) {
-    npts += si.face_pts[i][sample::x].size();
+    for (const int c : si.camera_id[i])
+      npts += due[c];
   }
   if (npts == 0) return TaskStatus::complete;
   parthenon::ParArray2D<Real> camera_pts("camera points", npts,
@@ -600,13 +718,15 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
   auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_pts);
   auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_idx);
   for (int i = 0, p = 0; i < 6; i++) {
-    for (int j = 0; j < si.face_pts[i][sample::x].size(); j++, p++) {
+    for (int j = 0; j < si.face_pts[i][sample::x].size(); j++) {
+      if (!due[si.camera_id[i][j]]) continue;
       for (int n = 0; n < sample::nvalues; n++) {
         chost(p, n) = si.face_pts[i][n][j];
       }
       cid_host(p, 0) = si.camera_id[i][j];
       cid_host(p, 1) = si.pixel_id[i][j];
       cid_host(p, 2) = i;
+      p++;
     }
   }
   Kokkos::deep_copy(camera_pts, chost);
@@ -633,6 +753,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
   const bool clip = CullsBlocks(ndim);
   const RayTrace::BlockBounds mesh_bounds(md->GetMeshPointer()->mesh_size);
   auto &images = si.images;
+  const Real miss_alpha = viz->Param<bool>("write_alpha") ? 0.0 : 1.0;
   parthenon::ParArray1D<int> start_kind("camera start kinds", npts);
   parthenon::ParArray2D<Real> start("camera starts", npts, 3);
   parthenon::par_for(
@@ -685,7 +806,7 @@ TaskStatus InitializeCameras(MeshData<Real> *md) {
           const int pix = camera_idx(p, 1);
           for (int c = 0; c < 3; c++)
             images(cam, 4 * pix + c) = real_to_uint8_t(0.0);
-          images(cam, 4 * pix + 3) = real_to_uint8_t(1.0);
+          images(cam, 4 * pix + 3) = real_to_uint8_t(miss_alpha);
         }
       });
 
@@ -1054,6 +1175,20 @@ TaskCollection Render(Mesh *pm, Real time) {
   auto iterations = viz->MutableParam<std::vector<int>>("trace_iterations");
   auto bounds = viz->MutableParam<std::vector<impl::NodalBounds>>("nodal_bounds");
 
+  // The rays of the cameras due, from where they are now
+  {
+    auto &scene = *(viz->MutableParam<SceneInfo>("scene_info"));
+    const auto &due = viz->Param<std::vector<int>>("cam_due");
+    for (int f = 0; f < 6; f++) {
+      for (auto &pts : scene.face_pts[f])
+        pts.clear();
+      scene.camera_id[f].clear();
+      scene.pixel_id[f].clear();
+    }
+    for (int c = 0; c < scene.camera.size(); c++)
+      if (due[c]) CameraRays(scene, c, time);
+  }
+
   const int num_partitions = pm->DefaultNumPartitions();
   iterations->assign(num_partitions, 0);
   bounds->resize(num_partitions);
@@ -1199,11 +1334,12 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
   namespace vr = particles::riot_viz;
 
   auto viz = pm->packages.Get("riot_viz");
-  auto &dump_id = *(viz->MutableParam<int>("dump_id"));
+  auto &frame = *(viz->MutableParam<std::vector<int>>("cam_frame"));
+  const auto &due = viz->Param<std::vector<int>>("cam_due");
   bool timebar = viz->Param<bool>("timebar");
   auto &time_rgb = viz->Param<std::vector<Real>>("timebar_rgb");
-  auto time_start = viz->Param<Real>("first_dump_time");
-  auto time_stop = viz->Param<Real>("last_dump_time");
+  const auto &cam_first_time = viz->Param<std::vector<Real>>("cam_first_time");
+  const auto &cam_last_time = viz->Param<std::vector<Real>>("cam_last_time");
   auto scene_info = viz->MutableParam<SceneInfo>("scene_info");
 
   auto &images = scene_info->images;
@@ -1211,15 +1347,23 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
 
   Kokkos::fence();
   auto host_images = images.GetHostMirrorAndCopy();
-  if (parthenon::Globals::my_rank == 0)
-    MPI_Reduce(MPI_IN_PLACE, host_images.data(), host_images.size(), MPI_UINT8_T, MPI_MAX,
-               0, MPI_COMM_WORLD);
-  else
-    MPI_Reduce(host_images.data(), NULL, host_images.size(), MPI_UINT8_T, MPI_MAX, 0,
-               MPI_COMM_WORLD);
+  // only the images of the cameras due are reduced and written
+  const int image_size = host_images.GetDim(1);
+  for (int i = 0; i < due.size(); i++) {
+    if (!due[i]) continue;
+    if (parthenon::Globals::my_rank == 0)
+      MPI_Reduce(MPI_IN_PLACE, &host_images(i, 0), image_size, MPI_UINT8_T, MPI_MAX, 0,
+                 MPI_COMM_WORLD);
+    else
+      MPI_Reduce(&host_images(i, 0), NULL, image_size, MPI_UINT8_T, MPI_MAX, 0,
+                 MPI_COMM_WORLD);
+  }
   if (parthenon::Globals::my_rank == 0) {
     auto &camera = scene_info->camera;
     for (int i = 0; i < camera.size(); i++) {
+      if (!due[i]) continue;
+      const Real time_start = cam_first_time[i];
+      const Real time_stop = cam_last_time[i];
       size_t max_label_width = 0;
       size_t max_range_width = 0;
       for (auto &layer : camera[i].layer) {
@@ -1321,7 +1465,7 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       // Move to this commented out line when we go to C++20 and add include <format>
       //std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
       std::ostringstream ss;
-      ss << camera[i].filename << std::setfill('0') << std::setw(4) << dump_id << ".png";
+      ss << camera[i].filename << std::setfill('0') << std::setw(4) << frame[i] << ".png";
       std::string name = ss.str();
       // stbi_write_png
       if (!write_png(name.c_str(), w, total_h,
@@ -1330,9 +1474,20 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
                      scale)) {
         throw std::runtime_error("Failed to write PNG");
       }
+      // the simulation time of each frame, as there may be no timebar
+      const std::string times_name = camera[i].filename + "times.txt";
+      std::FILE *ft = std::fopen(times_name.c_str(), frame[i] == 0 ? "w" : "a");
+      if (ft != nullptr) {
+        std::fprintf(ft, "%d %.17g\n", frame[i], time);
+        std::fflush(ft);
+        std::fclose(ft);
+      } else {
+        PARTHENON_WARN("Failed to write " + times_name);
+      }
     }
   }
-  dump_id++;
+  for (int i = 0; i < due.size(); i++)
+    frame[i] += due[i];
 
   parthenon::par_for(
       DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, images.GetDim(2) - 1,
