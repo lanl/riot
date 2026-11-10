@@ -40,6 +40,7 @@ class RiotDriver : public EvolutionDriver {
   void ReportBlockHistogram();
   void OutputDownstreamCycleDiagnostics();
   void ReportMemUsage();
+  void ReportSolverStats();
   std::vector<TaskCollectionFnPtr> OperatorSplitTasks;
   static void RegisterPgens();
 

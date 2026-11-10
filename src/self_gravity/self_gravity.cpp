@@ -184,6 +184,20 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   psolver->initial_guess_is_zero = false;
   params.Add("solver_pointer", psolver);
 
+  // Solver diagnostics. The solvers already added max_iterations, with this default.
+  params.Add("max_iterations", pin->GetOrAddInteger(block_name, "max_iterations", 1000));
+  params.Add("print_per_solve",
+             pin->GetOrAddBoolean(block_name, "print_per_solve", false,
+                                  "Print the iterations and residual of every solve"));
+  const bool time_solver = pin->GetOrAddBoolean(
+      block_name, "time_solver", false,
+      "Time the solver tasks per multigrid level and report at the end of the run");
+  params.Add("time_solver", time_solver);
+  // Note this enables timing for every task registered with a TimingAccumulator, and
+  // fences before and after each one
+  if (time_solver) parthenon::Task::enable_timing = true;
+  params.Add("solve_stats", SolveStats(), Params::Mutability::Mutable);
+
   // Source term dU/dt variables
   self_gravity->RegisterMeshDataSubset(
       "dudt", RiotUtils::MakePackageDudtRequirements(

@@ -200,6 +200,7 @@ void RiotDriver::RiotStepInit() {
   auto &u1 = pmesh->mesh_data.Add(mdname::u1, u0);
 
   SetDiagnostics();
+  if (do_self_gravity) SelfGravity::ResetStepStats(pmesh);
 }
 
 //----------------------------------------------------------------------------------------
@@ -217,6 +218,7 @@ TaskListStatus RiotDriver::Step() {
 
   auto status = RiotStepTasks().Execute();
   if (status != TaskListStatus::complete) return status;
+  if (do_self_gravity) SelfGravity::FinalizeStepStats(pmesh);
 
   for (auto &fn : OperatorSplitTasks) {
     status = fn(pmesh, tm, integrator->dt).Execute();
@@ -576,6 +578,7 @@ void RiotDriver::ReportBlockHistogram() {
 //! \fn  void RiotDriver::OutputDownstreamCycleDiagnostics
 //! \brief
 void RiotDriver::OutputDownstreamCycleDiagnostics() {
+  if (do_self_gravity) SelfGravity::OutputCycleStats(pmesh);
   try {
     auto pkg = pmesh->packages.Get("multigroup_diffusion_package");
     std::cout << " lin_sol_iters=" << std::setw(2)
@@ -584,6 +587,13 @@ void RiotDriver::OutputDownstreamCycleDiagnostics() {
               << pkg->Param<int>("step_newt_iterations");
   } catch (...) {
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void RiotDriver::ReportSolverStats
+//! \brief
+void RiotDriver::ReportSolverStats() {
+  if (do_self_gravity) SelfGravity::ReportSolverStats(pmesh);
 }
 
 //----------------------------------------------------------------------------------------

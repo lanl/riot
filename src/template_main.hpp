@@ -69,6 +69,7 @@ int main(parthenon::ParthenonManager &pman) {
   if constexpr (std::is_same_v<T, RiotDriver>) {
     driver.ReportBlockHistogram();
     driver.ReportMemUsage();
+    driver.ReportSolverStats();
   }
 
   // call MPI_Finalize and Kokkos::finalize if necessary
