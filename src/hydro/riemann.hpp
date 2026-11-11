@@ -166,7 +166,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
   if constexpr (DIR == X2DIR) f_v2 += P;
   if constexpr (DIR == X3DIR) f_v3 += P;
 
-  const Real ske = v1 * v1 + v2 * v2 + v3 * v3;
+  const Real velocity_sq_x = Kokkos::fma(v1, v1, Real(0.0));
+  const Real velocity_sq_y = Kokkos::fma(v2, v2, Real(0.0));
+  const Real velocity_sq_z = Kokkos::fma(v3, v3, Real(0.0));
+  const Real ske = velocity_sq_x + velocity_sq_y + velocity_sq_z;
   const Real E = u + 0.5 * rho * ske;
   const Real Es = rhos_rho * (E + (ss - vp) * (rho * ss + P / (s - vp)));
   f_eng = vp * (E + P) + s * (Es - E);
