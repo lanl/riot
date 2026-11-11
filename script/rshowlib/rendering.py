@@ -68,15 +68,32 @@ class RshowRenderer:
             row, column = divmod(panel_index, columns)
             axis = figure.add_subplot(grid[row, column], sharex=axes[0] if axes else None)
             axes.append(axis)
+            block_series = []
+            data_line_width = max(1.4, 1.4 * context.line_width)
             for block_index, data in enumerate(blocks):
                 x = np.asarray(dataset.x_coordinates[block_index, :])
                 if data.shape != x.shape:
                     raise RenderError(f"{selection.variable}, block {block_index}: data shape {data.shape} does not match x-coordinate shape {x.shape}")
-                axis.plot(x, data, color=COLORS[0], linewidth=max(1.4, 1.4 * context.line_width))
+                edges = coordinate_edges(x)
+                block_series.append((edges[0], edges[-1], edges[1] - edges[0], edges[-1] - edges[-2], x, data))
+                axis.plot(x, data, color=COLORS[0], linewidth=data_line_width)
                 if request.style.show_block_outlines:
-                    edges = coordinate_edges(x)
                     for edge in (edges[0], edges[-1]):
                         axis.axvline(edge, color="black", linewidth=max(0.45, 0.45 * context.line_width))
+            block_series.sort(key=lambda series: series[0])
+            for left, right in zip(block_series, block_series[1:]):
+                scale = max(abs(left[1]), abs(right[0]), 1.0)
+                boundary_tolerance = max(
+                    32.0 * np.finfo(float).eps * scale,
+                    0.05 * min(abs(left[3]), abs(right[2])),
+                )
+                if abs(left[1] - right[0]) <= boundary_tolerance:
+                    axis.plot(
+                        [left[4][-1], right[4][0]],
+                        [left[5][-1], right[5][0]],
+                        color=COLORS[0],
+                        linewidth=data_line_width,
+                    )
             axis.set_ylabel(selection.variable)
             axis.set_yscale("log" if request.style.logarithmic else "linear")
             if primary and (request.limits.y_min is not None or request.limits.y_max is not None):
