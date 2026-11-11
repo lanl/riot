@@ -29,6 +29,10 @@ class InvalidRangeError(RshowError):
     pass
 
 
+class InvalidStyleError(RshowError):
+    pass
+
+
 class RenderError(RshowError):
     pass
 
