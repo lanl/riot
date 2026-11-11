@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <set>
@@ -311,9 +312,12 @@ void ReportSolverStats(Mesh *pmesh) {
     std::string line;
     while (std::getline(is, line)) {
       const auto tab = line.rfind('\t');
+      if (tab == std::string::npos) continue;
       auto &t = times[line.substr(0, tab)];
       t.resize(nr, 0.0);
-      t[r] = std::stod(line.substr(tab + 1));
+      // strtod rather than stod, which throws on underflow (e.g. a timer printed as a
+      // subnormal)
+      t[r] = std::strtod(line.c_str() + tab + 1, nullptr);
     }
   }
   printf("self_gravity solver timings (s) over %i ranks, timed tasks only (boundary "
