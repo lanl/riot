@@ -382,12 +382,6 @@ if(RIOT_BUILD_PYTHON)
       message(FATAL_ERROR "Python not found.")
   endif()
 
-  # JMM: I think we want these even if we are building a code that
-  #  depends on riot. But we only want it if Python is on.
-  install(FILES
-    ${CMAKE_SOURCE_DIR}/script/inputs/riot.py
-    DESTINATION ${Python_SITELIB}
-  )
 endif()
 
 if(RIOT_BUILD_CAD)
@@ -417,6 +411,8 @@ if (PLUGINS_DIR)
 else()
   add_subdirectory(src/plugin_stubs)
 endif()
+
+include(cmake/RiotInstall.cmake)
 
 if(RIOT_ENABLE_UNIT_TESTS OR RIOT_ENABLE_REGRESSION_TESTS)
   message("\nConfiguring tests")

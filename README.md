@@ -46,13 +46,40 @@ For detailed build instructions, see the [build document](https://lanl.github.io
 
 ## Notes on python
 
-The code builds by default with support for inline calls to Python, which requires Python be installed on the system with development components (this is typical) and that NumPy be installed.  This can be disabled at cmake configuration time via `-DRIOT_BUILD_PYTHON=OFF`.  When Python is invoked, it must be able to find not only the file(s) containing the functionality you have defined, but also any imported modules.  The recommended way of specifying search paths for these modules is by setting the environment variable `PYTHONPATH`.  Two often useful modules are `script/inputs/riot.py` and the singularity-eos python bindings that enable calls to equations of state, which are built along with riot and show up in the build directory within `singularity-eos/python` as `singularity_eos.cpython-*`.  Pointing your `PYTHONPATH` at these directories should enable their use in your own Python files.  Alternatively, after building riot, you can invoke cmake from your build directory to install into a specified location via
+The code builds by default with support for inline calls to Python, which requires Python be installed on the system with development components (this is typical) and that NumPy be installed.  This can be disabled at cmake configuration time via `-DRIOT_BUILD_PYTHON=OFF`.  When Python is invoked, it must be able to find not only the file(s) containing the functionality you have defined, but also any imported modules.  The recommended way of specifying search paths for these modules is by setting the environment variable `PYTHONPATH`.  Two often useful modules are `script/inputs/riot.py` and the singularity-eos python bindings that enable calls to equations of state, which are built along with riot and show up in the build directory within `singularity-eos/python` as `singularity_eos.cpython-*`.  Pointing your `PYTHONPATH` at these directories should enable their use in your own Python files.
 
-```
-cmake --install . --component runtime --prefix path_to_install
+For a self-contained Riot bundle, configure with an explicit install prefix and build the
+`riot-install` target. Using a virtual environment while configuring is recommended so
+CMake finds a known Python interpreter and NumPy installation:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install numpy
+
+cmake -S . -B build \
+  -DPython_ROOT_DIR="$VIRTUAL_ENV" \
+  -DCMAKE_INSTALL_PREFIX="$PWD/riot-install"
+cmake --build build --target riot-install -j
+source riot-install/riot-env.sh
 ```
 
-which will put the riot executable into `path_to_install/bin` and `riot.py` and `singularity_eos.cpython-*` into `path_to_install/python`.  With this option, you can just point `PYTHONPATH` at `path_to_install/python`.
+The installed tree contains the executable in `bin`, `riot.py` and the
+`singularity_eos` extension in `python`, and a source snapshot (including external
+packages, inputs, scripts, and documentation) in `share/riot/source`. Sourcing
+`riot-env.sh` adds the executable to `PATH`, adds the Python module and script
+directories to `PYTHONPATH`, and defines `RIOT_ROOT`, `RIOT_SOURCE_DIR`,
+`RIOT_INPUT_DIR`, and `RIOT_SCRIPT_DIR`.
+
+The bundle does not copy platform runtime libraries such as MPI, HDF5, the C++
+runtime, or the Python shared library. Load the same environment modules, or provide
+ABI-compatible versions of those libraries, on the destination system.
+
+The virtual environment is intentionally not copied into the bundle: virtual
+environments are generally not relocatable and compiled Python extensions remain tied
+to the Python major/minor version used for the build. Activate the same virtual
+environment before sourcing `riot-env.sh` when running on the build machine, or use a
+compatible Python installation on the destination system.
 
 Note that if your Python version does not match the version used to build riot, you may encounter compatibility issues.  One potential indication of this is that you get import failures when trying to import singularity-eos.
 

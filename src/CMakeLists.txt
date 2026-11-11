@@ -239,16 +239,6 @@ if (RIOT_BUILD_CAD)
   target_link_libraries(riotlib PUBLIC ${OpenCASCADE_LIBRARIES})
 endif()
 
-if (RIOT_BUILD_PYTHON)
-  install(DIRECTORY ${CMAKE_BINARY_DIR}/singularity-eos/python
-    DESTINATION .
-    COMPONENT runtime
-    FILES_MATCHING
-    PATTERN "singularity_eos.cpython*"
-    PATTERN "CMakeFiles/*" EXCLUDE
-  )
-endif()
-
 # Disable executable automatically for builds with downstream codes
 if (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
    message(STATUS "Standalone mode. Adding riot executable")
@@ -258,6 +248,7 @@ if (CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
 
    install(TARGETS riot
      RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+     COMPONENT riot-bundle
    )
 
    set_target_properties(riot PROPERTIES
