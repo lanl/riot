@@ -176,6 +176,21 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   m_phi.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
   self_gravity->AddField<phi>(m_phi);
 
+  // Initial guess of the stages after the first, extrapolated in time from the stage 1
+  // potentials of the last two steps
+  const bool extrapolate_guess = pin->GetOrAddBoolean(
+      block_name, "extrapolate_guess", false,
+      "Start the solves after the first RK stage from a linear extrapolation in time of "
+      "the stage 1 potentials of the last two steps");
+  params.Add("extrapolate_guess", extrapolate_guess);
+  if (extrapolate_guess) {
+    auto m_hist = Metadata({Metadata::Cell, Metadata::Independent, OperatorSplit});
+    m_hist.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+    self_gravity->AddField<phi_step>(m_hist);
+    self_gravity->AddField<phi_dstep>(m_hist);
+    params.Add("guess_history", GuessHistory(), Params::Mutability::Mutable);
+  }
+
   // Solver
   PARTHENON_REQUIRE(pin->GetOrAddBoolean("parthenon/mesh", "multigrid", false),
                     "Self-gravity requires parthenon/mesh/multigrid = true");
@@ -238,6 +253,65 @@ TaskStatus FillPoissonRHS(MeshData<Real> *md_base, MeshData<Real> *md_rhs) {
             pv_rhs(phi(), kji) += four_pi_G * std::max(pv_m(ccmat::rho(), kji), 0.0);
           });
         }
+      });
+
+  return TaskStatus::complete;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  TaskStatus SelfGravity::ExtrapolateGuess
+//! \brief Sets the solver initial guess at stage_time to phi_step + w phi_dstep, the
+//! linear extrapolation in time of the last two stage 1 potentials. Falls back to the
+//! current potential until there are two of them.
+TaskStatus ExtrapolateGuess(MeshData<Real> *md_base, MeshData<Real> *md_u,
+                            const Real stage_time) {
+  auto pm = md_base->GetParentPointer();
+  const auto &hist =
+      pm->packages.Get("self_gravity")->Param<GuessHistory>("guess_history");
+  const bool valid = (hist.nsolves >= 2) && (hist.dtime > 0.0);
+  const Real w = valid ? (stage_time - hist.time) / hist.dtime : 0.0;
+
+  auto vbase = riot::MakePack<phi, phi_step, phi_dstep>(md_base);
+  auto vu = riot::MakePack<phi>(md_u);
+  const int nblocks = vbase.GetNBlocks();
+  if ((nblocks != vu.GetNBlocks()) || (nblocks == 0)) return TaskStatus::complete;
+
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, md_base,
+                                     parthenon::TopologicalElement::CC);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto pv_base = RiotLoop::make_pack_view(idx_range, vbase);
+        auto pv_u = RiotLoop::make_pack_view(idx_range, vu);
+        RiotLoop::inner(idx_range, [&](const auto kji) {
+          pv_u(phi(), kji) = valid ? pv_base(phi_step(), kji) +
+                                         w * pv_base(phi_dstep(), kji)
+                                   : pv_base(phi(), kji);
+        });
+      });
+
+  return TaskStatus::complete;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  TaskStatus SelfGravity::UpdateGuessHistory
+//! \brief Records a new stage 1 potential, phi_dstep = phi - phi_step and phi_step = phi.
+//! The times in GuessHistory are updated separately, once per rank.
+TaskStatus UpdateGuessHistory(MeshData<Real> *md_base) {
+  auto vbase = riot::MakePack<phi, phi_step, phi_dstep>(md_base);
+  const int nblocks = vbase.GetNBlocks();
+  if (nblocks == 0) return TaskStatus::complete;
+
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, md_base,
+                                     parthenon::TopologicalElement::CC);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, vbase);
+        RiotLoop::inner(idx_range, [&](const auto kji) {
+          pv(phi_dstep(), kji) = pv(phi(), kji) - pv(phi_step(), kji);
+          pv(phi_step(), kji) = pv(phi(), kji);
+        });
       });
 
   return TaskStatus::complete;

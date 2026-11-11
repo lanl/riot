@@ -269,7 +269,7 @@ TaskCollection RiotDriver::RiotStepTasks() {
     const Real stage_time = tm.time + integrator->c[stage - 1] * dt;
 
     // solve for the gravitational potential at the start of each stage
-    if (do_self_gravity) SelfGravity::SolvePoisson(tc, pmesh);
+    if (do_self_gravity) SelfGravity::SolvePoisson(tc, pmesh, stage, stage_time);
 
     TaskRegion &tr = tc.AddRegion(num_partitions);
     for (int i = 0; i < num_partitions; i++) {

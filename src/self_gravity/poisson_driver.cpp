@@ -43,8 +43,10 @@ namespace SelfGravity {
 //----------------------------------------------------------------------------------------
 //! \fn void SelfGravity::SolvePoisson
 //! \brief Adds a task region that solves Laplacian(phi) = 4 pi G rho and stores phi (with
-//! filled ghost zones) in the base container
-void SolvePoisson(TaskCollection &tc, Mesh *pmesh) {
+//! filled ghost zones) in the base container. With extrapolate_guess, the solves after
+//! stage 1 start from the potential extrapolated in time to stage_time.
+void SolvePoisson(TaskCollection &tc, Mesh *pmesh, const int stage,
+                  const Real stage_time) {
   using namespace parthenon;
   using phi_tl = parthenon::TypeList<phi>;
   TaskID none(0);
@@ -56,6 +58,9 @@ void SolvePoisson(TaskCollection &tc, Mesh *pmesh) {
   auto *stats = pkg->MutableParam<SolveStats>("solve_stats");
   const int max_iterations = pkg->Param<int>("max_iterations");
   const bool print_per_solve = pkg->Param<bool>("print_per_solve");
+  const bool extrapolate_guess = pkg->Param<bool>("extrapolate_guess");
+  auto *hist =
+      extrapolate_guess ? pkg->MutableParam<GuessHistory>("guess_history") : nullptr;
 
   auto partitions = pmesh->GetDefaultBlockPartitions();
   const int num_partitions = partitions.size();
@@ -74,7 +79,10 @@ void SolvePoisson(TaskCollection &tc, Mesh *pmesh) {
 
     // Set the RHS and warm start the solver from the current potential
     auto set_rhs = tl.AddTask(start, FillPoissonRHS, md.get(), md_rhs.get());
-    auto set_guess = tl.AddTask(start, TF(solvers::utils::CopyData<phi_tl>), md, md_u);
+    auto set_guess =
+        (extrapolate_guess && stage > 1)
+            ? tl.AddTask(start, ExtrapolateGuess, md.get(), md_u.get(), stage_time)
+            : tl.AddTask(start, TF(solvers::utils::CopyData<phi_tl>), md, md_u);
 
     // Solve
     auto setup = psolver->AddSetupTasks(tl, set_rhs | set_guess, i, pmesh);
@@ -85,6 +93,18 @@ void SolvePoisson(TaskCollection &tc, Mesh *pmesh) {
 
     // Move the solution back to the base container for sourcing and output
     auto copy_back = tl.AddTask(bcs, TF(solvers::utils::CopyData<phi_tl>), md_u, md);
+
+    // Record the stage 1 potential for the extrapolation in the later stages
+    if (extrapolate_guess && stage == 1) {
+      auto update_hist = tl.AddTask(copy_back, UpdateGuessHistory, md.get());
+      tl.AddTask(TaskQualifier::local_sync | TaskQualifier::once_per_region, update_hist,
+                 "update guess history", [hist, stage_time]() {
+                   hist->dtime = stage_time - hist->time;
+                   hist->time = stage_time;
+                   hist->nsolves++;
+                   return TaskStatus::complete;
+                 });
+    }
 
     // Record the solve once all partitions on this rank are done. The iterations and
     // residual are global, so they are the same on every rank.

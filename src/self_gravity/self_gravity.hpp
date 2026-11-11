@@ -54,11 +54,25 @@ struct SolveStats {
   std::chrono::steady_clock::time_point solve_start;
 };
 
+// Times of the stage 1 solves stored in phi_step and phi_dstep, used to extrapolate the
+// initial guess of the later stages in time
+struct GuessHistory {
+  // Number of stage 1 solves recorded, phi_dstep is valid once there are two
+  int nsolves = 0;
+  // Time of phi_step and the time since the stage 1 solve before it
+  Real time = 0.0;
+  Real dtime = 0.0;
+};
+
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
 TaskStatus FillPoissonRHS(MeshData<Real> *md_base, MeshData<Real> *md_rhs);
 TaskStatus CalculateSelfGravitySource(MeshData<Real> *state, MeshData<Real> *base,
                                       MeshData<Real> *src);
-void SolvePoisson(parthenon::TaskCollection &tc, Mesh *pmesh);
+TaskStatus ExtrapolateGuess(MeshData<Real> *md_base, MeshData<Real> *md_u,
+                            const Real stage_time);
+TaskStatus UpdateGuessHistory(MeshData<Real> *md_base);
+void SolvePoisson(parthenon::TaskCollection &tc, Mesh *pmesh, const int stage,
+                  const Real stage_time);
 void ResetStepStats(Mesh *pmesh);
 void FinalizeStepStats(Mesh *pmesh);
 void OutputCycleStats(Mesh *pmesh);

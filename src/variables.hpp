@@ -283,6 +283,9 @@ VARIABLE_SCALAR(ion, temp_tstep_criterion, false);
 
 namespace SelfGravity {
 VARIABLE_SCALAR(grav, phi, false);
+// Stage 1 potential of the latest step, and its change since the previous step
+VARIABLE_SCALAR(grav, phi_step, false);
+VARIABLE_SCALAR(grav, phi_dstep, false);
 } // namespace SelfGravity
 
 namespace Levelsets {
