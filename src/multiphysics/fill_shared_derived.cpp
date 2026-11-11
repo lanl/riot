@@ -96,11 +96,15 @@ void FillInteriorDerived(MeshData<Real> *md) {
           pv(ccbulk::velocity(0), kji) = pv(ccbulk::momentum(0), kji) * irho;
           pv(ccbulk::velocity(1), kji) = pv(ccbulk::momentum(1), kji) * irho;
           pv(ccbulk::velocity(2), kji) = pv(ccbulk::momentum(2), kji) * irho;
-          pv(ccbulk::internal_energy(), kji) =
-              pv(ccbulk::total_material_energy(), kji) -
-              0.5 * pv(ccbulk::rho(), kji) *
-                  (SQR(pv(ccbulk::velocity(0), kji)) + SQR(pv(ccbulk::velocity(1), kji)) +
-                   SQR(pv(ccbulk::velocity(2), kji)));
+          const Real velocity_sq_x = Kokkos::fma(pv(ccbulk::velocity(0), kji),
+                                                 pv(ccbulk::velocity(0), kji), Real(0.0));
+          const Real velocity_sq_y = Kokkos::fma(pv(ccbulk::velocity(1), kji),
+                                                 pv(ccbulk::velocity(1), kji), Real(0.0));
+          const Real velocity_sq_z = Kokkos::fma(pv(ccbulk::velocity(2), kji),
+                                                 pv(ccbulk::velocity(2), kji), Real(0.0));
+          const Real velocity_sq = velocity_sq_x + velocity_sq_y + velocity_sq_z;
+          pv(ccbulk::internal_energy(), kji) = pv(ccbulk::total_material_energy(), kji) -
+                                               0.5 * pv(ccbulk::rho(), kji) * velocity_sq;
         });
 
         if (do_ionization) {
@@ -327,11 +331,15 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           pv(ccbulk::momentum(0), kji) = rho_val * pv(ccbulk::velocity(0), kji);
           pv(ccbulk::momentum(1), kji) = rho_val * pv(ccbulk::velocity(1), kji);
           pv(ccbulk::momentum(2), kji) = rho_val * pv(ccbulk::velocity(2), kji);
-          const Real vsq = SQR(pv(ccbulk::velocity(0), kji)) +
-                           SQR(pv(ccbulk::velocity(1), kji)) +
-                           SQR(pv(ccbulk::velocity(2), kji));
+          const Real velocity_sq_x = Kokkos::fma(pv(ccbulk::velocity(0), kji),
+                                                 pv(ccbulk::velocity(0), kji), Real(0.0));
+          const Real velocity_sq_y = Kokkos::fma(pv(ccbulk::velocity(1), kji),
+                                                 pv(ccbulk::velocity(1), kji), Real(0.0));
+          const Real velocity_sq_z = Kokkos::fma(pv(ccbulk::velocity(2), kji),
+                                                 pv(ccbulk::velocity(2), kji), Real(0.0));
+          const Real velocity_sq = velocity_sq_x + velocity_sq_y + velocity_sq_z;
           pv(ccbulk::total_material_energy(), kji) =
-              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq;
+              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * velocity_sq;
         });
       });
 
