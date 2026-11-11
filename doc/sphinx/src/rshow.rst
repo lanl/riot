@@ -32,9 +32,10 @@ or open a particular dump immediately::
 
    python path/to/rshow.py path/to/problem.out0.00000.phdf
 
-Opening a dump also discovers all ``*.phdf`` files in the same directory.
-They become available in the **Dump** menu, through **Previous** and **Next**,
-and for playback and movie export.
+Opening a dump also discovers frames from the same Parthenon output series in
+the directory. They become available in the **Dump** menu, through **Previous**
+and **Next**, and for playback and movie export. Other output streams in the
+same directory are excluded.
 
 Basic plotting
 --------------
@@ -85,8 +86,8 @@ according to the window shape.
 Playback and movie export
 -------------------------
 
-Set **FPS** and select **Play** to step through every PHDF file in the dump
-directory. **Loop** restarts at the first dump after the last one.
+Set **FPS** and select **Play** to step through every discovered frame in the
+selected output series. **Loop** restarts at the first dump after the last one.
 
 Select **Export movie...** to render all discovered dumps with the current
 variables, panels, limits, and styling. Use a filename ending in ``.mp4`` for

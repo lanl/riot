@@ -24,6 +24,34 @@ class PhdfReader(Protocol):
 PhdfReaderFactory = Callable[[Path], PhdfReader]
 
 
+def phdf_series_key(path: Path) -> str | None:
+    """Return the Parthenon output-series stem for a recognized PHDF frame."""
+    path = Path(path)
+    if path.suffix.lower() != ".phdf":
+        return None
+    series, separator, frame = path.stem.rpartition(".")
+    if not separator or not series or not frame:
+        return None
+    if not (frame.isdigit() or frame in {"final", "now"}):
+        return None
+    return series
+
+
+def neighboring_dumps(path: Path) -> tuple[Path, ...]:
+    """Discover sorted PHDF frames belonging to the same output series."""
+    resolved = Path(path).expanduser().resolve()
+    key = phdf_series_key(resolved)
+    if key is None:
+        return (resolved,)
+    candidates = {resolved}
+    candidates.update(
+        candidate.resolve()
+        for candidate in resolved.parent.glob("*.phdf")
+        if phdf_series_key(candidate) == key
+    )
+    return tuple(sorted(candidates))
+
+
 def default_reader_factory(path: Path) -> PhdfReader:
     try:
         try:
@@ -90,7 +118,7 @@ class DumpDataset:
             time = None
         return DumpInfo(
             self.path,
-            tuple(sorted(self.path.parent.glob("*.phdf"))),
+            neighboring_dumps(self.path),
             self._variables,
             self._dimension,
             time,
