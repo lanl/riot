@@ -17,11 +17,31 @@ if(RIOT_BUILD_PYTHON)
   endif()
 endif()
 
+install(FILES "${PROJECT_SOURCE_DIR}/script/rshow.py"
+  DESTINATION "${RIOT_INSTALL_PYTHONDIR}"
+  COMPONENT riot-bundle)
+
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/script/rshowlib"
+  DESTINATION "${RIOT_INSTALL_PYTHONDIR}"
+  COMPONENT riot-bundle
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE)
+
+install(DIRECTORY
+  "${PROJECT_SOURCE_DIR}/external/parthenon/scripts/python/packages/parthenon_tools/parthenon_tools"
+  DESTINATION "${RIOT_INSTALL_PYTHONDIR}"
+  COMPONENT riot-bundle
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE)
+
+install(PROGRAMS "${PROJECT_SOURCE_DIR}/cmake/rshow"
+  DESTINATION "${CMAKE_INSTALL_BINDIR}"
+  COMPONENT riot-bundle)
+
 set(_riot_source_directories
   .github
   cmake
   doc
-  external
   inputs
   licenses
   script
@@ -48,6 +68,69 @@ foreach(_riot_source_directory IN LISTS _riot_source_directories)
       PATTERN "*~" EXCLUDE)
   endif()
 endforeach()
+
+set(_riot_external_source_destination "${RIOT_INSTALL_SOURCEDIR}/external")
+
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/external/parthenon"
+  DESTINATION "${_riot_external_source_destination}"
+  COMPONENT riot-bundle
+  PATTERN ".git" EXCLUDE
+  PATTERN ".venv*" EXCLUDE
+  PATTERN ".cache" EXCLUDE
+  PATTERN "build" EXCLUDE
+  PATTERN "build-*" EXCLUDE
+  PATTERN "_build" EXCLUDE
+  PATTERN "_build-*" EXCLUDE
+  PATTERN "CMakeFiles" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN ".ipynb_checkpoints" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+  PATTERN "*.swp" EXCLUDE
+  PATTERN "*~" EXCLUDE
+  PATTERN "Catch2" EXCLUDE
+  PATTERN "Kokkos" EXCLUDE)
+
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/external/singularity-eos"
+  DESTINATION "${_riot_external_source_destination}"
+  COMPONENT riot-bundle
+  PATTERN ".git" EXCLUDE
+  PATTERN ".venv*" EXCLUDE
+  PATTERN ".cache" EXCLUDE
+  PATTERN "build" EXCLUDE
+  PATTERN "build-*" EXCLUDE
+  PATTERN "_build" EXCLUDE
+  PATTERN "_build-*" EXCLUDE
+  PATTERN "CMakeFiles" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN ".ipynb_checkpoints" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+  PATTERN "*.swp" EXCLUDE
+  PATTERN "*~" EXCLUDE
+  PATTERN "eigen" EXCLUDE
+  PATTERN "kokkos" EXCLUDE
+  PATTERN "kokkos-kernels" EXCLUDE
+  PATTERN "ports-of-call" EXCLUDE
+  PATTERN "pybind11" EXCLUDE)
+
+install(DIRECTORY "${PROJECT_SOURCE_DIR}/external/singularity-opac"
+  DESTINATION "${_riot_external_source_destination}"
+  COMPONENT riot-bundle
+  PATTERN ".git" EXCLUDE
+  PATTERN ".venv*" EXCLUDE
+  PATTERN ".cache" EXCLUDE
+  PATTERN "build" EXCLUDE
+  PATTERN "build-*" EXCLUDE
+  PATTERN "_build" EXCLUDE
+  PATTERN "_build-*" EXCLUDE
+  PATTERN "CMakeFiles" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN ".ipynb_checkpoints" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+  PATTERN "*.swp" EXCLUDE
+  PATTERN "*~" EXCLUDE
+  PATTERN "herumi-fmath" EXCLUDE
+  PATTERN "kokkos" EXCLUDE
+  PATTERN "ports-of-call" EXCLUDE)
 
 install(FILES
   "${PROJECT_SOURCE_DIR}/.clang-format"

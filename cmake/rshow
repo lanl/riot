@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+
+_rshow_bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+_rshow_python=${RIOT_PYTHON:-python3}
+
+exec "${_rshow_python}" "${_rshow_bin_dir}/../python/rshow.py" "$@"

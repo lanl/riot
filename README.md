@@ -55,7 +55,7 @@ CMake finds a known Python interpreter and NumPy installation:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install numpy
+python -m pip install numpy matplotlib cycler h5py
 
 cmake -S . -B build \
   -DPython_ROOT_DIR="$VIRTUAL_ENV" \
@@ -64,12 +64,23 @@ cmake --build build --target riot-install -j
 source riot-install/riot-env.sh
 ```
 
-The installed tree contains the executable in `bin`, `riot.py` and the
-`singularity_eos` extension in `python`, and a source snapshot (including external
-packages, inputs, scripts, and documentation) in `share/riot/source`. Sourcing
+The installed tree contains the `riot` and `rshow` executables in `bin`, `riot.py`,
+`rshow.py`, `rshowlib`, `parthenon_tools`, and the `singularity_eos` extension in
+`python`, and a source snapshot (including inputs, scripts, documentation, and the
+direct Riot, Parthenon, Singularity-EOS, and Singularity-Opac sources) in
+`share/riot/source`. Sourcing
 `riot-env.sh` adds the executable to `PATH`, adds the Python module and script
 directories to `PYTHONPATH`, and defines `RIOT_ROOT`, `RIOT_SOURCE_DIR`,
 `RIOT_INPUT_DIR`, and `RIOT_SCRIPT_DIR`.
+
+The `rshow` launcher uses `python3` from the active environment. Set `RIOT_PYTHON` to
+an alternative interpreter if needed. That Python environment must provide rshow's
+runtime dependencies, including NumPy, Matplotlib, Cycler, h5py, and Tk. The bundle
+provides Parthenon's `phdf` reader through the installed `parthenon_tools` package.
+
+Nested third-party source trees such as Kokkos, Kokkos-Kernels, Catch2, Eigen,
+Ports-of-Call, and pybind11 are intentionally excluded from the source snapshot. Spiner
+is included with both Singularity source trees.
 
 The bundle does not copy platform runtime libraries such as MPI, HDF5, the C++
 runtime, or the Python shared library. Load the same environment modules, or provide
