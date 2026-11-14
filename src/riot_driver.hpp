@@ -43,11 +43,12 @@ class RiotDriver : public EvolutionDriver {
   void ReportSolverStats();
   std::vector<TaskCollectionFnPtr> OperatorSplitTasks;
   static void RegisterPgens();
+  // public, as nvcc forbids device lambdas in private member functions
+  TaskStatus SetBlockCosts(MeshData<Real> *md);
 
  private:
   IntegratorPtr_t integrator;
   Real dt_init, dt_init_fact;
-  TaskStatus SetBlockCosts(MeshData<Real> *md);
   std::vector<int> nmat_hist;
   std::vector<uint64_t> mem_usage;
   std::vector<uint64_t> max_rss;
