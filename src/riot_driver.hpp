@@ -58,6 +58,8 @@ class RiotDriver : public EvolutionDriver {
       do_multigroup_diffusion, do_radiation_transport, do_ionization, do_lasers,
       curvilinear, hydro_faces_only_comms;
   bool fixed_fluid, kinematic_advection, use_general_pte, sparse_dealloc;
+  bool lb_pte_cost;
+  Real lb_pte_weight;
   riot_plugins::Plugins plugins;
 
   uint64_t GetMaxRss();

@@ -33,6 +33,7 @@ using parthenon::IndexSplit;
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 namespace Multiphysics {
 
@@ -176,9 +177,17 @@ void PostCommsFillDerived(MeshData<Real> *md) {
   auto &hydro = pm->packages.Get("hydro");
   const Real mass_frac_thresh = hydro->Param<Real>("mass_frac_thresh");
   const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
+  const auto void_params = Void::GetParams(pm);
+  const int void_matid = void_params.matid;
+  const Real p_void = void_params.pressure;
+  const bool freeze = void_params.freeze;
+  // Under self-gravity, matter feels the potential of the whole mesh: keep the blocks
+  // holding it active (only blocks of pure void, which is static, go inactive)
+  const bool keep_matter_active =
+      riot->Param<bool>("sparse_physics") && riot->Param<bool>("do_self_gravity");
 
   auto v = riot::MakePack<
-      ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
+      ccbulk::cell_delta, ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
       ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho, cm::sie,
       cm::internal_energy, cm::temperature, cm::pressure, cm::bulk_modulus,
       cm::specific_heat, cm::electron_sie, cm::electron_internal_energy, cm::lT_cache,
@@ -229,19 +238,26 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           const int mat_id = v(b, ccmat::rho(n)).sparse_id;
           const int phase_id = v(b, ccmat::rho(n)).v;
           auto &eosm = eos(eos_from_matid(mat_id) + phase_id);
+          // The void is exempt from the mass fraction threshold and has no EOS fields.
+          // Its energy density is -p_void (zero enthalpy).
+          const bool is_void = (mat_id == void_matid);
           RiotLoop::inner(idx_range, [&](const auto kji) {
             // Set rho/mass_frac/vol_frac threshold mask
             const Real ccmat_rho_val = pv_n(ccmat::rho(), kji);
             const Real vfrac_val = pv_n(ccmat::volume_fraction(), kji);
             const Real mask =
-                1.0 * (ccmat_rho_val > mass_frac_thresh * pv(ccbulk::rho(), kji) &&
-                       vfrac_val > vol_frac_thresh);
+                1.0 *
+                ((is_void || ccmat_rho_val > mass_frac_thresh * pv(ccbulk::rho(), kji)) &&
+                 vfrac_val > vol_frac_thresh);
             // Mask materials if necessary
             pv_n(ccmat::rho(), kji) = ccmat_rho_val * mask;
             pv_n(ccmat::volume_fraction(), kji) = vfrac_val * mask;
             pv_n(cm::rho(), kji) = mask * ccmat_rho_val / (vfrac_val + 1.e-16);
             pv_n(cm::temperature(), kji) = mask * pv(ccbulk::temperature(), kji);
             pv_n(cm::pressure(), kji) = mask * pv(ccbulk::pressure(), kji);
+            // vfrac_sum is now the mass of the materials other than the void
+            vfrac_sum(kji) = (n == 0 ? 0.0 : vfrac_sum(kji)) +
+                             (is_void ? 0.0 : pv_n(ccmat::rho(), kji));
           });
           idx_range.TeamBarrier();
 
@@ -250,7 +266,7 @@ void PostCommsFillDerived(MeshData<Real> *md) {
               // TODO(JMM): Eventually may eventually want this with ionization off if we
               // have other physics that needs lambdas
               RiotEOS::LambdaIndexerSingle lambda(pv_n, kji);
-              const Real rho_val = pv_n(cm::rho(), kji);
+              const Real rho_val = is_void ? 0.0 : pv_n(cm::rho(), kji);
               const Real T = pv(ccbulk::temperature(), kji);
               pv_n(cm::bulk_modulus(), kji) =
                   (rho_val > 0.0)
@@ -266,9 +282,11 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                       : 0.0;
               // NOTE(@pdmullen): ccmat::rho and cm::rho already contain mask
               pv_n(ccmat::internal_energy(), kji) =
-                  pv_n(ccmat::rho(), kji) * pv_n(cm::sie(), kji);
+                  is_void ? -p_void * pv_n(ccmat::volume_fraction(), kji)
+                          : pv_n(ccmat::rho(), kji) * pv_n(cm::sie(), kji);
               pv_n(cm::internal_energy(), kji) =
-                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
+                  is_void ? -p_void * (pv_n(ccmat::volume_fraction(), kji) > 0.0)
+                          : pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           };
           eosm.EvaluateDevice(eosmloop);
@@ -278,12 +296,24 @@ void PostCommsFillDerived(MeshData<Real> *md) {
         if (do_ionization) {
           // NOTE(JMM): Order matters
           Ionization::ComputeElectronTemperature(idx_range, v, electron_eos,
-                                                 eos_from_matid, Te_root_tol, b, nmat);
+                                                 eos_from_matid, Te_root_tol, b, nmat,
+                                                 void_matid);
           idx_range.TeamBarrier();
+          // A pure-void cell has no electrons: electron energy left there has no matter
+          // to hold it, and the electrons follow the ions
+          if (void_matid >= 0) {
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              if (!(vfrac_sum(kji) > 0.0)) {
+                pv(ccbulk::electron_internal_energy(), kji) = 0.0;
+                pv(ccbulk::electron_temperature(), kji) = pv(ccbulk::temperature(), kji);
+              }
+            });
+            idx_range.TeamBarrier();
+          }
 
           // Updates per-mat electron energy and pressure, total pressure, and total bmod
           Ionization::PerMaterialEnergyPressureBmod(idx_range, v, eos, electron_eos,
-                                                    eos_from_matid, b, nmat);
+                                                    eos_from_matid, b, nmat, void_matid);
           idx_range.TeamBarrier();
         }
 
@@ -309,22 +339,34 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           // Resets bulk pressure and energy to totals, rather than ion-only
           Ionization::ConvertEnergyPressureBulkIon<Ionization::ToTotal>(idx_range, v, b);
 
-          // Set per-material internal energy by volume to be total
+          // Set per-material internal energy by volume to be total (the void has no
+          // electrons and keeps its -p_void)
           for (int n = 0; n < nmat; ++n) {
             auto pv_n = RiotLoop::make_sparse_pack_view(idx_range, v, n);
+            const bool is_void = (v(b, ccmat::rho(n)).sparse_id == void_matid);
             RiotLoop::inner(idx_range, [&](const auto kji) {
               pv_n(ccmat::internal_energy(), kji) +=
                   pv_n(ccmat::electron_internal_energy(), kji);
               pv_n(cm::sie(), kji) += pv_n(cm::electron_sie(), kji);
               pv_n(cm::internal_energy(), kji) =
-                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
+                  is_void ? pv_n(cm::internal_energy(), kji)
+                          : pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           }
           idx_range.TeamBarrier();
         }
 
-        // Ensure consistency b/w masked fields and other relevant fields
+        // Ensure consistency b/w masked fields and other relevant fields. A pure-void
+        // cell (after the masking, also in the ghost zones) is at rest.
         RiotLoop::inner(idx_range, [&](const auto kji) {
+          if (freeze && void_matid >= 0 && !(vfrac_sum(kji) > 0.0)) {
+            for (int d = 0; d < 3; d++) {
+              pv(ccbulk::velocity(d), kji) = 0.0;
+            }
+          }
+          if (keep_matter_active && vfrac_sum(kji) > 0.0) {
+            pv(ccbulk::cell_delta(), kji) = 1.0;
+          }
           const Real rho_val = pv(ccbulk::rho(), kji);
           pv(ccbulk::momentum(0), kji) = rho_val * pv(ccbulk::velocity(0), kji);
           pv(ccbulk::momentum(1), kji) = rho_val * pv(ccbulk::velocity(1), kji);

@@ -287,7 +287,9 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::LocalSolve(
               pack_base(b, Egroup(g), k, j, i) -= REg / (1.0 + tau);
             }
 
-            const Real dT = -RT / denom(k, j, i);
+            // A cell with no heat capacity and no absorption (pure void) is decoupled
+            // from the radiation: RT = 0 there, and so dT = 0
+            const Real dT = (denom(k, j, i) != 0.0) ? -RT / denom(k, j, i) : 0.0;
             Real &T = pack_base(b, temperature(), k, j, i);
             if (dT < -T * 0.9) {
               T *= exp(dT / T);
@@ -328,8 +330,9 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::CorrectTotalEnergy(
   static const auto desc_base =
       parthenon::MakePackDescriptor<kappa_face, Fgroup, Egroup, temperature, ccbulk::rho,
                                     internal_energy, ccbulk::total_material_energy,
-                                    ccmat::rho, cm::rho, cm::ionization_zbar,
-                                    cm::lr_cache, cm::lT_cache>(md_base.get());
+                                    ccmat::rho, ccmat::volume_fraction, cm::rho,
+                                    cm::ionization_zbar, cm::lr_cache, cm::lT_cache>(
+          md_base.get());
   auto pack_base = desc_base.GetPack(md_base.get());
 
   MaterialHelpers mat_helpers(md_base->GetMeshPointer(), "multigroup_diffusion_package",

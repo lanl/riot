@@ -26,6 +26,7 @@
 #include "pte_closure.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using namespace parthenon::package::prelude;
 using namespace RiotEOS;
@@ -54,6 +55,10 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
   auto &hydro = pm->packages.Get("hydro");
   const Real &mfrac_thr = hydro->Param<Real>("mass_frac_thresh");
   const Real &vfrac_thr = hydro->Param<Real>("vol_frac_thresh");
+  const Real &tfloor = hydro->Param<Real>("temp_floor");
+
+  // Void params (matid -1 if there is no void)
+  const auto vp = Void::GetParams(pm);
 
   // Packing and indexing
   auto v =
@@ -76,6 +81,7 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         const int nmat = v.GetSize(b, ccmat::rho());
+        const int mv = Void::SliceIndex<ccmat::rho>(v, b, nmat, vp.matid);
 
         auto rho_cv_sum = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto rho_gm1_cv_sum = RiotLoop::GetPerPointScratch<Real>(idx_range);
@@ -83,8 +89,9 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
         rho_gm1_cv_sum.Zero();
         idx_range.TeamBarrier();
 
-        // Calculate required sums
+        // Calculate required sums (the void has no EOS)
         for (int m = 0; m < nmat; ++m) {
+          if (m == mv) continue;
           const int mat_id = v(b, ccmat::rho(m)).sparse_id;
           const int phase_id = v(b, ccmat::rho(m)).v;
           const auto &eos_mat = eos(eos_from_matid(mat_id) + phase_id);
@@ -109,11 +116,35 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
         // Fill bulk quantities
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto kji) {
+          const bool void_ok = mv >= 0;
+          if (void_ok && !(rho_cv_sum(kji) > 0.0)) {
+            // Pure void, at p_void (its temperature is meaningless)
+            pv(ccbulk::pressure(), kji) = vp.pressure;
+            rho_cv_sum(kji) = 0.0; // fraction of the cell filled by the gases
+            rho_gm1_cv_sum(kji) = 0.0;
+            return;
+          }
           pv(ccbulk::temperature(), kji) =
               pv(ccbulk::internal_energy(), kji) / (rho_cv_sum(kji) + 1.e-50);
           pv(ccbulk::pressure(), kji) =
               pv(ccbulk::temperature(), kji) * rho_gm1_cv_sum(kji);
+
+          // Void: open if the gases filling the cell are below p_void. Each gas is then
+          // at p_void, with the enthalpy of the cell, sum rhobar h = E + p_void (the void
+          // has energy density -p_void), and the gases fill the fraction s of the cell.
+          // A cell too cold for the floor (e.g. a trace of gas) is clamped to it, as in
+          // the general closure.
+          Real s = 1.0;
+          if (void_ok && pv(ccbulk::pressure(), kji) < vp.pressure) {
+            const Real T = std::max((pv(ccbulk::internal_energy(), kji) + vp.pressure) /
+                                        (rho_cv_sum(kji) + rho_gm1_cv_sum(kji)),
+                                    tfloor);
+            s = T * rho_gm1_cv_sum(kji) / vp.pressure;
+            pv(ccbulk::temperature(), kji) = T;
+            pv(ccbulk::pressure(), kji) = vp.pressure;
+          }
           rho_gm1_cv_sum(kji) = 1.0 / (rho_gm1_cv_sum(kji) + 1.e-50);
+          rho_cv_sum(kji) = s;
         });
         idx_range.TeamBarrier();
 
@@ -124,6 +155,17 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
           const auto &eos_mat = eos(eos_from_matid(mat_id) + phase_id);
 
           auto pv_m = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+          if (m == mv) {
+            // Void fills the rest of the cell (exempt from the mass fraction threshold)
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              const Real alpha = 1.0 - rho_cv_sum(kji);
+              const Real mask = (alpha > vfrac_thr);
+              pv_m(ccmat::rho(), kji) *= mask;
+              pv_m(ccmat::volume_fraction(), kji) = alpha * mask;
+            });
+            idx_range.TeamBarrier();
+            continue;
+          }
           auto eos_loop = [&](const auto &eos) {
             RiotLoop::inner(idx_range, [&](const auto kji) {
               RiotEOS::LambdaIndexerSingle pl(pv_m, kji);
@@ -134,8 +176,8 @@ void Closure::ApplyIdealGasClosure(MeshData<Real> *md, IndexDomain domain) {
               const Real gm1_cv = (gamma - 1.0) * cv;
 
               // Compute PTE volume fractions
-              pv_m(ccmat::volume_fraction(), kji) =
-                  pv_m(ccmat::rho(), kji) * gm1_cv * rho_gm1_cv_sum(kji);
+              pv_m(ccmat::volume_fraction(), kji) = pv_m(ccmat::rho(), kji) * gm1_cv *
+                                                    rho_gm1_cv_sum(kji) * rho_cv_sum(kji);
 
               // Apply masks
               const Real mthr_mask =

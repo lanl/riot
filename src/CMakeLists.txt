@@ -171,6 +171,10 @@ set (SRC_LIST
   thinc/thinc.cpp
 
   variables.hpp
+
+  void/void.cpp
+  void/void.hpp
+  void/void_closure.hpp
 )
 
 if (RIOT_BUILD_CAD)

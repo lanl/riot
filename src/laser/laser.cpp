@@ -356,6 +356,8 @@ bool CheckDt(Mesh *pm, Real *dt) {
       parthenon::loop_pattern_flatrange_tag, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
       v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
       KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &dtmin) {
+        // a cell with no stiffness holds no matter (pure void) and sets no limit
+        if (!(v(b, ccbulk::bulk_modulus(), k, j, i) > 0.0)) return;
         // time step necessary to ensure thermal waves propagate at the right speed
         Real tau = v(b, ccbulk::laser_tau_max(), k, j, i);
         Real tau_2_3 = std::pow(tau, 2.0 / 3.0);

@@ -33,6 +33,7 @@
 #include "region_python.hpp"
 #include "riot_utils/type_maps.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using region_primitives::field_func_t;
 using region_primitives::mask_func_t;
@@ -52,7 +53,8 @@ enum class InitType {
   rhoPTe,
   rhoPEquil,
   PTiTe,
-  PTiEquil
+  PTiEquil,
+  Void // only the volume fraction is read (see set_void_conserved)
 };
 static std::map<std::string, InitType> init_type_map{
     {"c_m_pressurec_m_temperature", InitType::PT},
@@ -624,6 +626,7 @@ class BlockInitData {
   int num_mask, num_state;
   parthenon::Coordinates_t *coords;
   bool do_3t, fully_ionized;
+  Void::Params void_params;
 
   inline auto coordinate_velocities(Real *v) {
     if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
@@ -637,11 +640,23 @@ class BlockInitData {
     return std::make_tuple(v[0], v[1], v[2]);
   }
 
+  // The void holds its tracer density and energy -p_void alpha_V (its EOS is never
+  // evaluated). Its momentum is negligible.
+  void set_void_conserved(Real region_frac, Real *v, Real &vfrac, Real &density,
+                          Real &energy) {
+    const Real dvfrac = region_frac * v[0];
+    vfrac += dvfrac;
+    density += dvfrac * void_params.density;
+    energy -= dvfrac * void_params.pressure;
+  }
+
   template <typename EOS_t>
   void set_cell_conserved(InitType inputs, Real region_frac, Real *v, EOS_t &eos,
                           Real &vfrac, Real &density, Real &mx, Real &my, Real &mz,
                           Real &energy) {
     enum InputIndex { ivfrac, iu0, iu1, ivx, ivy, ivz };
+    if (inputs == InitType::Void)
+      return set_void_conserved(region_frac, v, vfrac, density, energy);
     Real rho, sie;
     if (inputs == InitType::rhoT) {
       rho = v[iu0];
@@ -678,6 +693,8 @@ class BlockInitData {
                              Real &energy, Real &electron_energy, Real &rhozbar) {
     using namespace RiotEOS;
     enum InputIndex { ivfrac, iu0, iu1, iu2, ivx, ivy, ivz };
+    if (inputs == InitType::Void)
+      return set_void_conserved(region_frac, v, vfrac, density, energy);
     Real rho, sie, sie_e, zbar;
     Real anuc = ion_eos.MeanAtomicMass();
     Real znuc = ion_eos.MeanAtomicNumber();
@@ -1344,7 +1361,7 @@ class BlockInitData {
     }
 
     for (auto mat_id : all_matids) {
-      if (mats_to_remove.count(mat_id)) {
+      if (mats_to_remove.count(mat_id) && mat_id != void_params.matid) {
         const std::string rho_mat_name = var_name<ccmat::rho>({mat_id});
         pmb->DeallocateSparse(rho_mat_name);
       }

@@ -37,6 +37,7 @@
 #include "tnburn/tnburn.hpp"
 #include "tracers/tracers.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 namespace riot {
 
@@ -60,7 +61,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   Packages_t packages;
 
   // a hack to override parthenon default before it's too late
-  pin->SetString("loadbalancing", "balancer", "manual");
+  pin->SetString("parthenon/loadbalancing", "balancer", "manual");
 
   // Custom Metadata flags
   parthenon::MetadataFlag MetadataOperatorSplit =
@@ -109,6 +110,8 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
                            "Enable prescribed sources as a function of time");
   const bool do_tracers =
       pin->GetOrAddBoolean("physics", "tracers", false, "Enable tracer particles");
+  const bool do_void = pin->GetOrAddBoolean("physics", "void", false,
+                                            "Treat one material as a void (see void/)");
 
   // check for compatibility
   if (do_thinc) PARTHENON_REQUIRE(do_hydro, "THINC requires hydro.");
@@ -138,6 +141,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
+  if (do_void) PARTHENON_REQUIRE(do_hydro, "The void requires hydro.");
 
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
@@ -159,6 +163,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   riot->AddParam("do_ionization", do_ionization);
   riot->AddParam("do_prescribed_sources", do_prescribed_sources);
   riot->AddParam("do_tracers", do_tracers);
+  riot->AddParam("do_void", do_void);
 
   // determine riot verbosity
   const bool verbose = pin->GetOrAddBoolean("riot", "verbose", true);
@@ -168,10 +173,12 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   const bool trap_fpes = pin->GetOrAddBoolean("riot", "trap_fpes", false);
   riot->AddParam("trap_fpes", trap_fpes);
 
-  // add a field to track which blocks are active
+  // add a field to track which blocks are active. With a void, self-gravity keeps every
+  // block holding matter active (see Multiphysics::PostCommsFillDerived), so only blocks
+  // of pure (static) void go inactive.
   bool sparse_physics = pin->GetOrAddBoolean("physics", "sparse_physics", true);
   if (do_multigroup_diffusion || do_radiation_transport || do_ionization ||
-      do_self_gravity) {
+      (do_self_gravity && !do_void)) {
     if (sparse_physics)
       PARTHENON_WARN(
           "sparse_physics being disabled because a global solver is being used.");
@@ -199,6 +206,7 @@ Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
     packages.Add(mat_pkg);
     if (do_thinc) packages.Add(THINC::Initialize(pin.get()));
     packages.Add(Hydro::Initialize(pin.get(), mat_pkg.get()));
+    if (do_void) packages.Add(Void::Initialize(pin.get()));
   }
   if (do_strength)
     packages.Add(Strength::Initialize(pin.get(), packages.Get("materials").get()));

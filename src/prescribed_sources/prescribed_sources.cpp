@@ -29,6 +29,7 @@
 #include "riot_utils/riot_utils.hpp"
 #include "riot_utils/table_utils.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 #include "prescribed_sources/prescribed_sources.hpp"
 
@@ -68,6 +69,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     // TODO(JMM): Any reason to be able to save as hdf5 and reload?
     // Or should we try and make it transparently work with restarts?
     const int matid = pin->GetInteger(block, "material", "material for this source");
+    PARTHENON_REQUIRE(matid != Void::MatidFromInput(pin), "The void cannot be sourced");
     const std::string ratefile = pin->GetString(
         block, "cumulative_energies",
         "path to file containing a time series of total energy to add "

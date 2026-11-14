@@ -427,6 +427,7 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   const auto &opac_a = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacA>>("d.d.opac_a");
   const auto &opac_s = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacS>>("d.d.opac_s");
   const auto &opac_from_matid = mat_pkg->Param<ParArray1D<int>>("d.opac_from_matid");
+  const int void_matid = Void::GetParams(pm).matid; // the void is transparent
 
   // Packing
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -454,6 +455,7 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
           const Real &rhobarm = pack(b, ccmat::rho(m), k, j, i);
           const Real &vfracm = pack(b, ccmat::volume_fraction(m), k, j, i);
           const int &mat_id = pack(b, ccmat::rho(m)).sparse_id;
+          if (mat_id == void_matid) continue;
           const int &phase_id = pack(b, ccmat::rho(m)).v;
           const int opac_id = opac_from_matid(mat_id) + phase_id;
           const auto &oam = opac_a(opac_id);
@@ -701,6 +703,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
   auto &mat_pkg = pm->packages.Get("materials");
   const auto &eos = mat_pkg->Param<parthenon::ParArray1D<RiotEOS::EOS>>("d.d.EOS");
   const auto &eos_map = mat_pkg->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
+  const auto vp = Void::GetParams(pm);
 
   // Packing
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -708,7 +711,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
   namespace cm = cell_variables::material_averaged;
   namespace ccrad = cell_variables::cell_averaged::rad;
   static auto desc =
-      MakePackDescriptor<ccmat::rho, cm::rho, ccbulk::temperature,
+      MakePackDescriptor<ccmat::rho, ccmat::volume_fraction, cm::rho, ccbulk::temperature,
                          ccbulk::internal_energy, ccrad::aa, ccrad::ss, ccrad::s1,
                          ccrad::s2, ccrad::s3, ccrad::intensity>(resolved_pkgs.get());
   auto pack = desc.GetPack(md);
@@ -750,7 +753,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
             (fixed_temp_rhs ||
              AdvancedTemperature<false>(tadv, tbase, verbose, tflr, root_utils,
                                         unit_utils, cdt, ngroups, fbnd, pack, nmat1, eos,
-                                        eos_map, pack, b, k, j, i));
+                                        eos_map, vp, pack, b, k, j, i));
         tadv = (success) ? tadv : tbase;
 
         // Update the specific intensity

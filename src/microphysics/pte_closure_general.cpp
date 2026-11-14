@@ -27,6 +27,8 @@
 #include "pte_closure.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
+#include "void/void_closure.hpp"
 
 using namespace parthenon::package::prelude;
 using namespace RiotEOS;
@@ -76,6 +78,9 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
   const Real tceil = hydro->Param<Real>("temperature_ceiling");
   const Real tceil_rho = hydro->Param<Real>("temperature_ceiling_rho");
 
+  // Void params (matid -1 if there is no void)
+  const auto vp = Void::GetParams(pm);
+
   // Packing and Indexing
   auto v =
       riot::MakePack<ccmat::rho, ccmat::volume_fraction, cm::ionization_zbar,
@@ -100,6 +105,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
 
         std::array<int, MAX_MATERIALS> eos_map;
         FillEosMap<ccmat::rho>(v, b, nmat, eos_from_matid, nphase, eos_map);
+        const int mv = Void::SliceIndex<ccmat::rho>(v, b, nmat, vp.matid);
 
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto kji) {
@@ -127,7 +133,7 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
           const Real ccbulk_rho = pv(ccbulk::rho(), kji);
           for (int m = 0; m < nmat; m++) {
             const Real ccmat_rho = v(b, ccmat::rho(m), k, j, i);
-            if (ccmat_rho > mfrac_thr * ccbulk_rho) {
+            if (m != mv && ccmat_rho > mfrac_thr * ccbulk_rho) {
               const Real ccmat_vfrac = v(b, ccmat::volume_fraction(m), k, j, i);
               PARTHENON_REQUIRE(ccmat_vfrac > 0.0, "Negative vfrac in PTE setup");
 
@@ -142,7 +148,55 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
           // Stash the temperature from previous soltution as a guess
           const Real Tguess = std::max(pv(ccbulk::temperature(), kji), tfloor);
 
-          if (nmat_cell > 1) {
+          // Void: it never enters PTE. It is available wherever it is allocated, and
+          // then open (alpha_V > 0, p = p_void) or closed (alpha_V = 0, p >= p_void).
+          // Its (tracer) mass plays no role.
+          const bool void_ok = mv >= 0;
+          const Real rhobar_void = void_ok ? v(b, ccmat::rho(mv), k, j, i) : 0.0;
+          bool void_open = false;
+
+          // The partial densities of the n materials in pte2slice, and their densities
+          // (guesses) from the volume fractions, for the open-void solves
+          auto gather_void = [&](const int n, Real *rhobar_s, Real *rho_s) {
+            for (int m = 0; m < n; m++) {
+              const int mid = pte2slice[m];
+              rhobar_s[m] = v(b, ccmat::rho(mid), k, j, i);
+              rho_s[m] = rhobar_s[m] / v(b, ccmat::volume_fraction(mid), k, j, i);
+            }
+          };
+          // ... and their volume fractions from the solved densities
+          auto scatter_void = [&](const int n, const Real *rhobar_s, const Real *rho_s) {
+            for (int m = 0; m < n; m++) {
+              v(b, ccmat::volume_fraction(pte2slice[m]), k, j, i) =
+                  rhobar_s[m] / rho_s[m];
+            }
+          };
+          LocalEosIndexer<RiotEOS::EOS> eos_v(pte2slice.data(), eos_map.data(), eos);
+          LambdaIndexer_t lambda_v(v, pte2slice.data(), b, k, j, i);
+
+          // Set an open-void state of the n materials in pte2slice, at their isobar
+          // densities rho_s and temperature T (returns false if the void is closed)
+          auto try_void = [&](const int n, Real *rho_s, Real &T) {
+            std::array<Real, MAX_MATERIALS> rhobar_s;
+            gather_void(n, rhobar_s.data(), rho_s);
+            int niter = 0, neos = 0;
+            const bool open =
+                Void::SolveOpen(n, eos_v, lambda_v, rhobar_s.data(), rho_s,
+                                pv(ccbulk::internal_energy(), kji), vp.pressure, tfloor,
+                                T, vp.tol, vp.max_iter, niter, neos);
+            if (track_pte_statistics) pv(diag::pte_niter(), kji) += niter;
+            if (!open) return false;
+            scatter_void(n, rhobar_s.data(), rho_s);
+            pv(ccbulk::temperature(), kji) = T;
+            pv(ccbulk::pressure(), kji) = vp.pressure;
+            return true;
+          };
+
+          if (nmat_cell == 0 && void_ok) {
+            // Pure void, at p_void (its temperature is meaningless)
+            void_open = true;
+            pv(ccbulk::pressure(), kji) = vp.pressure;
+          } else if (nmat_cell > 1) {
             // More than one material in cell, PTE callchain
             if (track_pte_statistics) pv(diag::pte_ncalls(), kji) += 1;
 
@@ -150,19 +204,37 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
             LocalEosIndexer<RiotEOS::EOS> eos_pte(pte2slice.data(), eos_map.data(), eos);
             LambdaIndexer_t lambda_pte(v, pte2slice.data(), b, k, j, i);
             Real rhoavg_pte = 0.0;
-            for (int m = 0; m < nmat_cell; m++) {
-              const int mid = pte2slice[m];
+            auto init_pte = [&](const Real T0) {
+              rhoavg_pte = 0.0;
+              for (int m = 0; m < nmat_cell; m++) {
+                const int mid = pte2slice[m];
 
-              ccmat_vfrac_s[m] = v(b, ccmat::volume_fraction(mid), k, j, i) / vfrac_sum;
-              cm_rho_s[m] = v(b, ccmat::rho(mid), k, j, i) / ccmat_vfrac_s[m];
-              cm_temp_s[m] = Tguess;
-              cm_press_s[m] = eos_pte[m].PressureFromDensityTemperature(
-                  cm_rho_s[m], cm_temp_s[m], lambda_pte[m]);
-              cm_sie_s[m] = eos_pte[m].InternalEnergyFromDensityTemperature(
-                  cm_rho_s[m], cm_temp_s[m], lambda_pte[m]);
+                ccmat_vfrac_s[m] = v(b, ccmat::volume_fraction(mid), k, j, i) / vfrac_sum;
+                cm_rho_s[m] = v(b, ccmat::rho(mid), k, j, i) / ccmat_vfrac_s[m];
+                cm_temp_s[m] = T0;
+                cm_press_s[m] = eos_pte[m].PressureFromDensityTemperature(
+                    cm_rho_s[m], cm_temp_s[m], lambda_pte[m]);
+                cm_sie_s[m] = eos_pte[m].InternalEnergyFromDensityTemperature(
+                    cm_rho_s[m], cm_temp_s[m], lambda_pte[m]);
 
-              rhoavg_pte += cm_rho_s[m] * ccmat_vfrac_s[m];
-            }
+                rhoavg_pte += cm_rho_s[m] * ccmat_vfrac_s[m];
+              }
+            };
+            init_pte(Tguess);
+
+            // Void: open it first if the guess state is below p_void
+            auto mean_pressure = [&]() {
+              Real p = 0.0;
+              for (int m = 0; m < nmat_cell; m++) {
+                p += ccmat_vfrac_s[m] * cm_press_s[m];
+              }
+              return p;
+            };
+            // The matter's densities and temperature if the void were open (p = p_void)
+            std::array<Real, MAX_MATERIALS> rho_open;
+            Real T_open = Tguess;
+            const bool void_tried = void_ok && mean_pressure() < vp.pressure;
+            if (void_tried) void_open = try_void(nmat_cell, rho_open.data(), T_open);
 
             // Call PTE and record success/statistics
             constexpr Real vfrac_tot = 1.0; // we renormalized to enforce this
@@ -170,17 +242,40 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
             std::array<Real *, 6> scr_pte{cm_rho_s.data(),   ccmat_vfrac_s.data(),
                                           cm_sie_s.data(),   cm_temp_s.data(),
                                           cm_press_s.data(), pte_scratch.data()};
-            singularity::PTESolverRhoT<LocalEosIndexer<RiotEOS::EOS>, Real *,
-                                       LambdaIndexer_t>
-                method(nmat_cell, eos_pte, vfrac_tot, sie_tot, scr_pte[0], scr_pte[1],
-                       scr_pte[2], scr_pte[3], scr_pte[4], lambda_pte, scr_pte[5], Tguess,
-                       pte_params);
-            auto status = singularity::PTESolver(method);
-            bool success = status.converged && (cm_temp_s[0] > tfloor);
-            if (track_pte_statistics) pv(diag::pte_niter(), kji) += status.max_niter;
+            bool success = false, converged_cold = false;
+            auto solve_pte = [&](const Real T0) {
+              singularity::PTESolverRhoT<LocalEosIndexer<RiotEOS::EOS>, Real *,
+                                         LambdaIndexer_t>
+                  method(nmat_cell, eos_pte, vfrac_tot, sie_tot, scr_pte[0], scr_pte[1],
+                         scr_pte[2], scr_pte[3], scr_pte[4], lambda_pte, scr_pte[5], T0,
+                         pte_params);
+              auto status = singularity::PTESolver(method);
+              success = status.converged && (cm_temp_s[0] > tfloor);
+              converged_cold = status.converged && cm_temp_s[0] <= tfloor;
+              if (track_pte_statistics) pv(diag::pte_niter(), kji) += status.max_niter;
+            };
+            if (!void_open) {
+              solve_pte(Tguess);
+
+              // Void: open it if PTE failed or is below p_void (before the backups,
+              // which remove materials)
+              if (void_ok && !void_tried &&
+                  !(success && mean_pressure() >= vp.pressure)) {
+                void_open = try_void(nmat_cell, rho_open.data(), T_open);
+              }
+
+              // Void closed: retry PTE from T_open, which (unlike the previous
+              // temperature) matches this step's energy
+              if (!success && !void_open && T_open != Tguess) {
+                init_pte(T_open);
+                solve_pte(T_open);
+              }
+            }
 
             // Handle PTE return statuses
-            if (success) {
+            if (void_open) {
+              // Open-void state already set
+            } else if (success) {
               // Set PTE solution
               Real mean_p = 0.0;
               for (int m = 0; m < nmat_cell; m++) {
@@ -193,9 +288,9 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
               pv(ccbulk::pressure(), kji) = mean_p;
             } else { // PTE failed
               // A converged solution below the floor is clamped to it (by a FixedT
-              // solve at the floor); otherwise fall back to the previous temperature
-              const Real Tfix =
-                  (status.converged && cm_temp_s[0] <= tfloor) ? tfloor : Tguess;
+              // solve at the floor); otherwise fall back to T_open (the previous
+              // temperature unless the void was tried)
+              const Real Tfix = converged_cold ? tfloor : T_open;
 
               // Record failure
               if (track_pte_statistics) pv(diag::pte_nfails(), kji) += 1;
@@ -318,20 +413,31 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
           } else if (nmat_cell == 1) {
             // Handle single material case
             const int mid = pte2slice[0];
+            const Real alpha_guess = v(b, ccmat::volume_fraction(mid), k, j, i);
             v(b, ccmat::volume_fraction(mid), k, j, i) = 1.0;
 
             // Obtain temperature directly from updated internal energy and bulk density
-            const Real sie = pv(ccbulk::internal_energy(), kji) / ccbulk_rho;
+            // (less the void, which has no energy)
+            const Real rho1 = ccbulk_rho - rhobar_void;
+            const Real sie = pv(ccbulk::internal_energy(), kji) / rho1;
             RiotEOS::LambdaIndexerSingleCoord<decltype(v)> ll(v, b, mid, k, j, i);
-            Real tmat = eos[eos_map[mid]].TemperatureFromDensityInternalEnergy(ccbulk_rho,
-                                                                               sie, ll);
+            Real tmat =
+                eos[eos_map[mid]].TemperatureFromDensityInternalEnergy(rho1, sie, ll);
             // Clamp to the floor (falling back to the previous temperature if NaN)
             tmat = std::isnan(tmat) ? Tguess : std::max(tmat, tfloor);
             pv(ccbulk::temperature(), kji) = tmat;
 
             // Obtain pressure directly from EOS call
             pv(ccbulk::pressure(), kji) =
-                eos[eos_map[mid]].PressureFromDensityTemperature(ccbulk_rho, tmat, ll);
+                eos[eos_map[mid]].PressureFromDensityTemperature(rho1, tmat, ll);
+
+            // Void: open it if the material alone is below p_void
+            if (void_ok && pv(ccbulk::pressure(), kji) < vp.pressure) {
+              v(b, ccmat::volume_fraction(mid), k, j, i) = alpha_guess;
+              Real rho_s[1], T_open = tmat;
+              void_open = try_void(1, rho_s, T_open);
+              if (!void_open) v(b, ccmat::volume_fraction(mid), k, j, i) = 1.0;
+            }
 
             // Single material
           } else { // nmat_cell < 1
@@ -354,8 +460,23 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
           // Temperature ceiling below a density: clamp the temperature and reset the
           // pressure to the EOS at the ceiling, at the closure's volume fractions
           // (PostCommsFillDerived rebuilds the energies from T)
-          if (tceil > 0.0 && pv(ccbulk::rho(), kji) < tceil_rho &&
-              pv(ccbulk::temperature(), kji) > tceil) {
+          // An open void stays open at the ceiling (the isobar densities grow as T drops)
+          const bool ceil = tceil > 0.0 && pv(ccbulk::rho(), kji) < tceil_rho &&
+                            pv(ccbulk::temperature(), kji) > tceil;
+          bool void_ceil = ceil && void_open;
+          if (void_ceil && nmat_cell > 0) {
+            std::array<Real, MAX_MATERIALS> rhobar_s, rho_s;
+            gather_void(nmat_cell, rhobar_s.data(), rho_s.data());
+            int neos = 0;
+            void_ceil = Void::SolveOpenFixedT(nmat_cell, eos_v, lambda_v, rhobar_s.data(),
+                                              rho_s.data(), vp.pressure, tceil, vp.tol,
+                                              vp.max_iter, neos);
+            if (void_ceil) scatter_void(nmat_cell, rhobar_s.data(), rho_s.data());
+          }
+          if (void_ceil) {
+            // Open void at the ceiling (p = p_void)
+            pv(ccbulk::temperature(), kji) = tceil;
+          } else if (ceil) {
             Real p = 0.0;
             for (int m = 0; m < nmat; m++) {
               const Real alpha = v(b, ccmat::volume_fraction(m), k, j, i);
@@ -367,6 +488,19 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
             }
             pv(ccbulk::temperature(), kji) = tceil;
             pv(ccbulk::pressure(), kji) = p;
+          }
+
+          // Void volume fraction: the rest of the cell if open, else none (its mass is
+          // then removed by the volume fraction mask below)
+          if (void_ok) {
+            Real alpha_void = 0.0;
+            if (void_open) {
+              alpha_void = 1.0;
+              for (int m = 0; m < nmat; m++) {
+                if (active_mat[m]) alpha_void -= v(b, ccmat::volume_fraction(m), k, j, i);
+              }
+            }
+            v(b, ccmat::volume_fraction(mv), k, j, i) = std::max(alpha_void, 0.0);
           }
 
           // Handle PTE diagnostic averaging (if enabled)
@@ -386,8 +520,9 @@ void Closure::ApplyMixedCellClosure(MeshData<Real> *md, IndexDomain domain) {
         for (int m = 0; m < nmat; m++) {
           auto pv_m = RiotLoop::make_sparse_pack_view(idx_range, v, m);
           RiotLoop::inner(idx_range, [&](const auto kji) {
+            // (the void is exempt from the mass fraction threshold)
             const Real mthr_mask =
-                (pv_m(ccmat::rho(), kji) > mfrac_thr * pv(ccbulk::rho(), kji));
+                (m == mv || pv_m(ccmat::rho(), kji) > mfrac_thr * pv(ccbulk::rho(), kji));
             const Real vthr_mask = (pv_m(ccmat::volume_fraction(), kji) > vfrac_thr);
             const Real mask = mthr_mask * vthr_mask;
             pv_m(ccmat::rho(), kji) *= mask;

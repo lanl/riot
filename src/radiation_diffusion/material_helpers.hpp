@@ -23,6 +23,7 @@
 #include "polylog.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 namespace RadiationDiffusion {
 struct MaterialHelpers {
@@ -100,6 +101,14 @@ struct MaterialHelpers {
     rhomin = rad_params.Get<parthenon::Real>("diff_rho_min");
     tempmin = rad_params.Get<parthenon::Real>("diff_temp_min");
     ngroup = rad_params.hasKey("ngroup") ? rad_params.Get<int>("ngroup") : 0;
+    // The void is transparent and has no heat capacity. Its energy density -p_void
+    // alpha_V is in the ion energy.
+    const auto vp = Void::GetParams(pmesh);
+    void_matid = vp.matid;
+    p_void =
+        std::is_same_v<temperature_t, cell_variables::cell_averaged::bulk::temperature>
+            ? vp.pressure
+            : 0.0;
   }
 
   KOKKOS_DEFAULTED_FUNCTION
@@ -115,6 +124,30 @@ struct MaterialHelpers {
   const pa1d_t<int> opac_from_matid;
   Real rhomin, tempmin;
   int ngroup;
+  int void_matid;
+  Real p_void;
+
+  // The void's contribution to CalculateEos: energy density -p_void alpha_V, independent
+  // of the temperature, and no heat capacity
+  template <class idx_range_t, class pack_t, class... output_ts>
+  KOKKOS_INLINE_FUNCTION void AddVoidEnergy(const idx_range_t &idx_range,
+                                            const pack_t &pack, int b, int m,
+                                            output_ts... outputs) const {
+    namespace ccmat = cell_variables::cell_averaged::mat;
+    if (p_void == 0.0) return;
+    using idx_t = typename idx_range_t::inner_idx_t;
+    idx_range.TeamBarrier();
+    auto alpha = make_var_view(idx_range, pack, ccmat::volume_fraction(m));
+    RiotLoop::inner(idx_range, [&](const idx_t kji) {
+      (
+          [&] {
+            if constexpr (std::is_same_v<typename output_ts::tag, EgasTag>) {
+              outputs.scratch(kji) -= p_void * alpha(kji);
+            }
+          }(),
+          ...);
+    });
+  }
 
   template <class temperature_t, class idx_range_t, class pack_t,
             class pack_temperature_t, class... output_ts>
@@ -136,6 +169,10 @@ struct MaterialHelpers {
     auto T = make_var_view(idx_range, pack_temperature, temperature_t());
     for (int m = 0; m < nmat; ++m) {
       const int mat_id = pack(b, cm::rho(m)).sparse_id;
+      if (mat_id == void_matid) {
+        AddVoidEnergy(idx_range, pack, b, m, outputs...);
+        continue;
+      }
       const int phase_id = pack(b, cm::rho(m)).v;
       const int eos_id = eos_from_matid(mat_id) + phase_id;
       const auto &eosm = eos(eos_id);
@@ -190,6 +227,7 @@ struct MaterialHelpers {
     auto T = make_var_view(idx_range, pack_temperature, temperature_t());
     for (int m = 0; m < nmat; ++m) {
       const int mat_id = pack(b, cm::rho(m)).sparse_id;
+      if (mat_id == void_matid) continue; // the void is transparent
       const int phase_id = pack(b, cm::rho(m)).v;
       const int opac_id = opac_from_matid(mat_id) + phase_id;
       const auto &opac_am = opac_a(opac_id);

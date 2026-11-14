@@ -150,7 +150,7 @@ KOKKOS_FORCEINLINE_FUNCTION void ElectronIonEquilibrationOne(
     const RiotEOS::EOS_Array_t &ion_eos, const RiotEOS::EOS_Array_t &electron_eos,
     const EosMap_t &eos_map, Lambda_t &lambda, const Real &dt, const bool constant_tau_ei,
     const Real tau_ei_const, CoulombLogarithmKind logKind, const pack_t &v, const int b,
-    const int k, const int j, const int i) {
+    const int k, const int j, const int i, const int void_matid) {
 
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -173,6 +173,7 @@ KOKKOS_FORCEINLINE_FUNCTION void ElectronIonEquilibrationOne(
     ne = rhosum = tau_ei_mean = rhocvi_sum = rhocve_sum = 0.;
     // compute specific heats, coupling coefficients and effective averages
     for (int m = 0; m < nmat; m++) {
+      if (v(b, ccmat::rho(m)).sparse_id == void_matid) continue; // no electrons
       auto &eosi = ion_eos(eos_map[m]);
       auto &eose = electron_eos(eos_map[m]);
       const Real rhom = v(b, cm::rho(m), k, j, i);
@@ -197,6 +198,7 @@ KOKKOS_FORCEINLINE_FUNCTION void ElectronIonEquilibrationOne(
       rhocve_sum += fvm * rhom * cvem;
     }
 
+    if (!(rhocve_sum > 0.0)) return; // no electrons (pure void): nothing to couple
     tau_ei_mean = 1.0 / tau_ei_mean;
 
     // first order exponential integration
@@ -251,7 +253,8 @@ KOKKOS_FORCEINLINE_FUNCTION void
 ComputeElectronTemperature(const IndexRangeType &idx_range, const Pack_t &v,
                            const RiotEOS::EOS_Array_t &electron_eos,
                            const parthenon::ParArray1D<int> &eos_from_matid,
-                           const Real TOL, const int b, const int nmat) {
+                           const Real TOL, const int b, const int nmat,
+                           const int void_matid) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -274,9 +277,10 @@ ComputeElectronTemperature(const IndexRangeType &idx_range, const Pack_t &v,
       for (int m = 0; m < nmat; ++m) {
         const Real cm_rho = v(b, cm::rho(m), k, j, i);
         const Real ccmat_rho = v(b, ccmat::rho(m), k, j, i); // = vfrac * cm_rho
-        if (ccmat_rho > 0) { // don't include contribution from masked materials
+        const int mat_id = v(b, ccmat::rho(m)).sparse_id;
+        // don't include contribution from masked materials or the void (no electrons)
+        if (ccmat_rho > 0 && mat_id != void_matid) {
           RiotEOS::LambdaIndexerSingleCoord lambda(v, b, m, k, j, i);
-          const int mat_id = v(b, ccmat::rho(m)).sparse_id;
           const int phase_id = v(b, ccmat::rho(m)).v;
           auto &eosm = electron_eos(eos_from_matid(mat_id) + phase_id);
           usum += ccmat_rho *
@@ -299,10 +303,12 @@ ComputeElectronTemperature(const IndexRangeType &idx_range, const Pack_t &v,
 // Updates per-material electron energy, electron pressure, total
 // pressure, and total bulk modulus
 template <typename Pack_t, typename IndexRangeType>
-KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
-    const IndexRangeType &idx_range, const Pack_t &v, const RiotEOS::EOS_Array_t &ion_eos,
-    const RiotEOS::EOS_Array_t &electron_eos,
-    const parthenon::ParArray1D<int> &eos_from_matid, const int b, const int nmat) {
+KOKKOS_FORCEINLINE_FUNCTION void
+PerMaterialEnergyPressureBmod(const IndexRangeType &idx_range, const Pack_t &v,
+                              const RiotEOS::EOS_Array_t &ion_eos,
+                              const RiotEOS::EOS_Array_t &electron_eos,
+                              const parthenon::ParArray1D<int> &eos_from_matid,
+                              const int b, const int nmat, const int void_matid) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -311,6 +317,7 @@ KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
 
   for (int n = 0; n < nmat; ++n) {
     const int mat_id = v(b, ccmat::rho(n)).sparse_id;
+    const bool is_void = (mat_id == void_matid); // the void has no electrons
     const int phase_id = v(b, ccmat::rho(n)).v;
     auto &eos_e = electron_eos(eos_from_matid(mat_id) + phase_id);
 
@@ -325,7 +332,7 @@ KOKKOS_FORCEINLINE_FUNCTION void PerMaterialEnergyPressureBmod(
 
         // compute per-material electron pressure, electron bulk modulus,
         // and electron gruneisen coefficient.
-        const bool mask = vfrac > 0;
+        const bool mask = vfrac > 0 && !is_void;
         const Real P_e_m =
             (mask ? eos.PressureFromDensityTemperature(rho_i, T_e, pl) : 0.0);
         const Real bmod_e_m =

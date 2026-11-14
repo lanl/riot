@@ -34,6 +34,7 @@
 #include "riot_utils/riot_utils.hpp"
 #include "strength/strength.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using namespace parthenon::package::prelude;
 
@@ -344,6 +345,9 @@ TaskStatus ElectronIonEquilibration(MeshData<Real> *md, Real dt) {
   const int nblocks = v.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
 
+  // The void has no electrons (it is skipped)
+  const int void_matid = Void::GetParams(pm).matid;
+
   CoulombLogarithmKind logKind = ParseCoulombLogarithmKind(coulomb_logarithm);
   bool is_constant = (electron_ion_coupling_model == "constant");
 
@@ -359,7 +363,8 @@ TaskStatus ElectronIonEquilibration(MeshData<Real> *md, Real dt) {
         RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
           RiotEOS::LambdaIndexerMulti<decltype(v)> lambda(v, b, k, j, i);
           ElectronIonEquilibrationOne(ion_eos, electron_eos, eos_map, lambda, dt,
-                                      is_constant, tau_ei_const, logKind, v, b, k, j, i);
+                                      is_constant, tau_ei_const, logKind, v, b, k, j, i,
+                                      void_matid);
         });
       });
 
@@ -407,6 +412,7 @@ void ComputeFreeElectronNumberDensity(MeshData<Real> *md) {
 
   const int nblocks = v.GetNBlocks();
   if (nblocks < 1) return;
+  const int void_matid = Void::GetParams(pm).matid;
 
   // SWJ: this needs to be computed over entire mesh because thermal diffusion
   // coefficient is calculated in the ghost zones
@@ -433,11 +439,15 @@ void ComputeFreeElectronNumberDensity(MeshData<Real> *md) {
           const Real anuc = eosm.MeanAtomicMass();
           const Real one_over_mnuc = 1.0 / (anuc * unit_system::amu);
           const Real znuc = eosm.MeanAtomicNumber();
+          const bool is_void = (v(b, ccmat::rho(m)).sparse_id == void_matid);
           RiotLoop::inner(idx_range, [&](const auto kji) {
-            Real zbar = cm_zbar(kji);
-            ComputeIonizationState(anuc, znuc, cm_rho(kji),
-                                   pv(ccbulk::electron_temperature(), kji), zbar,
-                                   fully_ionized);
+            Real zbar = 0.0; // the void has no electrons
+            if (!is_void) {
+              zbar = cm_zbar(kji);
+              ComputeIonizationState(anuc, znuc, cm_rho(kji),
+                                     pv(ccbulk::electron_temperature(), kji), zbar,
+                                     fully_ionized);
+            }
             cm_zbar(kji) = zbar;
             ccmat_zbar(kji) = ccmat_rho(kji) * zbar;
             ne(kji) = (m == 0) ? (ccmat_zbar(kji) * one_over_mnuc)
@@ -763,6 +773,9 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  // The void conducts no heat (it is skipped)
+  const int void_matid = Void::GetParams(pm).matid;
+  const bool has_void = void_matid >= 0;
 
   auto v = riot::MakePack<cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccbulk::rho,
                           ccbulk::electron_temperature, ccbulk::temperature,
@@ -790,7 +803,10 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
             RiotLoop::make_var_view(idx_range, v, ccbulk::electron_number_density());
 
         // Compute conductivity for each material and accumulate
+        RiotLoop::inner(idx_range, [&](const auto kji) { d_cell(kji) = 0.0; });
+        idx_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
+          if (v(b, ccmat::rho(m)).sparse_id == void_matid) continue;
           auto rhom = RiotLoop::make_var_view(idx_range, v, cm::rho(m));
           auto fvm = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
           auto zbarm = RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
@@ -805,8 +821,7 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
               const Real k_mat =
                   SpitzerHarmConductivity(tele(kji), tion(kji), nem, ni, mi, zbarm(kji),
                                           logKind, zbar_floor, ion_number_density_floor);
-              d_cell(kji) =
-                  (m == 0) ? (fvm(kji) / k_mat) : (d_cell(kji) + fvm(kji) / k_mat);
+              d_cell(kji) += fvm(kji) / k_mat;
             });
           } else if (electron_model ==
                      ElectronThermalConductivityModel::SpitzerVolumeAverageArithmetic) {
@@ -816,8 +831,7 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
               const Real k_mat =
                   SpitzerHarmConductivity(tele(kji), tion(kji), nem, ni, mi, zbarm(kji),
                                           logKind, zbar_floor, ion_number_density_floor);
-              d_cell(kji) = (m == 0) ? (dt * fvm(kji) * k_mat)
-                                     : (d_cell(kji) + dt * fvm(kji) * k_mat);
+              d_cell(kji) += dt * fvm(kji) * k_mat;
             });
           } else if (electron_model == ElectronThermalConductivityModel::
                                            SpitzerElectronNumberDensityAverage) {
@@ -827,22 +841,32 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
               const Real k_mat =
                   SpitzerHarmConductivity(tele(kji), tion(kji), nem, ni, mi, zbarm(kji),
                                           logKind, zbar_floor, ion_number_density_floor);
-              d_cell(kji) =
-                  (m == 0) ? (dt * fvm(kji) * nem * k_mat / ccbulk_ne(kji))
-                           : (d_cell(kji) + dt * fvm(kji) * nem * k_mat / ccbulk_ne(kji));
+              d_cell(kji) += dt * fvm(kji) * nem * k_mat / ccbulk_ne(kji);
             });
           } else { // constant
             RiotLoop::inner(idx_range, [&](const auto kji) {
-              d_cell(kji) = (m == 0) ? (dt * fvm(kji) * k_e_const) // folding dt in here
-                                     : (d_cell(kji) + dt * fvm(kji) * k_e_const);
+              d_cell(kji) += dt * fvm(kji) * k_e_const; // folding dt in here
             });
           } // electron conductivity model
           idx_range.TeamBarrier();
         } // nmat
 
-        // Finalize harmonic average
-        if (electron_model ==
-            ElectronThermalConductivityModel::SpitzerVolumeAverageHarmonic) {
+        // Finalize. With a void, the matter fills a fraction s of the cell (s = 1
+        // without a void), and the cell conducts as s^2 times its matter, as for the
+        // viscosity: a trace of matter, of negligible heat capacity, conducts negligibly
+        // (else its diffusivity, independent of its density, limits the time step)
+        const int mv = Void::SliceIndex<ccmat::rho>(v, b, nmat, void_matid);
+        const bool harmonic =
+            electron_model ==
+            ElectronThermalConductivityModel::SpitzerVolumeAverageHarmonic;
+        if (mv >= 0) {
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(mv));
+          RiotLoop::inner(idx_range, [&](const auto kji) {
+            const Real s = 1.0 - fv(kji);
+            d_cell(kji) = !harmonic ? s * d_cell(kji)
+                                    : ((s > 0.0) ? dt * s * s * s / d_cell(kji) : 0.0);
+          });
+        } else if (harmonic) {
           RiotLoop::inner(idx_range,
                           [&](const auto kji) { d_cell(kji) = dt / d_cell(kji); });
         }
@@ -860,9 +884,13 @@ TaskStatus CalculateElectronThermalDiffusionCoefficient(MeshData<Real> *md,
     RiotLoop::outer(
         idx_space_face, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
+            // With a void, the cells conduct in series (harmonic mean), so that heat
+            // flows into a cell only as far as its matter fills it (none for pure void)
+            const Real d = v(b, Ionization::Dcell(), k, j, i);
+            const Real dm = v(b, Ionization::Dcell(), k - koff, j - joff, i - ioff);
             v_out(b, te, Ionization::D(), k, j, i) =
-                0.5 * (v(b, Ionization::Dcell(), k, j, i) +
-                       v(b, Ionization::Dcell(), k - koff, j - joff, i - ioff));
+                !has_void ? 0.5 * (d + dm)
+                          : ((d > 0.0 && dm > 0.0) ? 2.0 * d * dm / (d + dm) : 0.0);
           });
         });
   }
@@ -898,6 +926,9 @@ TaskStatus CalculateIonThermalDiffusionCoefficient(MeshData<Real> *md,
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  // The void conducts no heat (it is skipped)
+  const int void_matid = Void::GetParams(pm).matid;
+  const bool has_void = void_matid >= 0;
 
   auto v = riot::MakePack<cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccbulk::rho,
                           ccbulk::electron_temperature, ccbulk::temperature,
@@ -922,7 +953,10 @@ TaskStatus CalculateIonThermalDiffusionCoefficient(MeshData<Real> *md,
         auto tion = RiotLoop::make_var_view(idx_range, v, ccbulk::temperature());
         auto tele = RiotLoop::make_var_view(idx_range, v, ccbulk::electron_temperature());
 
+        RiotLoop::inner(idx_range, [&](const auto kji) { d_cell(kji) = 0.0; });
+        idx_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
+          if (v(b, ccmat::rho(m)).sparse_id == void_matid) continue;
           auto rhom = RiotLoop::make_var_view(idx_range, v, cm::rho(m));
           auto fvm = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(m));
           auto zbarm = RiotLoop::make_var_view(idx_range, v, cm::ionization_zbar(m));
@@ -936,16 +970,22 @@ TaskStatus CalculateIonThermalDiffusionCoefficient(MeshData<Real> *md,
               const Real k_mat =
                   BraginskiiConductivity(tele(kji), nem, tion(kji), ni, mi, zbarm(kji),
                                          zbar_floor, ion_number_density_floor);
-              d_cell(kji) = (m == 0) ? (fvm(kji) * dt * k_mat) // folding dt in here
-                                     : (d_cell(kji) + fvm(kji) * dt * k_mat);
+              d_cell(kji) += fvm(kji) * dt * k_mat; // folding dt in here
             });
           } else { // constant
             RiotLoop::inner(idx_range, [&](const auto kji) {
-              d_cell(kji) = (m == 0) ? (fvm(kji) * dt * k_i_const) // folding dt in here
-                                     : (d_cell(kji) + fvm(kji) * dt * k_i_const);
+              d_cell(kji) += fvm(kji) * dt * k_i_const; // folding dt in here
             });
           }
           idx_range.TeamBarrier();
+        }
+
+        // With a void, the cell conducts as s^2 times its matter (see the electrons)
+        const int mv = Void::SliceIndex<ccmat::rho>(v, b, nmat, void_matid);
+        if (mv >= 0) {
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(mv));
+          RiotLoop::inner(idx_range,
+                          [&](const auto kji) { d_cell(kji) *= 1.0 - fv(kji); });
         }
       });
 
@@ -961,9 +1001,13 @@ TaskStatus CalculateIonThermalDiffusionCoefficient(MeshData<Real> *md,
     RiotLoop::outer(
         idx_space_face, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
+            // With a void, the cells conduct in series (harmonic mean), so that heat
+            // flows into a cell only as far as its matter fills it (none for pure void)
+            const Real d = v(b, Ionization::Dcell(), k, j, i);
+            const Real dm = v(b, Ionization::Dcell(), k - koff, j - joff, i - ioff);
             v_out(b, te, Ionization::D(), k, j, i) =
-                0.5 * (v(b, Ionization::Dcell(), k, j, i) +
-                       v(b, Ionization::Dcell(), k - koff, j - joff, i - ioff));
+                !has_void ? 0.5 * (d + dm)
+                          : ((d > 0.0 && dm > 0.0) ? 2.0 * d * dm / (d + dm) : 0.0);
           });
         });
   }
@@ -989,6 +1033,8 @@ TaskStatus SetLocal(MeshData<Real> *md, MeshData<Real> *md_out) {
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  // The void has no heat capacity (it is skipped)
+  const int void_matid = Void::GetParams(pm).matid;
 
   auto v = riot::MakePack<cm::lT_cache, cm::lr_cache, cm::rho, ccmat::rho, ccbulk::rho,
                           ccbulk::electron_temperature, ccbulk::temperature,
@@ -1011,6 +1057,7 @@ TaskStatus SetLocal(MeshData<Real> *md, MeshData<Real> *md_out) {
             Real rhocve_sum = 0.0;
             RiotEOS::LambdaIndexerMulti<decltype(v)> lambda(v, b, k, j, i);
             for (int m = 0; m < nmat; ++m) {
+              if (v(b, ccmat::rho(m)).sparse_id == void_matid) continue;
               auto &eose = electron_eos(eos_map[m]);
               const Real rhom = v(b, cm::rho(m), k, j, i);
               const Real fvm = v(b, ccmat::volume_fraction(m), k, j, i);
@@ -1019,7 +1066,10 @@ TaskStatus SetLocal(MeshData<Real> *md, MeshData<Real> *md_out) {
 
               rhocve_sum += rhom * cvem * fvm;
             }
-            v_out(b, Ionization::diag_loc(), k, j, i) = rhocve_sum;
+            // A cell with no heat capacity (pure void) has no conductance either, and
+            // is decoupled: its row reads delta = 0
+            v_out(b, Ionization::diag_loc(), k, j, i) =
+                rhocve_sum > 0.0 ? rhocve_sum : 1.0;
             v(b, Ionization::temperature_old(), k, j, i) = tele;
           });
         });
@@ -1035,6 +1085,7 @@ TaskStatus SetLocal(MeshData<Real> *md, MeshData<Real> *md_out) {
             Real rhocvi_sum = 0.0;
             RiotEOS::LambdaIndexerMulti<decltype(v)> lambda(v, b, k, j, i);
             for (int m = 0; m < nmat; ++m) {
+              if (v(b, ccmat::rho(m)).sparse_id == void_matid) continue;
               auto &eosi = ion_eos(eos_map[m]);
               const Real rhom = v(b, cm::rho(m), k, j, i);
               const Real fvm = v(b, ccmat::volume_fraction(m), k, j, i);
@@ -1043,7 +1094,10 @@ TaskStatus SetLocal(MeshData<Real> *md, MeshData<Real> *md_out) {
 
               rhocvi_sum += rhom * cvim * fvm;
             }
-            v_out(b, Ionization::diag_loc(), k, j, i) = rhocvi_sum;
+            // A cell with no heat capacity (pure void) has no conductance either, and
+            // is decoupled: its row reads delta = 0
+            v_out(b, Ionization::diag_loc(), k, j, i) =
+                rhocvi_sum > 0.0 ? rhocvi_sum : 1.0;
           });
         });
   }
@@ -1105,6 +1159,8 @@ TaskStatus UpdateStateFromConduction(MeshData<Real> *md_base, MeshData<Real> *md
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  // The void has no heat capacity (it is skipped)
+  const int void_matid = Void::GetParams(pm).matid;
 
   auto v = riot::MakePack<Ionization::delta>(md_u);
   auto v_base =
@@ -1134,6 +1190,7 @@ TaskStatus UpdateStateFromConduction(MeshData<Real> *md_base, MeshData<Real> *md
             Real rhocve_sum = 0.0;
             RiotEOS::LambdaIndexerMulti<decltype(v_base)> lambda(v_base, b, k, j, i);
             for (int m = 0; m < nmat; m++) {
+              if (v_base(b, ccmat::rho(m)).sparse_id == void_matid) continue;
               auto &eose = electron_eos(eos_map[m]);
               const Real rhom =
                   v_base(b, cm::rho(m), k, j, i); // physical density (not cell averaged)
@@ -1173,6 +1230,7 @@ TaskStatus UpdateStateFromConduction(MeshData<Real> *md_base, MeshData<Real> *md
             Real rhocvi_sum = 0.0;
             RiotEOS::LambdaIndexerMulti<decltype(v_base)> lambda(v_base, b, k, j, i);
             for (int m = 0; m < nmat; m++) {
+              if (v_base(b, ccmat::rho(m)).sparse_id == void_matid) continue;
               auto &eosi = ion_eos(eos_map[m]);
               const Real rhom =
                   v_base(b, cm::rho(m), k, j, i); // physical density (not cell averaged)
@@ -1238,6 +1296,8 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const auto &nphase = materials->Param<parthenon::ParArray1D<int>>("d.nphase");
+  // The void has no viscosity: it is skipped (and scatters no ions)
+  const int void_matid = Void::GetParams(pm).matid;
 
   using lt = RiotUtils::LoopType<>;
   const int nhalo = 1;
@@ -1263,6 +1323,7 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
 
         if (viscosity_model == PlasmaViscosityModel::FokkerPlanckLandau) {
           for (int m1 = 0; m1 < nmat; ++m1) {
+            if (v(b, ccmat::rho(m1)).sparse_id == void_matid) continue;
             // zero out nui
             RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
               nui(k, j, i) = 0.0;
@@ -1275,6 +1336,7 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
 
             // here we calculate nui = sum_j(alpha_ij^V * nu_ij)
             for (int m2 = 0; m2 < nmat; ++m2) {
+              if (v(b, ccmat::rho(m2)).sparse_id == void_matid) continue;
 
               // species 2 mass
               const Real mu_m2 = ion_eos(eos_map[m2]).MeanAtomicMass();
@@ -1319,6 +1381,21 @@ void CalculatePlasmaViscosity(MeshData<Real> *md) {
             v(b, ccbulk::ion_shear_viscosity(), k, j, i) = ion_shear_viscosity;
           });
         } // viscosity model
+
+        // With a void, the matter fills a fraction s of the cell. A mostly-void cell
+        // transmits little stress: eta = s^2 eta_matter (within the bounds [0, s
+        // eta_matter] of a two-phase medium), so the kinematic viscosity of a trace of
+        // matter vanishes with it (else it limits the explicit time step)
+        const int mv = Void::SliceIndex<ccmat::rho>(v, b, nmat, void_matid);
+        if (mv >= 0) {
+          idx_range.TeamBarrier();
+          auto fv = RiotLoop::make_var_view(idx_range, v, ccmat::volume_fraction(mv));
+          auto eta = RiotLoop::make_var_view(idx_range, v, ccbulk::ion_shear_viscosity());
+          RiotLoop::inner(idx_range, [&](const auto kji) {
+            const Real s = 1.0 - fv(kji);
+            eta(kji) *= s * s;
+          });
+        }
       }); // outer
 } // CalculatePlasmaViscosity
 
@@ -1415,7 +1492,8 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
             const Real eta = pv(ccbulk::ion_shear_viscosity(), k, j, i);
             for (int d = 0; d < ndim; d++) {
               const Real dx = coords.Dxc(d + 1, k, j, i);
-              ldt = std::min(ldt, rho * dx * dx / (eta + 1e-15));
+              // no limit where there is no viscosity (e.g. the void)
+              if (eta > 0.0) ldt = std::min(ldt, rho * dx * dx / (eta + 1e-15));
             }
           });
         });
@@ -1424,6 +1502,16 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   }
 
   return std::min(dt_conduction, dt_viscosity);
+}
+
+// Viscosities of the two cells beside a face. With a void both take their harmonic mean,
+// as for conduction: the void (eta = 0) exerts no traction, and a trace of matter beside
+// it (little mass, little eta) takes little stress from its neighbour
+KOKKOS_INLINE_FUNCTION void FaceViscosity(const bool has_void, Real &eta, Real &etam) {
+  if (!has_void) return;
+  const Real eta_f = (eta > 0.0 && etam > 0.0) ? 2.0 * eta * etam / (eta + etam) : 0.0;
+  eta = eta_f;
+  etam = eta_f;
 }
 
 // Compute fluxes to momentum and energy from plasma viscosity
@@ -1451,6 +1539,7 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
   if (nblocks == 0) return TaskStatus::complete;
 
   const Real bulk_viscosity = ionization_params.Get<Real>("ion_bulk_viscosity");
+  const bool has_void = Void::GetParams(pm).matid >= 0;
 
   // Calculate the strain rate tensor.
   Hydro::CalculateStrainRate(md, vb);
@@ -1468,8 +1557,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto pvb = RiotLoop::make_pack_view(idx_range, vb);
         RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-          Real &eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
-          Real &etam = pvb(ccbulk::ion_shear_viscosity(), k, j, i - 1);
+          Real eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
+          Real etam = pvb(ccbulk::ion_shear_viscosity(), k, j, i - 1);
+          FaceViscosity(has_void, eta, etam);
 
           Real &vxx = pvb(ccbulk::face_velocity(0), k, j, i);
           Real &vyx = pvb(ccbulk::face_velocity(1), k, j, i);
@@ -1517,8 +1607,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
         idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           auto pvb = RiotLoop::make_pack_view(idx_range, vb);
           RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-            Real &eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
-            Real &etam = pvb(ccbulk::ion_shear_viscosity(), k, j - 1, i);
+            Real eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
+            Real etam = pvb(ccbulk::ion_shear_viscosity(), k, j - 1, i);
+            FaceViscosity(has_void, eta, etam);
 
             Real &vxy = pvb(ccbulk::face_velocity(3), k, j, i);
             Real &vyy = pvb(ccbulk::face_velocity(4), k, j, i);
@@ -1568,8 +1659,9 @@ TaskStatus ComputePlasmaViscousFluxes(MeshData<Real> *md) {
         idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           auto pvb = RiotLoop::make_pack_view(idx_range, vb);
           RiotLoop::inner(idx_range, [&](const auto k, const auto j, const auto i) {
-            Real &eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
-            Real &etam = pvb(ccbulk::ion_shear_viscosity(), k - 1, j, i);
+            Real eta = pvb(ccbulk::ion_shear_viscosity(), k, j, i);
+            Real etam = pvb(ccbulk::ion_shear_viscosity(), k - 1, j, i);
+            FaceViscosity(has_void, eta, etam);
 
             Real &vxz = pvb(ccbulk::face_velocity(6), k, j, i);
             Real &vyz = pvb(ccbulk::face_velocity(7), k, j, i);

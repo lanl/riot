@@ -22,6 +22,7 @@
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 #include <parthenon/package.hpp>
 #include <utils/error_checking.hpp>
@@ -68,6 +69,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       bulkscalars.insert(label);
     } else {
       int matid = pin->GetInteger(name, "matid");
+      PARTHENON_REQUIRE(matid != Void::MatidFromInput(pin),
+                        "Scalar var " + label + " cannot be tied to the void");
       if (bulkscalars.count(label) > 0) {
         PARTHENON_THROW("Scalar var " + label +
                         " registered as both bulk- and mass-tied");

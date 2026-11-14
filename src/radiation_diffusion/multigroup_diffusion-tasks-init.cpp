@@ -139,8 +139,12 @@ parthenon::TaskStatus MultiGroupTasks<temperature>::InitializeRadiationQuantitie
 
         idx_range.TeamBarrier();
         auto dtcv = make_var_view(idx_range, pack_base, dTc());
-        RiotLoop::inner(idx_range,
-                        [&](const auto kji) { dtcv(kji) = -RT(kji) / denom(kji); });
+        // A cell with no heat capacity and no absorption (pure void) is decoupled from
+        // the radiation: every term divided by denom vanishes there
+        RiotLoop::inner(idx_range, [&](const auto kji) {
+          if (denom(kji) == 0.0) denom(kji) = 1.0;
+          dtcv(kji) = -RT(kji) / denom(kji);
+        });
 
         // Caculate the RHS and the local part of the matrix diagonal
         idx_range.TeamBarrier();

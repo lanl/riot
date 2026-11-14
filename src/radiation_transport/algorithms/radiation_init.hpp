@@ -72,6 +72,7 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   const auto &opac_a = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacA>>("d.d.opac_a");
   const auto &opac_s = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacS>>("d.d.opac_s");
   const auto &opac_from_matid = mat_pkg->Param<ParArray1D<int>>("d.opac_from_matid");
+  const int void_matid = Void::GetParams(pm).matid; // the void is transparent
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
@@ -90,6 +91,7 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
               const Real &rhobarm = v(b, ccmat::rho(m), k, j, i);
               const Real &vfracm = v(b, ccmat::volume_fraction(m), k, j, i);
               const int &mat_id = v(b, ccmat::rho(m)).sparse_id;
+              if (mat_id == void_matid) continue;
               const int &phase_id = v(b, ccmat::rho(m)).v;
               const int opac_id = opac_from_matid(mat_id) + phase_id;
               const auto &oam = opac_a(opac_id);

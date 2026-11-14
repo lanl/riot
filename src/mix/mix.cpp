@@ -24,6 +24,7 @@
 #include "mix.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using parthenon::ParArray1D;
 
@@ -496,6 +497,7 @@ void ComputeViscousFluxesAlongDir(MeshData<Real> *md, const VPack &v,
                           RiotLoop::halo::minus_k_t>>;
   RiotLoop::AddPerPointScratch<Real, halo>(idx_space, 4); // tke, mu_t, mass_fraction, Q
   const auto delta = idx_space.GetDelta(DIR);
+  const int void_matid = Void::GetParams(md->GetParentPointer()).matid;
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -542,6 +544,9 @@ void ComputeViscousFluxesAlongDir(MeshData<Real> *md, const VPack &v,
           // Per-material (sparse) fields are read through a sparse pack view bound to
           // material slot m; the bulk (non-sparse) fields stay on pv.
           auto pvm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+          // The void's tracer mass and zero enthalpy do not diffuse
+          const Real c_m =
+              (v(b, ccmat::rho(m)).sparse_id == void_matid) ? 0.0 : 1.0 / bhr.sigma_c();
 
           // Mass fraction = partial density / bulk density (assumes bulk density > 0).
           RiotLoop::inner(halo_range, [&](const auto kji) {
@@ -550,10 +555,9 @@ void ComputeViscousFluxesAlongDir(MeshData<Real> *md, const VPack &v,
           idx_range.TeamBarrier();
 
           // Diffusive material mass flux -> fm::diffusive_fluxes face state field.
-          diff_flux(mass_fraction, mu_t, 1.0 / bhr.sigma_c(),
-                    [&](const auto kji) -> Real & {
-                      return pvm(face, fm::diffusive_fluxes(), kji);
-                    });
+          diff_flux(mass_fraction, mu_t, c_m, [&](const auto kji) -> Real & {
+            return pvm(face, fm::diffusive_fluxes(), kji);
+          });
           idx_range.TeamBarrier();
 
           // Specific enthalpy h = sie + p/rho uses the intrinsic density.
@@ -567,7 +571,7 @@ void ComputeViscousFluxesAlongDir(MeshData<Real> *md, const VPack &v,
 
           // Enthalpy component of the energy flux: the diffused quantity is the mass
           // fraction and the face coefficient is Q (which already carries mu_t).
-          diff_flux(mass_fraction, Q, 1.0 / bhr.sigma_c(), [&](const auto kji) -> Real & {
+          diff_flux(mass_fraction, Q, c_m, [&](const auto kji) -> Real & {
             return fv(ccbulk::total_material_energy(), kji);
           });
           idx_range.TeamBarrier();

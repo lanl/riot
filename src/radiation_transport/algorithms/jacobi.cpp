@@ -804,6 +804,7 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
     opac_s = mat_pkg->Param<ParArray1D<RiotOpacity::MeanOpacS>>("d.d.opac_s");
     opac_from_matid = mat_pkg->Param<ParArray1D<int>>("d.opac_from_matid");
   }
+  const int void_matid = Void::GetParams(pm).matid; // the void is transparent
 
   // Packing
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -835,6 +836,7 @@ TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase) {
                 const Real &rhobarm = vu(b, ccmat::rho(m), k, j, i);
                 const Real &vfracm = vu(b, ccmat::volume_fraction(m), k, j, i);
                 const int &mat_id = vu(b, ccmat::rho(m)).sparse_id;
+                if (mat_id == void_matid) continue;
                 const int &phase_id = vu(b, ccmat::rho(m)).v;
                 const int opac_id = opac_from_matid(mat_id) + phase_id;
                 const auto &oam = opac_a(opac_id);
@@ -1026,6 +1028,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   auto &mat_pkg = pm->packages.Get("materials");
   const auto &eos = mat_pkg->Param<parthenon::ParArray1D<RiotEOS::EOS>>("d.d.EOS");
   const auto &eos_map = mat_pkg->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
+  const auto vp = Void::GetParams(pm);
 
   // Packing
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -1035,8 +1038,9 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   static auto desc_b =
       MakePackDescriptor<ccrad::aa, ccrad::ss, ccrad::s1, ccrad::s2, ccrad::s3,
                          ccrad::temperature>(resolved_pkgs.get());
-  static auto desc_u = MakePackDescriptor<ccmat::rho, cm::rho, ccbulk::temperature,
-                                          ccbulk::internal_energy>(resolved_pkgs.get());
+  static auto desc_u =
+      MakePackDescriptor<ccmat::rho, ccmat::volume_fraction, cm::rho, ccbulk::temperature,
+                         ccbulk::internal_energy>(resolved_pkgs.get());
   static auto desc_o = MakePackDescriptor<ccrad::intensity>(resolved_pkgs.get());
   auto vb = desc_b.GetPack(rbase);
   auto vu = desc_u.GetPack(ubase);
@@ -1092,7 +1096,8 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
         const bool success =
             (fixed_temp_rhs ||
              AdvancedTemperature(troot, tbase, verbose, tflr, root_utils, unit_utils, cdt,
-                                 ngroups, fbnd, vb, nmat1, eos, eos_map, vu, b, k, j, i));
+                                 ngroups, fbnd, vb, nmat1, eos, eos_map, vp, vu, b, k, j,
+                                 i));
         tadv = (success) ? troot : tbase;
 
         // Update the specific intensity

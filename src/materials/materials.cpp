@@ -45,11 +45,35 @@
 #include "microphysics/strength_models.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 namespace Materials {
 
 template <typename T>
 using ParArrayHost1D = typename parthenon::ParArray1D<T>::HostMirror;
+
+//----------------------------------------------------------------------------------------
+//! \fn  Real Materials::SumPteStat
+//! \brief Sum of a PTE statistics field over the interior cells on this rank
+template <typename T>
+Real SumPteStat(MeshData<Real> *md) {
+  auto pm = md->GetParentPointer();
+  static auto desc = parthenon::MakePackDescriptor<T>(pm->resolved_packages.get());
+  auto v = desc.GetPack(md);
+  const auto ib = md->GetBoundsI(IndexDomain::interior);
+  const auto jb = md->GetBoundsJ(IndexDomain::interior);
+  const auto kb = md->GetBoundsK(IndexDomain::interior);
+
+  Real sum = 0.0;
+  parthenon::par_reduce(
+      parthenon::loop_pattern_mdrange_tag, "Sum a PTE statistic on this rank",
+      DevExecSpace(), 0, v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
+      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &ls) {
+        ls += v(b, T(), k, j, i);
+      },
+      Kokkos::Sum<Real>(sum));
+  return sum;
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn  std::shared_ptr<StateDescriptor> Materials::Initialize
@@ -70,6 +94,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   auto materials = std::make_shared<StateDescriptor>("materials");
   Params &params = materials->AllParams();
+  Void::SetPlaceholderMaterial(pin);
+  const int void_matid = Void::MatidFromInput(pin);
 
   // Material IDs, AMR controls
   std::vector<int> matids;
@@ -417,6 +443,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     AddMatId(matid, phase_size, ccmat_rho, ccmat_volume_fraction, ccmat_internal_energy,
              cm_rho, cm_sie, cm_internal_energy, cm_temperature, cm_pressure,
              cm_bulk_modulus, cm_cv);
+    // The void is available everywhere, whatever its (tracer) mass: it is allocated on
+    // every block and never deallocated
+    if (matid == void_matid) {
+      auto &md = const_cast<Metadata &>(ccmat_rho.pool().at(matid));
+      md.SetSparseThresholds(-1.0, -1.0, 0.0);
+      md.Set(Metadata::ForceAllocOnNewBlocks);
+    }
 
     // Phases
     // TODO(JMM): Should we remove phase_rho_sum? It could be scratch var, but it's kind
@@ -937,7 +970,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                              "Output diagnostic statistics on PTE solver successes, "
                              "failures, iteration count, etc.");
     if (track_pte_statistics) {
-      std::string pte_stats_mode = pin->GetOrAddString(
+      pte_stats_mode = pin->GetOrAddString(
           "materials", "pte_stats_mode", "averaged_light",
           {"instantaneous", "averaged", "averaged_light"},
           "Only active if track_pte_statistics=true. instantaneous is whatever the last "
@@ -965,6 +998,21 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         materials->AddField<diag::pte_avg_nbackups>(m);
         materials->AddField<diag::pte_fail_fraction>(m);
       }
+
+      // Sums over all cells for history output (with instantaneous, pte_ncalls is the
+      // number of mixed cells in the last PTE call)
+      auto HstSum = parthenon::UserHistoryOperation::sum;
+      using parthenon::HistoryOutputVar;
+      parthenon::HstVar_list hst_vars = {};
+      hst_vars.emplace_back(
+          HistoryOutputVar(HstSum, SumPteStat<diag::pte_niter>, "pte_niter"));
+      hst_vars.emplace_back(
+          HistoryOutputVar(HstSum, SumPteStat<diag::pte_ncalls>, "pte_ncalls"));
+      hst_vars.emplace_back(
+          HistoryOutputVar(HstSum, SumPteStat<diag::pte_nfails>, "pte_nfails"));
+      hst_vars.emplace_back(
+          HistoryOutputVar(HstSum, SumPteStat<diag::pte_nbackups>, "pte_nbackups"));
+      materials->AddParam<>(parthenon::hist_param_key, hst_vars);
     }
 
     // Singularity PTE controls/tolerances

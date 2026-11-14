@@ -37,6 +37,7 @@
 #include "riot_utils/riot_loops.hpp"
 #include "riot_utils/riot_utils.hpp"
 #include "riot_utils/sparse_update.hpp"
+#include "void/void.hpp"
 
 using namespace parthenon::package::prelude;
 using parthenon::IndexSplit;
@@ -531,6 +532,7 @@ TaskStatus GuessCellVolumeFractions(MeshData<Real> *md) {
   const auto &eos_from_matid =
       materials->Param<parthenon::ParArray1D<int>>("d.EOS_from_matid");
   const bool do_ionization = riot->Param<bool>("do_ionization");
+  const int void_matid = Void::GetParams(pm).matid;
 
   auto v = riot::MakePack<ccmat::rho, ccmat::volume_fraction, cm::rho, ccbulk::pressure,
                           ccbulk::electron_pressure, ccbulk::temperature, cm::lr_cache,
@@ -594,6 +596,9 @@ TaskStatus GuessCellVolumeFractions(MeshData<Real> *md) {
               if (rho_max(kji) > 0.0) {
                 pvm(ccmat::volume_fraction(), kji) =
                     pvm(ccmat::rho(), kji) / (rho_max(kji) + 1.e-30);
+              } else if (mat_id == void_matid) {
+                // The void has no EOS; the closure sets its volume fraction
+                pvm(ccmat::volume_fraction(), kji) = 1.0;
               } else {
                 Real P = pv(ccbulk::pressure(), kji);
                 // NOTE(JMM): ccbulk_pressure is TOTAL pressure, but only ions

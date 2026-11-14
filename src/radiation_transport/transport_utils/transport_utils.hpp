@@ -44,6 +44,7 @@
 #include "radiation_transport/angular_grids/angular_grid_utils.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 // Curvilinear geometry?
 static constexpr bool do_angular_fluxes =
@@ -532,19 +533,26 @@ EmissivityDT(const int gg, const Real temp, const parthenon::ParArray1D<Real> fb
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real InternalEnergy
-//! \brief Computes bulk material energy from material densities and material sies
+//! \brief Computes bulk material energy from material densities and material sies. The
+//! void has energy density -p_void alpha_V, independent of the temperature.
 template <typename EOS, typename EOSMAP, typename V1>
 KOKKOS_FORCEINLINE_FUNCTION static Real
 InternalEnergy(const Real temp, const int nm1, const EOS eos, const EOSMAP map,
-               const V1 vu, const int b, const int k, const int j, const int i) {
+               const Void::Params &vp, const V1 vu, const int b, const int k, const int j,
+               const int i) {
   namespace cm = cell_variables::material_averaged;
   namespace ccmat = cell_variables::cell_averaged::mat;
 
   Real ubulk = 0.0;
   for (int m = 0; m <= nm1; ++m) {
+    const int mat_id = vu(b, ccmat::rho(m)).sparse_id;
+    if (mat_id == vp.matid) {
+      ubulk -= vp.pressure * vu(b, ccmat::volume_fraction(m), k, j, i);
+      continue;
+    }
     const Real &rhom = vu(b, cm::rho(m), k, j, i);
     const Real &rhob = vu(b, ccmat::rho(m), k, j, i);
-    auto &eosm = eos(map(vu(b, ccmat::rho(m)).sparse_id));
+    auto &eosm = eos(map(mat_id));
     ubulk += rhob * eosm.InternalEnergyFromDensityTemperature(rhom, temp);
   }
   return ubulk;
@@ -573,7 +581,8 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
          // Radiation
          const int ngroups, const parthenon::ParArray1D<Real> fbnd, const V1 vr,
          // Fluid
-         const int nm1, const EOS eos, const EOSMAP map, const V2 vu,
+         const int nm1, const EOS eos, const EOSMAP map, const Void::Params &vp,
+         const V2 vu,
          // Indexing
          const int b, const int k, const int j, const int i) {
   namespace ccrad = cell_variables::cell_averaged::rad;
@@ -589,7 +598,7 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
     absr += cdtsiga * aa2 * aa3;
     emis += ee * cdtsiga * (1.0 - aa1 * aa3);
   }
-  const Real cc = InternalEnergy(tp1, nm1, eos, map, vu, b, k, j, i);
+  const Real cc = InternalEnergy(tp1, nm1, eos, map, vp, vu, b, k, j, i);
 
   RootResidual rr;
   rr.res = absr - emis + ubulk - cc;
@@ -602,17 +611,16 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
 //! \fn  Real AdvancedTemperature
 //! \brief Computes advanced temperature for radiation source term
 template <bool jacobi = true, typename V1, typename EOS, typename EOSMAP, typename V2>
-KOKKOS_FORCEINLINE_FUNCTION static bool
-AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Real &tflr,
-                    // Utils and timestep
-                    const RootUtils ru, const UnitUtils uu, const Real cdt,
-                    // Radiation
-                    const int ngroups, const parthenon::ParArray1D<Real> fbnd,
-                    const V1 vr,
-                    // Fluid
-                    const int nm1, const EOS eos, const EOSMAP map, const V2 vu,
-                    // Indexing
-                    const int b, const int k, const int j, const int i) {
+KOKKOS_FORCEINLINE_FUNCTION static bool AdvancedTemperature(
+    Real &temp, const Real &tbase, const bool &verbose, const Real &tflr,
+    // Utils and timestep
+    const RootUtils ru, const UnitUtils uu, const Real cdt,
+    // Radiation
+    const int ngroups, const parthenon::ParArray1D<Real> fbnd, const V1 vr,
+    // Fluid
+    const int nm1, const EOS eos, const EOSMAP map, const Void::Params &vp, const V2 vu,
+    // Indexing
+    const int b, const int k, const int j, const int i) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
 
   // Internal energy at T^m
@@ -621,12 +629,13 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
   if constexpr (jacobi) {
     ubase = vu_(b, ccbulk::internal_energy(), k, j, i);
   } else {
-    ubase = InternalEnergy(tbase, nm1, eos, map, vu, b, k, j, i);
+    ubase = InternalEnergy(tbase, nm1, eos, map, vp, vu, b, k, j, i);
   }
 
   // Residual at temperature tt
   auto residual = [&](const Real tt) -> RootResidual {
-    return PolyRoot(tt, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
+    return PolyRoot(tt, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vp, vu, b, k, j,
+                    i);
   };
 
   // Convergence test

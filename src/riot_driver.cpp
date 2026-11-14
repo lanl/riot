@@ -50,6 +50,7 @@
 #include "tnburn/tnburn.hpp"
 #include "tracers/tracers.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using namespace parthenon::driver::prelude;
 
@@ -174,6 +175,13 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
 
   sparse_dealloc = riot_pkg->Param<bool>("sparse_dealloc");
   use_general_pte = (do_hydro) ? mat_pkg->Param<bool>("use_general_pte") : false;
+
+  // block costs count PTE iterations when they are reset every call (instantaneous)
+  lb_pte_cost = use_general_pte && mat_pkg->Param<bool>("pte_stats_reset_fields");
+  lb_pte_weight = pin->GetOrAddReal(
+      "riot", "lb_pte_weight", 0.1,
+      "Load balancing cost of one PTE iteration per cell, relative to a single material "
+      "cell. Only used with materials/pte_stats_mode=instantaneous");
 }
 
 //----------------------------------------------------------------------------------------
@@ -509,15 +517,53 @@ TaskStatus RiotDriver::SetBlockCosts(MeshData<Real> *md) {
   if (!(do_hydro)) return TaskStatus::complete;
   const auto &all_mats =
       pmesh->packages.Get("materials")->Param<std::vector<std::string>>("all_mats");
-  for (int b = 0; b < md->NumBlocks(); b++) {
+  const int nblocks = md->NumBlocks();
+
+  // mean PTE iterations per cell of each block, from the last PTE call
+  parthenon::ParArray1D<Real> pte_niter("block mean pte_niter", nblocks);
+  if (lb_pte_cost) {
+    static auto desc =
+        parthenon::MakePackDescriptor<diag::pte_niter>(pmesh->resolved_packages.get());
+    auto v = desc.GetPack(md);
+    const auto ib = md->GetBoundsI(IndexDomain::interior);
+    const auto jb = md->GetBoundsJ(IndexDomain::interior);
+    const auto kb = md->GetBoundsK(IndexDomain::interior);
+    const int is = ib.s, js = jb.s, ks = kb.s;
+    const int ni = ib.e - ib.s + 1, nj = jb.e - jb.s + 1, nk = kb.e - kb.s + 1;
+    const int ncells = ni * nj * nk;
+    parthenon::par_for_outer(
+        PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
+        KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
+          Real sum = 0.0;
+          Kokkos::parallel_reduce(
+              Kokkos::TeamThreadRange(member, ncells),
+              [&](const int n, Real &s) {
+                const int k = ks + n / (ni * nj);
+                const int j = js + (n / ni) % nj;
+                const int i = is + n % ni;
+                s += v(b, diag::pte_niter(), k, j, i);
+              },
+              sum);
+          Kokkos::single(Kokkos::PerTeam(member),
+                         [&]() { pte_niter(b) = sum / ncells; });
+        });
+  }
+  auto pte_niter_h = pte_niter.GetHostMirrorAndCopy();
+
+  // The void is allocated on every block, but has no EOS or PTE: it is not counted
+  const int void_matid = Void::GetParams(pmesh).matid;
+  const std::string void_mat =
+      parthenon::MakeVarLabel(cell_variables::cell_averaged::mat::rho::name(), void_matid);
+
+  for (int b = 0; b < nblocks; b++) {
     auto &mbd = md->GetBlockData(b);
     int nmats = 0;
     for (const auto &mat : all_mats) {
-      nmats += mbd->IsAllocated(mat);
+      nmats += (mat != void_mat) && mbd->IsAllocated(mat);
     }
-    // empirical cost model
+    // empirical cost model, plus the PTE iterations if they are tracked
     auto pmb = mbd->GetBlockPointer();
-    pmb->SetCostForLoadBalancing(1.0); // BlockCost(nmats));
+    pmb->SetCostForLoadBalancing(BlockCost(nmats) + lb_pte_weight * pte_niter_h(b));
   }
 
   return TaskStatus::complete;

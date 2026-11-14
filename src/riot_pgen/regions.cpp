@@ -94,7 +94,12 @@ Region::Region(ParameterInput *pin, const std::string &block, const int id,
   set_bulk_init_funcs<ccbulk::velocity>(bulk_state, pin, block, py, default_py);
 
   // and set the init_type using the map
+  const int void_matid = Void::MatidFromInput(pin);
   for (auto mid : matid) {
+    if (mid == void_matid) {
+      init_type[mid] = InitType::Void;
+      continue;
+    }
     try {
       init_type[mid] = init_type_map.at(init_string[mid]);
     } catch (...) {
@@ -245,6 +250,7 @@ BlockInitData::BlockInitData(ParameterInput *pin)
               (kb[state].e - kb[state].s + 1);
   do_3t = pin->GetBoolean("physics", "ionization");
   if (do_3t) fully_ionized = pin->GetBoolean("ionization", "fully_ionized");
+  void_params = Void::ParamsFromInput(pin);
 }
 
 //----------------------------------------------------------------------------------------
@@ -342,6 +348,23 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
       }
     }
     pmb->DeallocateSparse(rho_mat_name);
+  }
+
+  // The void is allocated on every block (zero until a region sets it)
+  const int void_matid = void_params.matid;
+  if (void_matid >= 0) {
+    const std::string rho_mat_name = var_name<ccmat::rho>({void_matid});
+    pmb->AllocateSparse(rho_mat_name);
+    var_mirror_map[rho_mat_name] = var_map[rho_mat_name]->data.GetHostMirror();
+    for (auto &cvar : mat_tied_mirror_vars[void_matid]) {
+      var_mirror_map[cvar] = var_map[cvar]->data.GetHostMirror();
+    }
+    auto rho = var_mirror_map[rho_mat_name];
+    auto vfrac = var_mirror_map[var_name<ccmat::volume_fraction>({void_matid})];
+    block_loop<state>([&](const int k, const int j, const int i) {
+      rho(0, k, j, i) = 0.0;
+      vfrac(0, k, j, i) = 0.0;
+    });
   }
 
   // mark cells that lie cleanly within a single region

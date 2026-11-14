@@ -34,6 +34,7 @@
 #include "self_gravity/poisson_equation.hpp"
 #include "self_gravity/self_gravity.hpp"
 #include "variables.hpp"
+#include "void/void.hpp"
 
 using namespace parthenon::package::prelude;
 
@@ -41,6 +42,14 @@ namespace SelfGravity {
 
 using parthenon::BoundaryFunction::BCSide;
 using parthenon::BoundaryFunction::BCType;
+
+// The potential is global: pack every block, including those riot::MakePack skips as
+// inactive under sparse_physics
+template <typename... Vars>
+auto MakeGlobalPack(MeshData<Real> *md) {
+  static auto desc = riot::MakePackDescriptor<Vars...>(md);
+  return desc.GetPack(md);
+}
 
 // Homogeneous Dirichlet (phi = 0 on the domain face)
 template <parthenon::CoordinateDirection DIR, BCSide SIDE>
@@ -224,16 +233,17 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus SelfGravity::FillPoissonRHS
 //! \brief Sets the RHS of the Poisson equation, 4 pi G rho, in the solver RHS container,
-//! where rho is the summed (non-inert) material density
+//! where rho is the summed material density (excluding the inert material and the void)
 TaskStatus FillPoissonRHS(MeshData<Real> *md_base, MeshData<Real> *md_rhs) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   auto pm = md_base->GetParentPointer();
   auto &sg = pm->packages.Get("self_gravity");
   const Real four_pi_G = sg->Param<Real>("four_pi_G");
   const int inert = sg->Param<int>("inert_matid");
+  const int void_matid = Void::GetParams(pm).matid;
 
-  auto vmat = riot::MakePack<ccmat::rho>(md_base);
-  auto vrhs = riot::MakePack<phi>(md_rhs);
+  auto vmat = MakeGlobalPack<ccmat::rho>(md_base);
+  auto vrhs = MakeGlobalPack<phi>(md_rhs);
   const int nblocks = vmat.GetNBlocks();
   if ((nblocks != vrhs.GetNBlocks()) || (nblocks == 0)) return TaskStatus::complete;
 
@@ -246,7 +256,8 @@ TaskStatus FillPoissonRHS(MeshData<Real> *md_base, MeshData<Real> *md_rhs) {
         RiotLoop::inner(idx_range, [&](const auto kji) { pv_rhs(phi(), kji) = 0.0; });
         const int nmat = vmat.GetSize(b, ccmat::rho());
         for (int m = 0; m < nmat; m++) {
-          if (vmat(b, ccmat::rho(m)).sparse_id == inert) continue;
+          const int sid = vmat(b, ccmat::rho(m)).sparse_id;
+          if (sid == inert || sid == void_matid) continue;
           idx_range.TeamBarrier();
           auto pv_m = RiotLoop::make_sparse_pack_view(idx_range, vmat, m);
           RiotLoop::inner(idx_range, [&](const auto kji) {
@@ -271,8 +282,8 @@ TaskStatus ExtrapolateGuess(MeshData<Real> *md_base, MeshData<Real> *md_u,
   const bool valid = (hist.nsolves >= 2) && (hist.dtime > 0.0);
   const Real w = valid ? (stage_time - hist.time) / hist.dtime : 0.0;
 
-  auto vbase = riot::MakePack<phi, phi_step, phi_dstep>(md_base);
-  auto vu = riot::MakePack<phi>(md_u);
+  auto vbase = MakeGlobalPack<phi, phi_step, phi_dstep>(md_base);
+  auto vu = MakeGlobalPack<phi>(md_u);
   const int nblocks = vbase.GetNBlocks();
   if ((nblocks != vu.GetNBlocks()) || (nblocks == 0)) return TaskStatus::complete;
 
@@ -298,7 +309,7 @@ TaskStatus ExtrapolateGuess(MeshData<Real> *md_base, MeshData<Real> *md_u,
 //! \brief Records a new stage 1 potential, phi_dstep = phi - phi_step and phi_step = phi.
 //! The times in GuessHistory are updated separately, once per rank.
 TaskStatus UpdateGuessHistory(MeshData<Real> *md_base) {
-  auto vbase = riot::MakePack<phi, phi_step, phi_dstep>(md_base);
+  auto vbase = MakeGlobalPack<phi, phi_step, phi_dstep>(md_base);
   const int nblocks = vbase.GetNBlocks();
   if (nblocks == 0) return TaskStatus::complete;
 
@@ -335,6 +346,7 @@ TaskStatus CalculateSelfGravitySource(MeshData<Real> *state, MeshData<Real> *bas
   const int ndim = state->GetParentPointer()->ndim;
   const int inert =
       state->GetParentPointer()->packages.Get("self_gravity")->Param<int>("inert_matid");
+  const int void_matid = Void::GetParams(state->GetParentPointer()).matid;
 
   // Pack up material densities (with their mass fluxes) and the potential
   auto vflx = riot::MakePack<ccmat::rho>(
@@ -374,10 +386,11 @@ TaskStatus CalculateSelfGravitySource(MeshData<Real> *state, MeshData<Real> *bas
         });
         idx_range.TeamBarrier();
 
-        // The inert material neither feels gravity nor does work against it
+        // The inert material and the void neither feel gravity nor do work against it
         const int nmat = vflx.GetSize(b, ccmat::rho());
         for (int m = 0; m < nmat; m++) {
-          if (vflx(b, ccmat::rho(m)).sparse_id == inert) continue;
+          const int sid = vflx(b, ccmat::rho(m)).sparse_id;
+          if (sid == inert || sid == void_matid) continue;
 
           // Momentum source: the material density times the centered potential gradient
           auto pv_m = RiotLoop::make_sparse_pack_view(idx_range, vflx, m);
