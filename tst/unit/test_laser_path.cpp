@@ -70,9 +70,9 @@ struct MockCell {
   }
 };
 
-constexpr Real kLambda = 5.3e-5;              // cm, 530 nm
-constexpr Real kLight = 2.99792458e10;        // cm/s
-constexpr Real kCell = 1.0e-2;                // cm
+constexpr Real kLambda = 5.3e-5;       // cm, 530 nm
+constexpr Real kLight = 2.99792458e10; // cm/s
+constexpr Real kCell = 1.0e-2;         // cm
 
 // Gradient of n_e that changes (speed)^2 of a ray by `dv2_over_c2` * c^2 across a cell of
 // width kCell. In the code, the ray acceleration is a = -(c^2 / 2) grad(n_e) / n_crit
@@ -118,8 +118,8 @@ TEST_CASE("ParticlePusher path length is the distance travelled, with a force",
   // Ray entering a cell with n_e rising (decelerates) and falling (accelerates), and
   // leaving through either face.
   struct Case {
-    Real dv2;     // change of v^2 over the cell in units of c^2 (sign of acceleration)
-    Real v0;      // entry speed in units of c
+    Real dv2; // change of v^2 over the cell in units of c^2 (sign of acceleration)
+    Real v0;  // entry speed in units of c
     bool rightward;
   };
   const Case cases[] = {
@@ -153,8 +153,8 @@ TEST_CASE("ParticlePusher path length is the distance travelled, with a force",
 TEST_CASE("ParticlePusher path lengths of adjacent cells add up", "[laser][pusher]") {
   if (!parthenon::IsCoord<parthenon::UniformCartesian>())
     SKIP("These tests use a Cartesian mock cell");
-  // Cross a region of width 2 * kCell as two cells with the same gradient. The summed path
-  // must be 2 * kCell regardless of the split.
+  // Cross a region of width 2 * kCell as two cells with the same gradient. The summed
+  // path must be 2 * kCell regardless of the split.
   const Real g = gradient_for(0.1);
   Real total = 0.0;
   auto lp = make_ray(0.0, 0.7 * kLight);
