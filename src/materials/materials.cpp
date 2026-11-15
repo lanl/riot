@@ -220,7 +220,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto ccmat_internal_energy = SparsePool::Make<ccmat::internal_energy>(m, control_field);
 
   // Material-volume-averaged Density, Specific and Volumetric Internal Energy
-  auto cm_rho = SparsePool::Make<cm::rho>(m, control_field);
+  // (cm::rho is prolongated on remesh, so the volume fraction guess has a density)
+  auto m_cm_rho = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Sparse,
+                            Metadata::Derived, Metadata::OneCopy, Metadata::FillGhost,
+                            Metadata::ForceRemeshComm});
+  m_cm_rho.SetSparseThresholds(0.0, 0.0, 0.0);
+  auto cm_rho = SparsePool::Make<cm::rho>(m_cm_rho, control_field);
   auto cm_sie = SparsePool::Make<cm::sie>(m, control_field);
   auto cm_internal_energy = SparsePool::Make<cm::internal_energy>(m, control_field);
 
