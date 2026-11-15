@@ -62,46 +62,61 @@ void FillInteriorDerived(MeshData<Real> *md) {
   auto materials = pm->packages.Get("materials");
   const bool do_ionization = riot->Param<bool>("do_ionization");
   const bool use_general_pte = materials->Param<bool>("use_general_pte");
+  const auto void_params = Void::GetParams(pm);
+  const int void_matid = void_params.matid;
 
-  auto v = riot::MakePack<ccmat::rho, ccbulk::rho, ccbulk::momentum, ccbulk::velocity,
-                          ccbulk::total_material_energy, ccbulk::internal_energy,
-                          ccbulk::electron_internal_energy, ccbulk::pressure,
-                          ccbulk::electron_pressure, ccmat::ionization_zbar,
-                          cm::ionization_zbar>(md);
+  auto v =
+      riot::MakePack<ccmat::rho, ccmat::volume_fraction, ccbulk::rho, ccbulk::momentum,
+                     ccbulk::velocity, ccbulk::total_material_energy,
+                     ccbulk::internal_energy, ccbulk::electron_internal_energy,
+                     ccbulk::pressure, ccbulk::electron_pressure, ccmat::ionization_zbar,
+                     cm::ionization_zbar>(md);
 
   if (v.GetNBlocks() == 0) return;
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
+  idx_space.template AddPerPointScratch<Real>(1);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
+        auto rho_matter = RiotLoop::GetPerPointScratch<Real>(idx_range);
         const int nummat = v.GetSize(b, ccmat::rho());
 
-        // Compute bulk density (flooring material densities)
+        // Compute bulk density (flooring material densities) and the density of the
+        // materials other than the void
         for (int m = 0; m < nummat; ++m) {
           auto pv_sp = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+          const bool is_void = (v(b, ccmat::rho(m)).sparse_id == void_matid);
           RiotLoop::inner(idx_range, [&](const auto kji) {
-            pv(ccbulk::rho(), kji) =
-                (m == 0)
-                    ? std::max(pv_sp(ccmat::rho(), kji), 0.0)
-                    : pv(ccbulk::rho(), kji) + std::max(pv_sp(ccmat::rho(), kji), 0.0);
+            const Real rho_m = std::max(pv_sp(ccmat::rho(), kji), 0.0);
+            pv(ccbulk::rho(), kji) = (m == 0) ? rho_m : pv(ccbulk::rho(), kji) + rho_m;
+            rho_matter(kji) =
+                ((m == 0) ? 0.0 : rho_matter(kji)) + (is_void ? 0.0 : rho_m);
           });
           idx_range.TeamBarrier();
         }
 
-        // Calculate bulk velocity from conserved bulk momentum and bulk internal energy
+        // Calculate bulk velocity from conserved bulk momentum and bulk internal energy.
+        // Trace-matter cells are frozen before the ghost exchange: their m is round-off.
+        const int iv = Void::SliceIndex<ccmat::rho>(v, b, nummat, void_matid);
+        auto pv_void = RiotLoop::make_sparse_pack_view(idx_range, v, std::max(iv, 0));
         RiotLoop::inner(idx_range, [&](const auto kji) {
-          const Real irho = 1.0 / (pv(ccbulk::rho(), kji) + 1.e-100);
-          pv(ccbulk::velocity(0), kji) = pv(ccbulk::momentum(0), kji) * irho;
-          pv(ccbulk::velocity(1), kji) = pv(ccbulk::momentum(1), kji) * irho;
-          pv(ccbulk::velocity(2), kji) = pv(ccbulk::momentum(2), kji) * irho;
-          pv(ccbulk::internal_energy(), kji) =
-              pv(ccbulk::total_material_energy(), kji) -
-              0.5 * pv(ccbulk::rho(), kji) *
-                  (SQR(pv(ccbulk::velocity(0), kji)) + SQR(pv(ccbulk::velocity(1), kji)) +
-                   SQR(pv(ccbulk::velocity(2), kji)));
+          if (Void::Frozen(void_params, rho_matter(kji))) {
+            Void::FreezeCell(void_params, pv, pv_void, iv >= 0, kji);
+          } else {
+            const Real irho = 1.0 / (pv(ccbulk::rho(), kji) + 1.e-100);
+            pv(ccbulk::velocity(0), kji) = pv(ccbulk::momentum(0), kji) * irho;
+            pv(ccbulk::velocity(1), kji) = pv(ccbulk::momentum(1), kji) * irho;
+            pv(ccbulk::velocity(2), kji) = pv(ccbulk::momentum(2), kji) * irho;
+            pv(ccbulk::internal_energy(), kji) =
+                pv(ccbulk::total_material_energy(), kji) -
+                0.5 * pv(ccbulk::rho(), kji) *
+                    (SQR(pv(ccbulk::velocity(0), kji)) +
+                     SQR(pv(ccbulk::velocity(1), kji)) +
+                     SQR(pv(ccbulk::velocity(2), kji)));
+          }
         });
 
         if (do_ionization) {
@@ -180,7 +195,6 @@ void PostCommsFillDerived(MeshData<Real> *md) {
   const auto void_params = Void::GetParams(pm);
   const int void_matid = void_params.matid;
   const Real p_void = void_params.pressure;
-  const bool freeze = void_params.freeze;
   // Under self-gravity, matter feels the potential of the whole mesh: keep the blocks
   // holding it active (only blocks of pure void, which is static, go inactive)
   const bool keep_matter_active =
@@ -356,10 +370,10 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           idx_range.TeamBarrier();
         }
 
-        // Ensure consistency b/w masked fields and other relevant fields. A pure-void
-        // cell (after the masking, also in the ghost zones) is at rest.
+        // Ensure consistency b/w masked fields and other relevant fields. Trace-matter
+        // cells (after masking, ghosts included) are at rest.
         RiotLoop::inner(idx_range, [&](const auto kji) {
-          if (freeze && void_matid >= 0 && !(vfrac_sum(kji) > 0.0)) {
+          if (Void::Frozen(void_params, vfrac_sum(kji))) {
             for (int d = 0; d < 3; d++) {
               pv(ccbulk::velocity(d), kji) = 0.0;
             }

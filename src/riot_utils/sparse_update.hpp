@@ -237,13 +237,17 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
 //! \fn  TaskStatus sparse_update::DeepCopyData
 //! \brief
 //  TODO(@jdolence): do we really want this templated?
-template <typename F, typename T>
+//  all_blocks: also copy inactive blocks
+template <typename F, typename T, bool all_blocks = false>
 TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
   Kokkos::Profiling::pushRegion("Task_DeepCopy");
 
   auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = riot::GetPack(desc, to);
-  const auto &src = riot::GetPack(desc, from);
+  const auto get_pack = [&](T *data) {
+    return all_blocks ? desc.GetPack(data) : riot::GetPack(desc, data);
+  };
+  const auto dst = get_pack(to);
+  const auto src = get_pack(from);
 
   const int nblocks = src.GetNBlocks();
   using lt = RiotUtils::LoopType<>;
@@ -270,7 +274,9 @@ TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
 template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
-  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  // All blocks: a block activated mid-step (on receiving ghost data) reads u1
+  return DeepCopyData<MetadataFlag, T, true>(
+      std::vector<MetadataFlag>({Metadata::Independent}), to, from);
 }
 
 } // namespace sparse_update

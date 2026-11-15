@@ -56,6 +56,9 @@ Params ParamsFromInput(ParameterInput *pin) {
   p.density = pin->GetOrAddReal(block, "density", 1.e-20, "Tracer density of the void");
   p.freeze = pin->GetOrAddBoolean(block, "freeze_pure_void", true,
                                   "Zero the velocity of pure-void cells");
+  p.freeze_rho = pin->GetOrAddReal(
+      block, "freeze_rho", 0.0,
+      "Matter density below which a void-bearing cell is frozen like pure void");
   p.tol = pin->GetOrAddReal(block, "tol", 1.e-8, "Tolerance of the open-void solves");
   p.max_iter =
       pin->GetOrAddInteger(block, "max_iter", 100, "Iteration limit of open-void solves");
@@ -87,6 +90,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                     "The void material must have a single phase");
   PARTHENON_REQUIRE(p.pressure >= 0.0, "void/pressure must be non-negative");
   PARTHENON_REQUIRE(p.density > 0.0, "void/density must be positive");
+  PARTHENON_REQUIRE(p.freeze_rho >= 0.0, "void/freeze_rho must be non-negative");
   pkg->AddParam("params", p);
 
   using parthenon::HistoryOutputVar;

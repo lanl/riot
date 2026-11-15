@@ -14,9 +14,12 @@
 #define VOID_VOID_HPP_
 // This file was made in part with generative AI.
 
+#include <algorithm>
 #include <memory>
 
 #include <parthenon/package.hpp>
+
+#include "variables.hpp"
 
 namespace Void {
 using namespace parthenon::package::prelude;
@@ -33,6 +36,10 @@ struct Params {
   bool freeze = true;    // zero the velocity of pure-void cells
   Real tol = 1.e-8;      // relative tolerance of the open-void solves
   int max_iter = 100;    // iteration limit of the open-void solves
+  // Matter density at or below which a cell is frozen like pure void. Round-off leaves
+  // |m| ~ eps p_void dt/dx, so set it to ~10-100x eps p_void C / S_ref^2 (C the CFL
+  // number, S_ref a lower bound on the fastest signal speed).
+  Real freeze_rho = 0.0;
 };
 
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin);
@@ -60,6 +67,31 @@ KOKKOS_INLINE_FUNCTION int SliceIndex(const V &v, const int b, const int nmat,
     if (v(b, F(m)).sparse_id == matid) return m;
   }
   return -1;
+}
+
+// Whether a cell of matter (non-void) density rho_matter is frozen like pure void
+KOKKOS_INLINE_FUNCTION bool Frozen(const Params &p, const Real rho_matter) {
+  return p.freeze && p.matid >= 0 && !(rho_matter > p.freeze_rho);
+}
+
+// Put a frozen cell at rest, discarding its kinetic energy, at most the energy the matter
+// holds (E - e_void)
+template <typename PV, typename PVV, typename I>
+KOKKOS_INLINE_FUNCTION void FreezeCell(const Params &p, const PV &pv, const PVV &pv_void,
+                                       const bool has_void, const I kji) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  const Real E = pv(ccbulk::total_material_energy(), kji);
+  const Real ke = 0.5 *
+                  (SQR(pv(ccbulk::momentum(0), kji)) + SQR(pv(ccbulk::momentum(1), kji)) +
+                   SQR(pv(ccbulk::momentum(2), kji))) /
+                  (pv(ccbulk::rho(), kji) + 1.e-100);
+  const Real e_void =
+      has_void ? -p.pressure * pv_void(ccmat::volume_fraction(), kji) : 0.0;
+  for (int d = 0; d < 3; d++) {
+    pv(ccbulk::velocity(d), kji) = 0.0;
+  }
+  pv(ccbulk::internal_energy(), kji) = E - std::min(ke, std::max(E - e_void, 0.0));
 }
 
 } // namespace Void
