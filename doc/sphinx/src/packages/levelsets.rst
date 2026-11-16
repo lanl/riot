@@ -88,11 +88,11 @@ The package registers the single advected level-set field in the table below, pl
    * - levelset0
      - :math:`\phi_0`
      - 1
-     - Cell, Independent, Intensive, OneCopy; level set stored at the start of reinitialization.
+     - Cell, Derived, Intensive, OneCopy; level set stored at the start of reinitialization.
    * - dudt_reinitialize
      - :math:`\partial_\tau\phi`
      - 1
-     - Cell, Independent, Intensive, OneCopy; reinitialization right-hand side.
+     - Cell, Derived, Intensive, OneCopy; reinitialization right-hand side.
 
 Example
 -------

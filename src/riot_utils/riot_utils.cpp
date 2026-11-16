@@ -85,6 +85,22 @@ VarNamePairList GetAssociatedVars(MeshBlockData<Real> *bd,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  VarNamePairList RiotUtils::GetPrimitiveAssociatedVars
+//! \brief
+VarNamePairList GetPrimitiveAssociatedVars(MeshData<Real> *md,
+                                           const Metadata::FlagCollection &flags) {
+  auto [flagged_vars, assoc_vars] = GetAssociatedVars(md, flags);
+  std::vector<std::string> conserved_vars, prims_vars;
+  for (int n = 0; n < flagged_vars.size(); n++) {
+    if (flagged_vars[n] != assoc_vars[n]) {
+      conserved_vars.push_back(flagged_vars[n]);
+      prims_vars.push_back(assoc_vars[n]);
+    }
+  }
+  return std::make_pair(conserved_vars, prims_vars);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  std::vector<std::string> RiotUtils::GetUnsplitVarNames
 //! \brief
 std::vector<std::string> GetUnsplitVarNames(Mesh *pmesh) {
