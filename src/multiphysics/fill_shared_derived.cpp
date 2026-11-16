@@ -61,14 +61,20 @@ void FillInteriorDerived(MeshData<Real> *md) {
   auto materials = pm->packages.Get("materials");
   const bool do_ionization = riot->Param<bool>("do_ionization");
   const bool use_general_pte = materials->Param<bool>("use_general_pte");
+  const bool do_mhd = riot->Param<bool>("do_hydro") &&
+                      pm->packages.Get("hydro")->Param<bool>("do_mhd");
 
+  // ccbulk::bcc is only registered with MHD; it is only accessed when do_mhd
   auto v = riot::MakePack<ccmat::rho, ccbulk::rho, ccbulk::momentum, ccbulk::velocity,
                           ccbulk::total_material_energy, ccbulk::internal_energy,
                           ccbulk::electron_internal_energy, ccbulk::pressure,
                           ccbulk::electron_pressure, ccmat::ionization_zbar,
-                          cm::ionization_zbar>(md);
+                          cm::ionization_zbar, ccbulk::bcc>(md);
 
   if (v.GetNBlocks() == 0) return;
+
+  // Cell-centered magnetic field from the (updated) face field
+  if (do_mhd) Hydro::FaceToCellB(md, IndexDomain::interior);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md,
@@ -101,6 +107,11 @@ void FillInteriorDerived(MeshData<Real> *md) {
               0.5 * pv(ccbulk::rho(), kji) *
                   (SQR(pv(ccbulk::velocity(0), kji)) + SQR(pv(ccbulk::velocity(1), kji)) +
                    SQR(pv(ccbulk::velocity(2), kji)));
+          if (do_mhd) {
+            pv(ccbulk::internal_energy(), kji) -=
+                0.5 * (SQR(pv(ccbulk::bcc(0), kji)) + SQR(pv(ccbulk::bcc(1), kji)) +
+                       SQR(pv(ccbulk::bcc(2), kji)));
+          }
         });
 
         if (do_ionization) {
@@ -176,6 +187,13 @@ void PostCommsFillDerived(MeshData<Real> *md) {
   auto &hydro = pm->packages.Get("hydro");
   const Real mass_frac_thresh = hydro->Param<Real>("mass_frac_thresh");
   const Real vol_frac_thresh = hydro->Param<Real>("vol_frac_thresh");
+  const bool do_mhd = hydro->Param<bool>("do_mhd");
+
+  // Cell-centered magnetic field over the entire domain from the communicated face field
+  if (do_mhd) {
+    Hydro::FaceToCellB(md, IndexDomain::entire);
+    Hydro::CalculateDivB(md);
+  }
 
   auto v =
       riot::MakePack<ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
@@ -187,8 +205,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                      ccbulk::bulk_modulus, ccbulk::temperature,
                      ccbulk::electron_internal_energy, ccbulk::electron_temperature,
                      ccbulk::electron_pressure, ccbulk::electron_number_density,
-                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter>(
-          md);
+                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter,
+                     ccbulk::bcc>(md);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
@@ -332,6 +350,11 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                            SQR(pv(ccbulk::velocity(2), kji));
           pv(ccbulk::total_material_energy(), kji) =
               pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq;
+          if (do_mhd) {
+            pv(ccbulk::total_material_energy(), kji) +=
+                0.5 * (SQR(pv(ccbulk::bcc(0), kji)) + SQR(pv(ccbulk::bcc(1), kji)) +
+                       SQR(pv(ccbulk::bcc(2), kji)));
+          }
         });
       });
 

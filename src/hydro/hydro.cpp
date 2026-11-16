@@ -57,6 +57,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   Params &params = hydro->AllParams();
 
   const bool do_ionization = pin->GetOrAddBoolean("physics", "ionization", false);
+  const bool do_mhd = pin->GetOrAddBoolean(
+      "hydro", "mhd", false, "Evolve the ideal MHD equations with constrained transport");
+  params.Add("do_mhd", do_mhd);
   bool do_plasma_viscosity = false;
   if (do_ionization) {
     do_plasma_viscosity = pin->GetOrAddBoolean("ionization", "plasma_viscosity", false);
@@ -83,6 +86,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     auto recon_tag = RiotReconstruction::NAME_MAP.at(recon_name);
     int stencil_width = RiotReconstruction::STENCIL_WIDTH.at(recon_tag);
     stencil_width += (do_ionization && do_plasma_viscosity);
+    // CT corner EMFs need face EMFs from one transverse ghost row
+    stencil_width += do_mhd;
     PARTHENON_REQUIRE(nghost > stencil_width,
                       "Must have enough ghosts for reconstruction stencil " + recon_name);
     return std::make_pair(stencil_width, recon_tag);
@@ -106,11 +111,23 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
 
   // Choose Riemann Solver
   // TODO(JMM): Move Carbuncle correction into HLLC solver
+  const bool user_set_solver = pin->DoesParameterExist("hydro", "riemann");
   std::string solver = pin->GetOrAddString(
       "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll"},
-      "Riemann solver to use");
-  if (solver == "hllc") {
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "hlld"},
+      "Riemann solver to use (forced to hlld when MHD is enabled)");
+  if (do_mhd) {
+    if (solver != "hlld" && user_set_solver &&
+        parthenon::Globals::my_rank == 0) {
+      PARTHENON_WARN("MHD is enabled, so the hlld Riemann solver will be used instead "
+                     "of " + solver);
+    }
+    solver = "hlld";
+  }
+  if (solver == "hlld") {
+    PARTHENON_REQUIRE_THROWS(do_mhd, "The hlld Riemann solver requires <hydro>/mhd=true");
+    params.Add("riemann_solver", RiemannSolver::hlld);
+  } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
     if (parthenon::Globals::my_rank == 0) {
@@ -228,6 +245,45 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     hydro->AddField<ccbulk::face_velocity>(m);
   }
 
+  if (do_mhd) {
+    PARTHENON_REQUIRE_THROWS(parthenon::IsCoord<parthenon::UniformCartesian>(),
+                             "MHD is only implemented for uniform Cartesian coordinates");
+    PARTHENON_REQUIRE_THROWS(!do_strength, "MHD is incompatible with material strength");
+    PARTHENON_REQUIRE_THROWS(!do_ionization, "MHD is incompatible with ionization");
+
+    // Face-centered magnetic field, evolved with constrained transport. The edge fluxes
+    // automatically allocated by WithFluxes hold the EMFs. Node memory layout is
+    // required for FillGhost on face fields, so this field must never be accessed with
+    // the flat (cell-aligned) pack views.
+    m = Metadata({Metadata::Face, Metadata::Independent, Metadata::WithFluxes,
+                  Metadata::FillGhost, Metadata::Vector});
+    m.RegisterRefinementOps<parthenon::refinement_ops::ProlongateSharedMinMod,
+                            parthenon::refinement_ops::RestrictAverage,
+                            parthenon::refinement_ops::ProlongateInternalTothAndRoe>();
+    hydro->AddField<ccbulk::bfield>(m);
+
+    // Cell-centered magnetic field (average of the face fields)
+    m = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Vector, Metadata::Derived,
+                  Metadata::OneCopy},
+                 vel_arr_size);
+    hydro->AddField<ccbulk::bcc>(m);
+
+    // Divergence of B (diagnostic)
+    m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy});
+    hydro->AddField<ccbulk::divb>(m);
+
+    // Cell-aligned face scratch written by the Riemann solve: normal B, upwind mass
+    // flux proxy, and the two transverse EMFs (slot0 = E_tbc, slot1 = E_tac)
+    m = Metadata(
+        {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned});
+    hydro->AddField<ccbulk::bface_aligned>(m);
+    hydro->AddField<ccbulk::face_vrho>(m);
+    m = Metadata(
+        {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned},
+        std::vector<int>{2});
+    hydro->AddField<ccbulk::face_emf>(m);
+  }
+
   // Hydro Timestep
   hydro->EstimateTimestepMesh = EstimateTimestepMesh;
   if (amr_int) {
@@ -254,10 +310,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                            "Output to the total kinetic energy in the history file. "
                            "Useful for turbulence studies.");
   params.Add("track_total_kinetic_energy", history_tot_ke);
+  parthenon::HstVar_list scalar_histories{};
   if (history_tot_ke) {
-    parthenon::HstVar_list scalar_histories{};
     scalar_histories.emplace_back(parthenon::UserHistoryOperation::sum,
                                   total_kinetic_energy, "KE");
+  }
+  if (do_mhd) {
+    scalar_histories.emplace_back(parthenon::UserHistoryOperation::sum,
+                                  total_magnetic_energy, "ME");
+    scalar_histories.emplace_back(parthenon::UserHistoryOperation::max, max_divb,
+                                  "max_divB_dx");
+  }
+  if (!scalar_histories.empty()) {
     hydro->AddParam<>(parthenon::hist_param_key, scalar_histories, true);
   }
 
@@ -697,8 +761,9 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
 
   // strength params
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
+  const bool do_mhd = params.Get<bool>("do_mhd");
   auto v = riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
-                          ccbulk::velocity, ccbulk::max_signal>(md);
+                          ccbulk::velocity, ccbulk::max_signal, ccbulk::bcc>(md);
   const int ndim = pm->ndim;
 
   using rt = RiotUtils::ReductionType<Kokkos::Min<Real>>;
@@ -714,13 +779,27 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           const Real bulk_modulus = pv(ccbulk::bulk_modulus(), idx);
           const Real shear_modulus =
               (do_strength) ? pv(ccbulk::shear_modulus(), idx) : 0.0;
-          const Real cs =
-              std::sqrt(ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho));
+          const Real a2 = ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho);
+          const Real cs = std::sqrt(a2);
+          Real b2 = 0.0;
+          if (do_mhd) {
+            b2 = SQR(pv(ccbulk::bcc(0), idx)) + SQR(pv(ccbulk::bcc(1), idx)) +
+                 SQR(pv(ccbulk::bcc(2), idx));
+          }
           Real denom = 0.0;
           for (int d = 0; d < ndim; d++) {
             const Real vphys =
                 pv(ccbulk::velocity(d), idx) * coords.Scale<TE::CC>(d + 1, k, j, i);
-            const Real csig = std::abs(vphys) + cs;
+            Real csig = std::abs(vphys) + cs;
+            if (do_mhd) {
+              // Fast magnetosonic speed along d (Heaviside-Lorentz units)
+              const Real va2 = ratio(b2, rho);
+              const Real vad2 = ratio(SQR(pv(ccbulk::bcc(d), idx)), rho);
+              const Real s = a2 + va2;
+              const Real cf2 =
+                  0.5 * (s + std::sqrt(std::max(SQR(s) - 4.0 * a2 * vad2, 0.0)));
+              csig = std::abs(vphys) + std::sqrt(cf2);
+            }
             const Real max_sig = std::max(csig, pv(ccbulk::max_signal(d), idx));
             denom += max_sig / coords.CellWidth(d + 1, k, j, i);
           }

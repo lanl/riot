@@ -80,10 +80,12 @@ def make(cmake_args, make_nproc):
 
 
 # Function for generating inputs from python scripts
-def generate(input_script):
+def generate(input_script, arguments=[]):
     logger = logging.getLogger("riot.generate")
     try:
-        subprocess.check_call([sys.executable, "../inputs/" + input_script], env=env)
+        subprocess.check_call(
+            [sys.executable, "../inputs/" + input_script] + arguments, env=env
+        )
     except subprocess.CalledProcessError as err:
         logger.error("Something bad happened while generating inputs", exc_info=True)
         raise RiotError(

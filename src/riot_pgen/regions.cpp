@@ -14,6 +14,8 @@
 
 #include "regions.hpp"
 
+#include <array>
+
 namespace region_pgen {
 
 std::tuple<Real, Real, Real> to_cartesian(const Real x0, const Real x1, const Real x2) {
@@ -355,6 +357,12 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
   auto dirty_map = set_dirty_state(pmb, eos_host, elec_eos, eos_from_matid, var_map,
                                    var_mirror_map, mat_tied_mirror_vars, matids);
 
+  // face-centered magnetic field (also adds the magnetic energy to the total energy)
+  if (pin->GetOrAddBoolean("hydro", "mhd", false)) {
+    init_magnetic_field(pmb, rc.get(),
+                        var_mirror_map.at(ccbulk::total_material_energy::name()));
+  }
+
   var_mirror_map.erase("does_not_exist");
   for (auto v : var_mirror_map) {
     if (var_map[v.first]->IsAllocated()) {
@@ -373,6 +381,149 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
     PARTHENON_REQUIRE(var_map.count(v.first) > 0, v.first + " is not in var_map");
     var_map[v.first]->data.DeepCopy(v.second);
   }
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void BlockInitData::init_magnetic_field
+//! \brief Set the face-centered magnetic field from the optional methods of the default
+//!         python <regions> class:
+//!           f_b_vector_potential(self, pos, out): A sampled at edge centers; B is its
+//!             discrete curl, so div B = 0 to round-off (preferred).
+//!           f_b_bfield(self, pos, out): B sampled at face centers; only the normal
+//!             component of each face is used. The user must ensure div B = 0.
+//!         out has shape (n, 3). Without either method B = 0. The cell-centered magnetic
+//!         energy is added to the total energy host mirror E over the interior.
+template <typename host_mirror_t>
+void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
+                                        host_mirror_t &E) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  using TE = parthenon::TopologicalElement;
+  auto &pyreg = regions.default_python_region;
+  const bool have_A = pyreg.HasMethod("f_b_vector_potential");
+  const bool have_B = pyreg.HasMethod("f_b_bfield");
+  PARTHENON_REQUIRE_THROWS(!(have_A && have_B),
+                           "Provide only one of f_b_vector_potential and f_b_bfield in "
+                           "the <regions> python class.");
+
+  auto bvar = rc->GetVarPtr(ccbulk::bfield::name());
+  auto bh = bvar->data.GetHostMirror();
+  for (int d = 0; d < bh.GetDim(6); d++) {
+    for (int k = 0; k < bh.GetDim(3); k++) {
+      for (int j = 0; j < bh.GetDim(2); j++) {
+        for (int i = 0; i < bh.GetDim(1); i++) {
+          bh(d, 0, 0, k, j, i) = 0.0;
+        }
+      }
+    }
+  }
+
+  auto &cb = pmb->cellbounds;
+  // Sample the python function name at the centers of element te (face or edge) over
+  // the entire domain; off[d] marks that te sits on the lower cell face in direction d.
+  auto sample = [&](const std::string &name, const TE te, const std::array<bool, 3> off,
+                    const int comp, auto &&store) {
+    const auto ibe = cb.GetBoundsI(IndexDomain::entire, te);
+    const auto jbe = cb.GetBoundsJ(IndexDomain::entire, te);
+    const auto kbe = cb.GetBoundsK(IndexDomain::entire, te);
+    const int n = (ibe.e - ibe.s + 1) * (jbe.e - jbe.s + 1) * (kbe.e - kbe.s + 1);
+    sample_positions_t xs(n);
+    int m = 0;
+    for (int k = kbe.s; k <= kbe.e; k++) {
+      for (int j = jbe.s; j <= jbe.e; j++) {
+        for (int i = ibe.s; i <= ibe.e; i++) {
+          xs(m, 0) = (off[0] && ndim > 0) ? coords->Xf<X1DIR>(i) : coords->Xc<X1DIR>(i);
+          xs(m, 1) = (off[1] && ndim > 1) ? coords->Xf<X2DIR>(j) : coords->Xc<X2DIR>(j);
+          xs(m, 2) = (off[2] && ndim > 2) ? coords->Xf<X3DIR>(k) : coords->Xc<X3DIR>(k);
+          m++;
+        }
+      }
+    }
+    field_data_t out(n, 3);
+    pyreg.make_state(name)(xs, out);
+    m = 0;
+    for (int k = kbe.s; k <= kbe.e; k++) {
+      for (int j = jbe.s; j <= jbe.e; j++) {
+        for (int i = ibe.s; i <= ibe.e; i++) {
+          store(k, j, i, out(m, comp));
+          m++;
+        }
+      }
+    }
+  };
+
+  constexpr TE faces[3] = {TE::F1, TE::F2, TE::F3};
+  constexpr TE edges[3] = {TE::E1, TE::E2, TE::E3};
+  if (have_B) {
+    for (int d = 0; d < 3; d++) {
+      std::array<bool, 3> off{d == 0, d == 1, d == 2};
+      sample("f_b_bfield", faces[d], off, d,
+             [&](const int k, const int j, const int i, const Real b) {
+               bh(d, 0, 0, k, j, i) = b;
+             });
+    }
+  } else if (have_A) {
+    // edge-centered vector potential, A_d on edges E_d over the entire domain
+    std::array<parthenon::HostArray3D<Real>, 3> A;
+    for (int d = 0; d < 3; d++) {
+      const TE te = edges[d];
+      A[d] = parthenon::HostArray3D<Real>(
+          "A", cb.GetBoundsK(IndexDomain::entire, te).e + 1,
+          cb.GetBoundsJ(IndexDomain::entire, te).e + 1,
+          cb.GetBoundsI(IndexDomain::entire, te).e + 1);
+      std::array<bool, 3> off{d != 0, d != 1, d != 2};
+      sample("f_b_vector_potential", te, off, d,
+             [&](const int k, const int j, const int i, const Real a) {
+               A[d](k, j, i) = a;
+             });
+    }
+    // B_d = d_p A_q - d_q A_p, p = (d+1)%3, q = (d+2)%3 (matches Hydro::UpdateFaceFields)
+    for (int d = 0; d < 3; d++) {
+      const int p = (d + 1) % 3;
+      const int q = (d + 2) % 3;
+      const bool p_active = (p < ndim);
+      const bool q_active = (q < ndim);
+      const Real dxp = coords->Dx(p + 1);
+      const Real dxq = coords->Dx(q + 1);
+      const auto ibe = cb.GetBoundsI(IndexDomain::entire, faces[d]);
+      const auto jbe = cb.GetBoundsJ(IndexDomain::entire, faces[d]);
+      const auto kbe = cb.GetBoundsK(IndexDomain::entire, faces[d]);
+      for (int k = kbe.s; k <= kbe.e; k++) {
+        for (int j = jbe.s; j <= jbe.e; j++) {
+          for (int i = ibe.s; i <= ibe.e; i++) {
+            Real b = 0.0;
+            if (p_active) {
+              const int kp = k + (p == 2), jp = j + (p == 1), ip = i + (p == 0);
+              if (kp < A[q].extent_int(0) && jp < A[q].extent_int(1) &&
+                  ip < A[q].extent_int(2)) {
+                b += (A[q](kp, jp, ip) - A[q](k, j, i)) / dxp;
+              }
+            }
+            if (q_active) {
+              const int kq = k + (q == 2), jq = j + (q == 1), iq = i + (q == 0);
+              if (kq < A[p].extent_int(0) && jq < A[p].extent_int(1) &&
+                  iq < A[p].extent_int(2)) {
+                b -= (A[p](kq, jq, iq) - A[p](k, j, i)) / dxq;
+              }
+            }
+            bh(d, 0, 0, k, j, i) = b;
+          }
+        }
+      }
+    }
+  }
+  bvar->data.DeepCopy(bh);
+
+  // add the magnetic energy of the cell-centered field to the total energy
+  block_loop<state>([&](const int k, const int j, const int i) {
+    Real b2 = 0.0;
+    for (int d = 0; d < 3; d++) {
+      const Real blo = bh(d, 0, 0, k, j, i);
+      const Real bhi = (d < ndim) ? bh(d, 0, 0, k + (d == 2), j + (d == 1), i + (d == 0))
+                                  : blo;
+      b2 += SQR(0.5 * (blo + bhi));
+    }
+    E(k, j, i) += 0.5 * b2;
+  });
 }
 
 //----------------------------------------------------------------------------------------

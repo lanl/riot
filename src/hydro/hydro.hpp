@@ -52,6 +52,11 @@ using sum_bulk_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::rho,
                                  cell_variables::cell_averaged::bulk::internal_energy>;
 
+//! \brief  Cell-centered magnetic field reconstructed to faces (MHD only; the normal
+//!         component is replaced by the face-centered field in the Riemann solve).
+using mhd_recon_types =
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::bcc>;
+
 //! \brief  Per-material quantities reconstructed to faces.
 using mat_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::mat::volume_fraction,
@@ -310,6 +315,15 @@ TaskStatus CalculateMaxSignalSpeed(MeshData<Real> *state);
 Real EstimateTimestepMesh(MeshData<Real> *rc);
 PrimFluxPack MakeAdvectionPack(MeshData<Real> *md);
 Real total_kinetic_energy(MeshData<Real> *md);
+// Constrained transport (ct.cpp)
+void CopyFaceBToAligned(MeshData<Real> *md);
+TaskStatus CalculateCornerEMF(MeshData<Real> *md, const Real dt);
+TaskStatus UpdateFaceFields(MeshData<Real> *mu0, MeshData<Real> *mu1, const Real gam0,
+                            const Real gam1, const Real beta_dt);
+void FaceToCellB(MeshData<Real> *md, IndexDomain domain);
+void CalculateDivB(MeshData<Real> *md);
+Real total_magnetic_energy(MeshData<Real> *md);
+Real max_divb(MeshData<Real> *md);
 void CalculateStrainRate(MeshData<Real> *state);
 } // namespace Hydro
 #endif // HYDRO_HYDRO_HPP_

@@ -77,6 +77,18 @@ constexpr char block_active_flag[] = CELL_DELTA_NAME;
     static constexpr bool is_sparse() { return sparse; }                                 \
   }
 
+#define VARIABLE_FACE_VECTOR(ns, varname, sparse, ncomp)                                 \
+  struct varname : public parthenon::variable_names::base_w_tt_t<                        \
+                       false, parthenon::TopologicalType::Face, ncomp> {                 \
+    template <class... Ts>                                                               \
+    KOKKOS_INLINE_FUNCTION varname(Ts &&...args)                                         \
+        : parthenon::variable_names::base_w_tt_t<                                        \
+              false, parthenon::TopologicalType::Face, ncomp>(                           \
+              std::forward<Ts>(args)...) {}                                              \
+    static std::string name() { return #ns "." #varname; }                               \
+    static constexpr bool is_sparse() { return sparse; }                                 \
+  }
+
 #define PARTICLE_VARIABLE(type, ns, varname)                                             \
   struct varname : public parthenon::swarm_variable_names::base_t<type> {                \
     template <class... Ts>                                                               \
@@ -126,6 +138,16 @@ VARIABLE_SCALAR(c.c, cell_delta, false);
 VARIABLE_SCALAR(c.c.bulk, laser_deposition, false);
 VARIABLE_SCALAR(c.c.bulk, laser_energy_density, false);
 VARIABLE_SCALAR(c.c.bulk, laser_tau_max, false);
+// Ideal MHD (constrained transport). bfield is the face-centered, evolved magnetic
+// field (node memory layout, so it must only be accessed with explicit
+// (b, TE, var, k, j, i) indexing). The remaining face quantities are cell-aligned
+// scratch written by the Riemann solve.
+VARIABLE_FACE(c.c.bulk, bfield, false);
+VARIABLE_VECTOR(c.c.bulk, bcc, false, 3);
+VARIABLE_SCALAR(c.c.bulk, divb, false);
+VARIABLE_FACE(c.c.bulk, bface_aligned, false);
+VARIABLE_FACE(c.c.bulk, face_vrho, false);
+VARIABLE_FACE_VECTOR(c.c.bulk, face_emf, false, 2);
 } // namespace bulk
 
 namespace mat {

@@ -22,7 +22,7 @@
 
 namespace Hydro {
 
-enum RiemannSolver { hllc, hllcf, chllc, lhllc, hll, strong };
+enum RiemannSolver { hllc, hllcf, chllc, lhllc, hll, hlld, strong };
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::lr_to_flux_fleischmann
@@ -380,6 +380,268 @@ lr_to_flux_hll(Real rhol, Real rhor, Real v1l, Real v1r, Real v2l, Real v2r, Rea
   f_eng = vp * (E + P) + s * (Eh - E);
 
   return std::max(std::abs(sl), std::abs(sr));
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  Real Hydro::lr_to_flux_hlld
+//! \brief HLLD Riemann solver for ideal MHD (Miyoshi & Kusano 2005, JCP 208, 315),
+//!        ported from Athena++ (hlld.cpp) to a general EOS. Magnetic fields are in
+//!        Heaviside-Lorentz units (p_B = B^2/2). Inputs are the L/R primitive states in
+//!        the global (x1,x2,x3) basis, the internal energy densities ul/ur, the bulk
+//!        sound speeds cl/cr (a^2 = bmod/rho), and the face-normal field bn. In addition
+//!        to the hydro fluxes, returns the two transverse EMFs on this face,
+//!          emf0 = -F(B_ta) = E_tb,   emf1 = +F(B_tb) = E_ta,
+//!        with ta = (n+1)%3 and tb = (n+2)%3, and vrho = 2 F_rho / (rho_l + rho_r), which
+//!        sets the upwind weight of the Gardiner & Stone corner EMF.
+template <int DIR>
+KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hlld(
+    Real rhol, Real rhor, const Real v1l, const Real v1r, const Real v2l, const Real v2r,
+    const Real v3l, const Real v3r, const Real ul, const Real ur, const Real Pl,
+    const Real Pr, const Real cl, const Real cr, const Real bn, const Real b1l,
+    const Real b1r, const Real b2l, const Real b2r, const Real b3l, const Real b3r,
+    Real &f_v1, Real &f_v2, Real &f_v3, Real &f_eng, Real &v1face, Real &v2face,
+    Real &v3face, Real &riemann_vel, Real &emf0, Real &emf1, Real &vrho) {
+  constexpr Real SMALL_NUMBER = 1.0e-8;
+  constexpr Real TINY = 1.0e-100;
+  constexpr int n = DIR - 1;
+  constexpr int ta = (n + 1) % 3;
+  constexpr int tb = (n + 2) % 3;
+  // Select component c of a vector given as three scalars
+  auto comp = [](const int c, const Real x1, const Real x2, const Real x3) {
+    return (c == 0) * x1 + (c == 1) * x2 + (c == 2) * x3;
+  };
+
+  rhol = std::max(rhol, TINY);
+  rhor = std::max(rhor, TINY);
+
+  // Rotated L/R states: normal (x), transverse a (y), transverse b (z)
+  const Real vxl = comp(n, v1l, v2l, v3l);
+  const Real vyl = comp(ta, v1l, v2l, v3l);
+  const Real vzl = comp(tb, v1l, v2l, v3l);
+  const Real vxr = comp(n, v1r, v2r, v3r);
+  const Real vyr = comp(ta, v1r, v2r, v3r);
+  const Real vzr = comp(tb, v1r, v2r, v3r);
+  const Real byl = comp(ta, b1l, b2l, b3l);
+  const Real bzl = comp(tb, b1l, b2l, b3l);
+  const Real byr = comp(ta, b1r, b2r, b3r);
+  const Real bzr = comp(tb, b1r, b2r, b3r);
+
+  const Real bxsq = bn * bn;
+  const Real pbl = 0.5 * (bxsq + (SQR(byl) + SQR(bzl)));
+  const Real pbr = 0.5 * (bxsq + (SQR(byr) + SQR(bzr)));
+  const Real kel = 0.5 * rhol * (SQR(vxl) + (SQR(vyl) + SQR(vzl)));
+  const Real ker = 0.5 * rhor * (SQR(vxr) + (SQR(vyr) + SQR(vzr)));
+
+  // Conserved L/R states (d, mx, my, mz, e, by, bz)
+  const Real dl = rhol, mxl = rhol * vxl, myl = rhol * vyl, mzl = rhol * vzl;
+  const Real el = ul + kel + pbl;
+  const Real dr = rhor, mxr = rhor * vxr, myr = rhor * vyr, mzr = rhor * vzr;
+  const Real er = ur + ker + pbr;
+
+  // Fast magnetosonic speeds for a general EOS (a^2 = bmod/rho)
+  auto fast_speed = [&](const Real rho, const Real a, const Real by, const Real bz) {
+    const Real asq = a * a;
+    const Real ct2 = (SQR(by) + SQR(bz)) / rho;
+    const Real qsq = asq + bxsq / rho + ct2;
+    const Real disc = std::max(SQR(qsq) - 4.0 * asq * bxsq / rho, 0.0);
+    return std::sqrt(0.5 * (qsq + std::sqrt(disc)));
+  };
+  const Real cfl = fast_speed(rhol, cl, byl, bzl);
+  const Real cfr = fast_speed(rhor, cr, byr, bzr);
+
+  // Outer wave speeds, eqn (67)
+  const Real spd0 = std::min(vxl - cfl, vxr - cfr);
+  const Real spd4 = std::max(vxl + cfl, vxr + cfr);
+
+  // L/R fluxes
+  const Real ptl = Pl + pbl;
+  const Real ptr = Pr + pbr;
+  const Real fl_d = mxl;
+  const Real fl_mx = mxl * vxl + ptl - bxsq;
+  const Real fl_my = myl * vxl - bn * byl;
+  const Real fl_mz = mzl * vxl - bn * bzl;
+  const Real fl_e = vxl * (el + ptl - bxsq) - bn * (vyl * byl + vzl * bzl);
+  const Real fl_by = byl * vxl - bn * vyl;
+  const Real fl_bz = bzl * vxl - bn * vzl;
+
+  const Real fr_d = mxr;
+  const Real fr_mx = mxr * vxr + ptr - bxsq;
+  const Real fr_my = myr * vxr - bn * byr;
+  const Real fr_mz = mzr * vxr - bn * bzr;
+  const Real fr_e = vxr * (er + ptr - bxsq) - bn * (vyr * byr + vzr * bzr);
+  const Real fr_by = byr * vxr - bn * vyr;
+  const Real fr_bz = bzr * vxr - bn * vzr;
+
+  // Middle wave speed, eqn (38)
+  const Real sdl = spd0 - vxl;
+  const Real sdr = spd4 - vxr;
+  const Real spd2 = (sdr * mxr - sdl * mxl + (ptl - ptr)) / (sdr * dr - sdl * dl);
+
+  // S_i - S_M, floored away from zero preserving sign (sdml < 0 < sdmr)
+  const Real sdml = std::min(spd0 - spd2, -TINY);
+  const Real sdmr = std::max(spd4 - spd2, TINY);
+  const Real sdml_inv = 1.0 / sdml;
+  const Real sdmr_inv = 1.0 / sdmr;
+
+  // eqn (43)
+  const Real dlst = dl * sdl * sdml_inv;
+  const Real drst = dr * sdr * sdmr_inv;
+  const Real dlst_inv = 1.0 / dlst;
+  const Real drst_inv = 1.0 / drst;
+  const Real sqrtdl = std::sqrt(dlst);
+  const Real sqrtdr = std::sqrt(drst);
+
+  // Alfven wave speeds, eqn (51)
+  const Real spd1 = spd2 - std::abs(bn) / sqrtdl;
+  const Real spd3 = spd2 + std::abs(bn) / sqrtdr;
+
+  // Star-state total pressure, eqn (41)
+  const Real ptstl = ptl + dl * sdl * (spd2 - vxl);
+  const Real ptstr = ptr + dr * sdr * (spd2 - vxr);
+  const Real ptst = 0.5 * (ptstr + ptstl);
+  const Real small_pt = SMALL_NUMBER * std::abs(ptst);
+
+  // ul*, eqns (39), (44)-(48)
+  Real mylst, mzlst, bylst, bzlst;
+  if (std::abs(dl * sdl * sdml - bxsq) < small_pt) {
+    // Degenerate case
+    mylst = dlst * vyl;
+    mzlst = dlst * vzl;
+    bylst = byl;
+    bzlst = bzl;
+  } else {
+    const Real denom_inv = 1.0 / (dl * sdl * sdml - bxsq);
+    Real tmp = bn * (sdl - sdml) * denom_inv;
+    mylst = dlst * (vyl - byl * tmp);
+    mzlst = dlst * (vzl - bzl * tmp);
+    tmp = (dl * SQR(sdl) - bxsq) * denom_inv;
+    bylst = byl * tmp;
+    bzlst = bzl * tmp;
+  }
+  const Real mxlst = dlst * spd2;
+  const Real vbstl = (mxlst * bn + (mylst * bylst + mzlst * bzlst)) * dlst_inv;
+  const Real elst = (sdl * el - ptl * vxl + ptst * spd2 +
+                     bn * (vxl * bn + (vyl * byl + vzl * bzl) - vbstl)) *
+                    sdml_inv;
+
+  // ur*, eqns (39), (44)-(48)
+  Real myrst, mzrst, byrst, bzrst;
+  if (std::abs(dr * sdr * sdmr - bxsq) < small_pt) {
+    // Degenerate case
+    myrst = drst * vyr;
+    mzrst = drst * vzr;
+    byrst = byr;
+    bzrst = bzr;
+  } else {
+    const Real denom_inv = 1.0 / (dr * sdr * sdmr - bxsq);
+    Real tmp = bn * (sdr - sdmr) * denom_inv;
+    myrst = drst * (vyr - byr * tmp);
+    mzrst = drst * (vzr - bzr * tmp);
+    tmp = (dr * SQR(sdr) - bxsq) * denom_inv;
+    byrst = byr * tmp;
+    bzrst = bzr * tmp;
+  }
+  const Real mxrst = drst * spd2;
+  const Real vbstr = (mxrst * bn + (myrst * byrst + mzrst * bzrst)) * drst_inv;
+  const Real erst = (sdr * er - ptr * vxr + ptst * spd2 +
+                     bn * (vxr * bn + (vyr * byr + vzr * bzr) - vbstr)) *
+                    sdmr_inv;
+
+  // ul** and ur**, eqns (59)-(63); identical to the *-states if bn is near zero
+  Real mydst = 0.0, mzdst = 0.0, bydst = 0.0, bzdst = 0.0, eldst = elst, erdst = erst;
+  Real vydst = 0.0, vzdst = 0.0;
+  const bool bn_zero = (0.5 * bxsq < small_pt);
+  if (!bn_zero) {
+    const Real invsumd = 1.0 / (sqrtdl + sqrtdr);
+    const Real bxsig = (bn > 0.0 ? 1.0 : -1.0);
+    vydst = invsumd *
+            (sqrtdl * (mylst * dlst_inv) + sqrtdr * (myrst * drst_inv) + bxsig * (byrst - bylst));
+    vzdst = invsumd *
+            (sqrtdl * (mzlst * dlst_inv) + sqrtdr * (mzrst * drst_inv) + bxsig * (bzrst - bzlst));
+    bydst = invsumd * (sqrtdl * byrst + sqrtdr * bylst +
+                       bxsig * sqrtdl * sqrtdr * ((myrst * drst_inv) - (mylst * dlst_inv)));
+    bzdst = invsumd * (sqrtdl * bzrst + sqrtdr * bzlst +
+                       bxsig * sqrtdl * sqrtdr * ((mzrst * drst_inv) - (mzlst * dlst_inv)));
+    const Real tmp = spd2 * bn + (vydst * bydst + vzdst * bzdst);
+    eldst = elst - sqrtdl * bxsig * (vbstl - tmp);
+    erdst = erst + sqrtdr * bxsig * (vbstr - tmp);
+  }
+
+  // Select the flux (and the fan state velocity) for the region containing x/t = 0
+  Real f_d, f_mx, f_my, f_mz, f_e, f_by, f_bz, vxf, vyf, vzf;
+  if (spd0 >= 0.0) {
+    // F_L
+    f_d = fl_d, f_mx = fl_mx, f_my = fl_my, f_mz = fl_mz, f_e = fl_e;
+    f_by = fl_by, f_bz = fl_bz;
+    vxf = vxl, vyf = vyl, vzf = vzl;
+  } else if (spd4 <= 0.0) {
+    // F_R
+    f_d = fr_d, f_mx = fr_mx, f_my = fr_my, f_mz = fr_mz, f_e = fr_e;
+    f_by = fr_by, f_bz = fr_bz;
+    vxf = vxr, vyf = vyr, vzf = vzr;
+  } else if (spd1 >= 0.0 || (bn_zero && spd2 >= 0.0)) {
+    // F_L* = F_L + S_L (U_L* - U_L)
+    f_d = fl_d + spd0 * (dlst - dl);
+    f_mx = fl_mx + spd0 * (mxlst - mxl);
+    f_my = fl_my + spd0 * (mylst - myl);
+    f_mz = fl_mz + spd0 * (mzlst - mzl);
+    f_e = fl_e + spd0 * (elst - el);
+    f_by = fl_by + spd0 * (bylst - byl);
+    f_bz = fl_bz + spd0 * (bzlst - bzl);
+    vxf = spd2, vyf = mylst * dlst_inv, vzf = mzlst * dlst_inv;
+  } else if (spd2 >= 0.0) {
+    // F_L** = F_L* + S_L* (U_L** - U_L*)
+    f_d = fl_d + spd0 * (dlst - dl);
+    f_mx = fl_mx + spd0 * (mxlst - mxl);
+    f_my = fl_my + spd0 * (mylst - myl) + spd1 * (dlst * vydst - mylst);
+    f_mz = fl_mz + spd0 * (mzlst - mzl) + spd1 * (dlst * vzdst - mzlst);
+    f_e = fl_e + spd0 * (elst - el) + spd1 * (eldst - elst);
+    f_by = fl_by + spd0 * (bylst - byl) + spd1 * (bydst - bylst);
+    f_bz = fl_bz + spd0 * (bzlst - bzl) + spd1 * (bzdst - bzlst);
+    vxf = spd2, vyf = vydst, vzf = vzdst;
+  } else if (spd3 > 0.0 && !bn_zero) {
+    // F_R** = F_R* + S_R* (U_R** - U_R*)
+    f_d = fr_d + spd4 * (drst - dr);
+    f_mx = fr_mx + spd4 * (mxrst - mxr);
+    f_my = fr_my + spd4 * (myrst - myr) + spd3 * (drst * vydst - myrst);
+    f_mz = fr_mz + spd4 * (mzrst - mzr) + spd3 * (drst * vzdst - mzrst);
+    f_e = fr_e + spd4 * (erst - er) + spd3 * (erdst - erst);
+    f_by = fr_by + spd4 * (byrst - byr) + spd3 * (bydst - byrst);
+    f_bz = fr_bz + spd4 * (bzrst - bzr) + spd3 * (bzdst - bzrst);
+    vxf = spd2, vyf = vydst, vzf = vzdst;
+  } else {
+    // F_R* = F_R + S_R (U_R* - U_R)
+    f_d = fr_d + spd4 * (drst - dr);
+    f_mx = fr_mx + spd4 * (mxrst - mxr);
+    f_my = fr_my + spd4 * (myrst - myr);
+    f_mz = fr_mz + spd4 * (mzrst - mzr);
+    f_e = fr_e + spd4 * (erst - er);
+    f_by = fr_by + spd4 * (byrst - byr);
+    f_bz = fr_bz + spd4 * (bzrst - bzr);
+    vxf = spd2, vyf = myrst * drst_inv, vzf = mzrst * drst_inv;
+  }
+
+  // Rotate back to the global basis
+  auto unrotate = [&](const int c, const Real x, const Real y, const Real z) {
+    return (c == n) * x + (c == ta) * y + (c == tb) * z;
+  };
+  f_v1 = unrotate(0, f_mx, f_my, f_mz);
+  f_v2 = unrotate(1, f_mx, f_my, f_mz);
+  f_v3 = unrotate(2, f_mx, f_my, f_mz);
+  f_eng = f_e;
+  v1face = unrotate(0, vxf, vyf, vzf);
+  v2face = unrotate(1, vxf, vyf, vzf);
+  v3face = unrotate(2, vxf, vyf, vzf);
+
+  // Material mass fluxes are riemann_vel * (upwind partial density), upwinded on the
+  // sign of the normal face velocity. Choose riemann_vel so they sum to F_rho.
+  riemann_vel = f_d / ((vxf >= 0.0) ? rhol : rhor);
+
+  emf0 = -f_by;
+  emf1 = f_bz;
+  vrho = 2.0 * f_d / (rhol + rhor);
+
+  return std::max(std::abs(spd0), std::abs(spd4));
 }
 
 //----------------------------------------------------------------------------------------

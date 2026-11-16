@@ -142,7 +142,9 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using parthenon::PDOpt;
   using parthenon::variable_names::any;
-  std::vector<MetadataFlag> flags({Metadata::WithFluxes});
+  // Cell fields only: face fields with fluxes (the CT magnetic field) have node memory
+  // layout and are updated separately (Hydro::UpdateFaceFields).
+  std::vector<MetadataFlag> flags({Metadata::WithFluxes, Metadata::Cell});
 
   auto pm = umd->GetParentPointer();
   const int ndim = pm->ndim;
@@ -259,12 +261,46 @@ TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  TaskStatus sparse_update::DeepCopyFaceData
+//! \brief Deep copy the independent node-layout face fields (the CT magnetic field) over
+//!        the entire domain, using explicit (b, TE, var, k, j, i) indexing. A typed pack
+//!        is used rather than flags so that cell-aligned face fields are never touched
+//!        with node-layout bounds. No-op when the field is not registered.
+template <typename T>
+TaskStatus DeepCopyFaceData(T *to, T *from) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  using TE = parthenon::TopologicalElement;
+  const auto dst = riot::MakePack<ccbulk::bfield>(to);
+  const auto src = riot::MakePack<ccbulk::bfield>(from);
+  const int nblocks = src.GetNBlocks();
+  if (nblocks == 0 || src.GetMaxNumberOfVars() == 0) return TaskStatus::complete;
+  for (const TE te : {TE::F1, TE::F2, TE::F3}) {
+    const auto ib = from->GetBoundsI(IndexDomain::entire, te);
+    const auto jb = from->GetBoundsJ(IndexDomain::entire, te);
+    const auto kb = from->GetBoundsK(IndexDomain::entire, te);
+    parthenon::par_for(
+        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, nblocks - 1, kb.s,
+        kb.e, jb.s, jb.e, ib.s, ib.e,
+        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
+          for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
+            dst(b, te, var, k, j, i) = src(b, te, var, k, j, i);
+          }
+        });
+  }
+  return TaskStatus::complete;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyIndependentData
 //! \brief
 template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
-  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  // DeepCopyData uses flat cell-aligned views, so restrict it to cell fields and copy
+  // independent face fields (the CT magnetic field) with explicit topological indexing.
+  DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent, Metadata::Cell}), to,
+               from);
+  return DeepCopyFaceData(to, from);
 }
 
 } // namespace sparse_update

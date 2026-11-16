@@ -29,6 +29,7 @@ set (SRC_LIST
 
   hydro/advection.hpp
   hydro/calculate_fluxes.cpp
+  hydro/ct.cpp
   hydro/hydro.cpp
   hydro/hydro.hpp
   hydro/riemann.hpp
