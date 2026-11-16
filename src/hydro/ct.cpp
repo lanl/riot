@@ -20,11 +20,13 @@
 // are built from the face EMFs returned by the HLLD solver with the upwind
 // Gardiner & Stone (2005) corner integration, as in Athena++.
 //
-// bfield has node memory layout (required for FillGhost on face fields), so it is only
-// accessed here with explicit (b, TE, var, k, j, i) indexing.
+// bfield and its edge fluxes have node memory layout (required for FillGhost on face
+// fields). Kernels touching only those use flat views over an NN-layout index space;
+// kernels that mix them with cell-layout fields use LoopConstraint::DifferentMemSpaces.
+// All direction and dimensionality choices are template parameters, so the kernels carry
+// no runtime branches on them; the public entry points dispatch on ndim once.
 
 #include <algorithm>
-#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -36,6 +38,7 @@
 #include <parthenon/package.hpp>
 
 #include "hydro.hpp"
+#include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
 
 using namespace parthenon::package::prelude;
@@ -47,10 +50,12 @@ using TE = parthenon::TopologicalElement;
 
 KOKKOS_INLINE_FUNCTION constexpr TE FaceTE(const int d) { return (d == 0) ? TE::F1 : (d == 1 ? TE::F2 : TE::F3); }
 KOKKOS_INLINE_FUNCTION constexpr TE EdgeTE(const int d) { return (d == 0) ? TE::E1 : (d == 1 ? TE::E2 : TE::E3); }
+constexpr parthenon::CoordinateDirection Dir(const int d) {
+  return static_cast<parthenon::CoordinateDirection>(d + 1);
+}
 
-template <typename Pack_t>
-KOKKOS_FORCEINLINE_FUNCTION Real InvDx(const Pack_t &v, const int b, const int d) {
-  auto &coords = v.GetCoordinates(b);
+template <typename Coords_t>
+KOKKOS_FORCEINLINE_FUNCTION Real InvDx(const Coords_t &coords, const int d) {
   return 1.0 / ((d == 0)   ? coords.template Dx<X1DIR>()
                 : (d == 1) ? coords.template Dx<X2DIR>()
                            : coords.template Dx<X3DIR>());
@@ -58,50 +63,46 @@ KOKKOS_FORCEINLINE_FUNCTION Real InvDx(const Pack_t &v, const int b, const int d
 
 //----------------------------------------------------------------------------------------
 //! \brief Gardiner & Stone (2005) upwind integration of the EMF component n to the cell
-//!        edge e = (k, j, i). p = (n+1)%3 and q = (n+2)%3 are the two transverse
-//!        directions; the edge sits at the lower p- and q-faces of cell (k, j, i). The four
-//!        surrounding cells are c00 = e-dp-dq, c10 = e-dq, c01 = e-dp, c11 = e. The face
-//!        EMFs come from the F_p faces at e-dq and e (slot0) and the F_q faces at e-dp and
-//!        e (slot1). Each face's upwind weight is w = 0.5 + clamp(512 dt vrho/dx, +-0.5)
-//!        (Athena++ GetWeightForCT), w = 1 meaning fully upwinded from the lower cell.
-template <int n, typename Pack_t>
-KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const Pack_t &v, const int b, const int k,
-                                           const int j, const int i, const Real dt) {
+//!        edge e. p = (n+1)%3 and q = (n+2)%3 are the two transverse directions, and dp,
+//!        dq the corresponding unit offsets; the edge sits at the lower p- and q-faces of
+//!        cell e. The four surrounding cells are c00 = e-dp-dq, c10 = e-dq, c01 = e-dp,
+//!        c11 = e. The face EMFs come from the F_p faces at e-dq and e (slot0) and the F_q
+//!        faces at e-dp and e (slot1). Each face's upwind weight is
+//!        w = 0.5 + clamp(512 dt vrho/dx, +-0.5) (Athena++ GetWeightForCT), w = 1 meaning
+//!        fully upwinded from the lower cell; wfac_{p,q} = 512 dt / dx_{p,q}.
+template <int n, typename View_t, typename Idx_t, typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e, const Off_t dp,
+                                           const Off_t dq, const Real wfac_p,
+                                           const Real wfac_q) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   constexpr int p = (n + 1) % 3;
   constexpr int q = (n + 2) % 3;
   constexpr TE tp = FaceTE(p);
   constexpr TE tq = FaceTE(q);
-  // Index offsets of the lower p and q neighbors
-  constexpr int pi = (p == 0), pj = (p == 1), pk = (p == 2);
-  constexpr int qi = (q == 0), qj = (q == 1), qk = (q == 2);
 
   // Cell-centered reference EMF E_n = -(v_p B_q - v_q B_p)
-  auto ecc = [&](const int kk, const int jj, const int ii) {
-    return -(v(b, ccbulk::velocity(p), kk, jj, ii) * v(b, ccbulk::bcc(q), kk, jj, ii) -
-             v(b, ccbulk::velocity(q), kk, jj, ii) * v(b, ccbulk::bcc(p), kk, jj, ii));
+  auto ecc = [&](const auto c) {
+    return -(pv(ccbulk::velocity(p), c) * pv(ccbulk::bcc(q), c) -
+             pv(ccbulk::velocity(q), c) * pv(ccbulk::bcc(p), c));
   };
-  const Real c00 = ecc(k - pk - qk, j - pj - qj, i - pi - qi);
-  const Real c10 = ecc(k - qk, j - qj, i - qi);
-  const Real c01 = ecc(k - pk, j - pj, i - pi);
-  const Real c11 = ecc(k, j, i);
+  const Real c00 = ecc(e - dp - dq);
+  const Real c10 = ecc(e - dq);
+  const Real c01 = ecc(e - dp);
+  const Real c11 = ecc(e);
 
-  const Real fp0 = v(b, tp, ccbulk::face_emf(0), k - qk, j - qj, i - qi);
-  const Real fp1 = v(b, tp, ccbulk::face_emf(0), k, j, i);
-  const Real fq0 = v(b, tq, ccbulk::face_emf(1), k - pk, j - pj, i - pi);
-  const Real fq1 = v(b, tq, ccbulk::face_emf(1), k, j, i);
+  const Real fp0 = pv(tp, ccbulk::face_emf(0), e - dq);
+  const Real fp1 = pv(tp, ccbulk::face_emf(0), e);
+  const Real fq0 = pv(tq, ccbulk::face_emf(1), e - dp);
+  const Real fq1 = pv(tq, ccbulk::face_emf(1), e);
 
-  auto weight = [&](const TE te, const Real idx, const int kk, const int jj,
-                    const int ii) {
-    const Real v_over_c = 512.0 * dt * v(b, te, ccbulk::face_vrho(), kk, jj, ii) * idx;
+  auto weight = [&](const TE te, const Real wfac, const auto f) {
+    const Real v_over_c = wfac * pv(te, ccbulk::face_vrho(), f);
     return 0.5 + std::max(-0.5, std::min(0.5, v_over_c));
   };
-  const Real idxp = InvDx(v, b, p);
-  const Real idxq = InvDx(v, b, q);
-  const Real wp0 = weight(tp, idxp, k - qk, j - qj, i - qi);
-  const Real wp1 = weight(tp, idxp, k, j, i);
-  const Real wq0 = weight(tq, idxq, k - pk, j - pj, i - pi);
-  const Real wq1 = weight(tq, idxq, k, j, i);
+  const Real wp0 = weight(tp, wfac_p, e - dq);
+  const Real wp1 = weight(tp, wfac_p, e);
+  const Real wq0 = weight(tq, wfac_q, e - dp);
+  const Real wq1 = weight(tq, wfac_q, e);
 
   // Upwinded q-derivatives along the F_p face line, and p-derivatives along the F_q line
   const Real dq_term = wp0 * (fq0 - c00) + (1.0 - wp0) * (fq1 - c10) -
@@ -111,52 +112,247 @@ KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const Pack_t &v, const int b, const i
   return 0.25 * (fp0 + fp1 + fq0 + fq1 + dq_term + dp_term);
 }
 
-template <typename Pack_t>
-void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const int n, const int ndim,
-                const Real dt) {
+//----------------------------------------------------------------------------------------
+//! \brief Fill the E_n edge flux of bfield. The number of active dimensions transverse
+//!        to the edge selects the integration -- 2: full corner integration; 1: the edge
+//!        coincides with the faces normal to the single active transverse direction; 0:
+//!        no transverse variation, E_n is unused and set to zero.
+template <int n, int NDIM, typename Pack_t>
+void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const TE te = EdgeTE(n);
-  const auto ib = md->GetBoundsI(IndexDomain::interior, te);
-  const auto jb = md->GetBoundsJ(IndexDomain::interior, te);
-  const auto kb = md->GetBoundsK(IndexDomain::interior, te);
-  // Number of active dimensions transverse to this edge selects the integration
-  //   2: full corner integration; 1: the edge coincides with the faces normal to the
-  //   single active transverse direction; 0: no transverse variation, E_n is unused.
-  const int p = (n + 1) % 3;
-  const int q = (n + 2) % 3;
-  const bool p_active = (p < ndim);
-  const bool q_active = (q < ndim);
-  parthenon::par_for(
-      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, v.GetNBlocks() - 1,
-      kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
-        Real e = 0.0;
-        if (p_active && q_active) {
-          e = (n == 0)   ? CornerEMF<0>(v, b, k, j, i, dt)
-              : (n == 1) ? CornerEMF<1>(v, b, k, j, i, dt)
-                         : CornerEMF<2>(v, b, k, j, i, dt);
-        } else if (p_active) {
-          // E_n is slot0 on the F_p faces
-          e = v(b, FaceTE(p), ccbulk::face_emf(0), k, j, i);
-        } else if (q_active) {
-          // E_n is slot1 on the F_q faces
-          e = v(b, FaceTE(q), ccbulk::face_emf(1), k, j, i);
-        }
-        v.flux(b, te, ccbulk::bfield(), k, j, i) = e;
+  constexpr int p = (n + 1) % 3;
+  constexpr int q = (n + 2) % 3;
+  constexpr bool p_active = (p < NDIM);
+  constexpr bool q_active = (q < NDIM);
+  constexpr int edge_dir = static_cast<int>(EdgeTE(n)) % 3 + 1;
+
+  // Cell-layout face_emf/face_vrho/velocity/bcc are mixed with the node-layout edge flux
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
+  auto idx_space =
+      lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md, EdgeTE(n));
+  const auto dp = idx_space.GetDelta(Dir(p));
+  const auto dq = idx_space.GetDelta(Dir(q));
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        const Real wfac_p = 512.0 * dt * InvDx(coords, p);
+        const Real wfac_q = 512.0 * dt * InvDx(coords, q);
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        auto fv = RiotLoop::make_flux_pack_view(idx_range, v, edge_dir);
+        RiotLoop::inner(idx_range, [&](const auto e) {
+          if constexpr (p_active && q_active) {
+            fv(ccbulk::bfield(), e) = CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
+          } else if constexpr (p_active) {
+            // E_n is slot0 on the F_p faces
+            fv(ccbulk::bfield(), e) = pv(FaceTE(p), ccbulk::face_emf(0), e);
+          } else if constexpr (q_active) {
+            // E_n is slot1 on the F_q faces
+            fv(ccbulk::bfield(), e) = pv(FaceTE(q), ccbulk::face_emf(1), e);
+          } else {
+            fv(ccbulk::bfield(), e) = 0.0;
+          }
+        });
       });
 }
 
-template <typename Pack_t>
-KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const Pack_t &v, const int b, const int d,
-                                                const int k, const int j, const int i,
-                                                const bool active) {
+template <int NDIM>
+void CalculateCornerEMFImpl(MeshData<Real> *md, const Real dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const TE te = FaceTE(d);
-  const Real blo = v(b, te, ccbulk::bfield(), k, j, i);
-  if (!active) return blo;
-  const Real bhi =
-      v(b, te, ccbulk::bfield(), k + (d == 2), j + (d == 1), i + (d == 0));
-  return 0.5 * (blo + bhi);
+  using parthenon::PDOpt;
+  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc, ccbulk::velocity, ccbulk::face_emf,
+                          ccbulk::face_vrho>(md, std::vector<int>{},
+                                             std::set<PDOpt>{PDOpt::WithFluxes});
+  if (v.GetNBlocks() == 0) return;
+  SetEdgeEMF<0, NDIM>(md, v, dt);
+  SetEdgeEMF<1, NDIM>(md, v, dt);
+  SetEdgeEMF<2, NDIM>(md, v, dt);
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Stage update of the F_d face field, u = gam0 u + gam1 u0 - beta_dt curl(E).
+//!        (curl E)_d = d_p E_q - d_q E_p with p = (d+1)%3, q = (d+2)%3; the E_q edges are
+//!        offset from the F_d face along p, the E_p edges along q. Every field touched is
+//!        node layout, so this uses flat views over NN memory.
+template <int d, int NDIM, typename Pack_t, typename Pack0_t>
+void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
+                     const Real gam0, const Real gam1, const Real beta_dt) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  constexpr int p = (d + 1) % 3;
+  constexpr int q = (d + 2) % 3;
+  constexpr TE te = FaceTE(d);
+  constexpr int ep_dir = static_cast<int>(EdgeTE(p)) % 3 + 1;
+  constexpr int eq_dir = static_cast<int>(EdgeTE(q)) % 3 + 1;
+
+  using lt = RiotUtils::LoopType<LoopConstraint::NoGhost>;
+  auto idx_space =
+      lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), umd, te, TE::NN);
+  const auto dp = idx_space.GetDelta(Dir(p));
+  const auto dq = idx_space.GetDelta(Dir(q));
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        const Real idxp = InvDx(coords, p);
+        const Real idxq = InvDx(coords, q);
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        auto pv0 = RiotLoop::make_pack_view(idx_range, v0);
+        auto fp = RiotLoop::make_flux_pack_view(idx_range, v, ep_dir);
+        auto fq = RiotLoop::make_flux_pack_view(idx_range, v, eq_dir);
+        RiotLoop::inner(idx_range, [&](const auto f) {
+          Real curl = 0.0;
+          if constexpr (p < NDIM) {
+            curl += (fq(ccbulk::bfield(), f + dp) - fq(ccbulk::bfield(), f)) * idxp;
+          }
+          if constexpr (q < NDIM) {
+            curl -= (fp(ccbulk::bfield(), f + dq) - fp(ccbulk::bfield(), f)) * idxq;
+          }
+          pv(te, ccbulk::bfield(), f) = gam0 * pv(te, ccbulk::bfield(), f) +
+                                        gam1 * pv0(te, ccbulk::bfield(), f) -
+                                        beta_dt * curl;
+        });
+      });
+}
+
+template <int NDIM>
+void UpdateFaceFieldsImpl(MeshData<Real> *umd, MeshData<Real> *u0md, const Real gam0,
+                          const Real gam1, const Real beta_dt) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  using parthenon::PDOpt;
+  auto v = riot::MakePack<ccbulk::bfield>(umd, std::vector<int>{},
+                                          std::set<PDOpt>{PDOpt::WithFluxes});
+  auto v0 = riot::MakePack<ccbulk::bfield>(u0md);
+  if (v.GetNBlocks() == 0) return;
+  UpdateFaceField<0, NDIM>(umd, v, v0, gam0, gam1, beta_dt);
+  UpdateFaceField<1, NDIM>(umd, v, v0, gam0, gam1, beta_dt);
+  UpdateFaceField<2, NDIM>(umd, v, v0, gam0, gam1, beta_dt);
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Cell average of face-field component d; components in collapsed directions
+//!        are uniform across the cell and copied.
+template <int d, int NDIM, typename View_t, typename Idx_t, typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const View_t &pv, const Idx_t c,
+                                                const Off_t dd) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  constexpr TE te = FaceTE(d);
+  if constexpr (d < NDIM) {
+    return 0.5 * (pv(te, ccbulk::bfield(), c) + pv(te, ccbulk::bfield(), c + dd));
+  } else {
+    return pv(te, ccbulk::bfield(), c);
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Discrete divergence of the face field in cell c; d1..d3 are the unit offsets
+//!        and idx1..idx3 the inverse cell widths.
+template <int NDIM, typename View_t, typename Idx_t, typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real DivB(const View_t &pv, const Idx_t c, const Off_t d1,
+                                      const Off_t d2, const Off_t d3, const Real idx1,
+                                      const Real idx2, const Real idx3) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  Real div =
+      (pv(TE::F1, ccbulk::bfield(), c + d1) - pv(TE::F1, ccbulk::bfield(), c)) * idx1;
+  if constexpr (NDIM > 1) {
+    div += (pv(TE::F2, ccbulk::bfield(), c + d2) - pv(TE::F2, ccbulk::bfield(), c)) * idx2;
+  }
+  if constexpr (NDIM > 2) {
+    div += (pv(TE::F3, ccbulk::bfield(), c + d3) - pv(TE::F3, ccbulk::bfield(), c)) * idx3;
+  }
+  return div;
+}
+
+template <int NDIM>
+void CopyFaceBToAlignedImpl(MeshData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bface_aligned>(md);
+  if (v.GetNBlocks() == 0) return;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md, TE::CC);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner(idx_range, [&](const auto c) {
+          pv(TE::F1, ccbulk::bface_aligned(), c) = pv(TE::F1, ccbulk::bfield(), c);
+          if constexpr (NDIM > 1) {
+            pv(TE::F2, ccbulk::bface_aligned(), c) = pv(TE::F2, ccbulk::bfield(), c);
+          }
+          if constexpr (NDIM > 2) {
+            pv(TE::F3, ccbulk::bface_aligned(), c) = pv(TE::F3, ccbulk::bfield(), c);
+          }
+        });
+      });
+}
+
+template <int NDIM>
+void FaceToCellBImpl(MeshData<Real> *md, IndexDomain domain) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc>(md);
+  if (v.GetNBlocks() == 0) return;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
+  auto idx_space = lt::GetIndexSpace(domain, 0, v.GetNBlocks(), md, TE::CC);
+  const auto d1 = idx_space.GetDelta(X1DIR);
+  const auto d2 = idx_space.GetDelta(X2DIR);
+  const auto d3 = idx_space.GetDelta(X3DIR);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner(idx_range, [&](const auto c) {
+          pv(ccbulk::bcc(0), c) = CellBComponent<0, NDIM>(pv, c, d1);
+          pv(ccbulk::bcc(1), c) = CellBComponent<1, NDIM>(pv, c, d2);
+          pv(ccbulk::bcc(2), c) = CellBComponent<2, NDIM>(pv, c, d3);
+        });
+      });
+}
+
+template <int NDIM>
+void CalculateDivBImpl(MeshData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto v = riot::MakePack<ccbulk::bfield, ccbulk::divb>(md);
+  if (v.GetNBlocks() == 0) return;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md, TE::CC);
+  const auto d1 = idx_space.GetDelta(X1DIR);
+  const auto d2 = idx_space.GetDelta(X2DIR);
+  const auto d3 = idx_space.GetDelta(X3DIR);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        const Real idx1 = InvDx(coords, 0);
+        const Real idx2 = InvDx(coords, 1);
+        const Real idx3 = InvDx(coords, 2);
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner(idx_range, [&](const auto c) {
+          pv(ccbulk::divb(), c) = DivB<NDIM>(pv, c, d1, d2, d3, idx1, idx2, idx3);
+        });
+      });
+}
+
+template <int NDIM>
+Real MaxDivBImpl(MeshData<Real> *md) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto v = riot::MakePack<ccbulk::bfield>(md);
+  if (v.GetNBlocks() == 0) return 0.0;
+  // Only node-layout bfield is read, so flat views over NN memory
+  using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
+  auto idx_space =
+      rt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md, TE::CC, TE::NN);
+  const auto d1 = idx_space.GetDelta(X1DIR);
+  const auto d2 = idx_space.GetDelta(X2DIR);
+  const auto d3 = idx_space.GetDelta(X3DIR);
+  return RiotLoop::outer_reduce(
+      idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
+        const Real idx1 = InvDx(coords, 0);
+        const Real idx2 = InvDx(coords, 1);
+        const Real idx3 = InvDx(coords, 2);
+        Real dxmin = 1.0 / idx1;
+        if constexpr (NDIM > 1) dxmin = std::min(dxmin, 1.0 / idx2);
+        if constexpr (NDIM > 2) dxmin = std::min(dxmin, 1.0 / idx3);
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner_reduce(idx_range, [&](const auto c, Real &lmax) {
+          lmax = std::max(
+              lmax, std::abs(DivB<NDIM>(pv, c, d1, d2, d3, idx1, idx2, idx3)) * dxmin);
+        });
+      });
 }
 } // namespace
 
@@ -166,21 +362,13 @@ KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const Pack_t &v, const int b, co
 //!        scratch ccbulk::bface_aligned, so that the flux kernel can read it through the
 //!        flat pack views. Covers every cell-memory face index (entire domain).
 void CopyFaceBToAligned(MeshData<Real> *md) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const int ndim = md->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bface_aligned>(md);
-  if (v.GetNBlocks() == 0) return;
-  const auto ib = md->GetBoundsI(IndexDomain::entire);
-  const auto jb = md->GetBoundsJ(IndexDomain::entire);
-  const auto kb = md->GetBoundsK(IndexDomain::entire);
-  for (int d = 0; d < ndim; ++d) {
-    const TE te = FaceTE(d);
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
-        v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
-          v(b, te, ccbulk::bface_aligned(), k, j, i) = v(b, te, ccbulk::bfield(), k, j, i);
-        });
+  switch (md->GetParentPointer()->ndim) {
+  case 1:
+    return CopyFaceBToAlignedImpl<1>(md);
+  case 2:
+    return CopyFaceBToAlignedImpl<2>(md);
+  default:
+    return CopyFaceBToAlignedImpl<3>(md);
   }
 }
 
@@ -189,16 +377,16 @@ void CopyFaceBToAligned(MeshData<Real> *md) {
 //! \brief Fill the edge fluxes of bfield with the edge EMFs E (not -E), computed from the
 //!        face EMFs of the most recent CalculateFluxes call.
 TaskStatus CalculateCornerEMF(MeshData<Real> *md, const Real dt) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  using parthenon::PDOpt;
   if (md->NumBlocks() == 0) return TaskStatus::complete;
-  const int ndim = md->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc, ccbulk::velocity, ccbulk::face_emf,
-                          ccbulk::face_vrho>(md, std::vector<int>{},
-                                             std::set<PDOpt>{PDOpt::WithFluxes});
-  if (v.GetNBlocks() == 0) return TaskStatus::complete;
-  for (int n = 0; n < 3; ++n) {
-    SetEdgeEMF(md, v, n, ndim, dt);
+  switch (md->GetParentPointer()->ndim) {
+  case 1:
+    CalculateCornerEMFImpl<1>(md, dt);
+    break;
+  case 2:
+    CalculateCornerEMFImpl<2>(md, dt);
+    break;
+  default:
+    CalculateCornerEMFImpl<3>(md, dt);
   }
   return TaskStatus::complete;
 }
@@ -210,49 +398,16 @@ TaskStatus CalculateCornerEMF(MeshData<Real> *md, const Real dt) {
 //!        with E read from the edge fluxes of u (after flux correction).
 TaskStatus UpdateFaceFields(MeshData<Real> *umd, MeshData<Real> *u0md, const Real gam0,
                             const Real gam1, const Real beta_dt) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  using parthenon::PDOpt;
   if (umd->NumBlocks() == 0) return TaskStatus::complete;
-  const int ndim = umd->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield>(umd, std::vector<int>{},
-                                          std::set<PDOpt>{PDOpt::WithFluxes});
-  auto v0 = riot::MakePack<ccbulk::bfield>(u0md);
-  if (v.GetNBlocks() == 0) return TaskStatus::complete;
-
-  for (int d = 0; d < 3; ++d) {
-    const TE te = FaceTE(d);
-    // (curl E)_d = d_p E_q - d_q E_p with p = (d+1)%3, q = (d+2)%3. The E_q edges are
-    // offset from the F_d face along p, the E_p edges along q.
-    const int p = (d + 1) % 3;
-    const int q = (d + 2) % 3;
-    const TE ep = EdgeTE(p);
-    const TE eq = EdgeTE(q);
-    const bool p_active = (p < ndim);
-    const bool q_active = (q < ndim);
-    const auto ib = umd->GetBoundsI(IndexDomain::interior, te);
-    const auto jb = umd->GetBoundsJ(IndexDomain::interior, te);
-    const auto kb = umd->GetBoundsK(IndexDomain::interior, te);
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
-        v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-        KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
-          Real curl = 0.0;
-          if (p_active) {
-            curl += (v.flux(b, eq, ccbulk::bfield(), k + (p == 2), j + (p == 1),
-                            i + (p == 0)) -
-                     v.flux(b, eq, ccbulk::bfield(), k, j, i)) *
-                    InvDx(v, b, p);
-          }
-          if (q_active) {
-            curl -= (v.flux(b, ep, ccbulk::bfield(), k + (q == 2), j + (q == 1),
-                            i + (q == 0)) -
-                     v.flux(b, ep, ccbulk::bfield(), k, j, i)) *
-                    InvDx(v, b, q);
-          }
-          v(b, te, ccbulk::bfield(), k, j, i) =
-              gam0 * v(b, te, ccbulk::bfield(), k, j, i) +
-              gam1 * v0(b, te, ccbulk::bfield(), k, j, i) - beta_dt * curl;
-        });
+  switch (umd->GetParentPointer()->ndim) {
+  case 1:
+    UpdateFaceFieldsImpl<1>(umd, u0md, gam0, gam1, beta_dt);
+    break;
+  case 2:
+    UpdateFaceFieldsImpl<2>(umd, u0md, gam0, gam1, beta_dt);
+    break;
+  default:
+    UpdateFaceFieldsImpl<3>(umd, u0md, gam0, gam1, beta_dt);
   }
   return TaskStatus::complete;
 }
@@ -262,47 +417,28 @@ TaskStatus UpdateFaceFields(MeshData<Real> *umd, MeshData<Real> *u0md, const Rea
 //! \brief Average the face field to cell centers (ccbulk::bcc) over domain. Components in
 //!        collapsed directions are uniform across the cell and copied.
 void FaceToCellB(MeshData<Real> *md, IndexDomain domain) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const int ndim = md->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc>(md);
-  if (v.GetNBlocks() == 0) return;
-  const auto ib = md->GetBoundsI(domain);
-  const auto jb = md->GetBoundsJ(domain);
-  const auto kb = md->GetBoundsK(domain);
-  parthenon::par_for(
-      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, v.GetNBlocks() - 1,
-      kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
-        for (int d = 0; d < 3; ++d) {
-          v(b, ccbulk::bcc(d), k, j, i) = CellBComponent(v, b, d, k, j, i, d < ndim);
-        }
-      });
+  switch (md->GetParentPointer()->ndim) {
+  case 1:
+    return FaceToCellBImpl<1>(md, domain);
+  case 2:
+    return FaceToCellBImpl<2>(md, domain);
+  default:
+    return FaceToCellBImpl<3>(md, domain);
+  }
 }
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::CalculateDivB
 //! \brief Discrete divergence of the face field in interior cells (ccbulk::divb).
 void CalculateDivB(MeshData<Real> *md) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const int ndim = md->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::divb>(md);
-  if (v.GetNBlocks() == 0) return;
-  const auto ib = md->GetBoundsI(IndexDomain::interior);
-  const auto jb = md->GetBoundsJ(IndexDomain::interior);
-  const auto kb = md->GetBoundsK(IndexDomain::interior);
-  parthenon::par_for(
-      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, v.GetNBlocks() - 1,
-      kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {
-        Real div = 0.0;
-        for (int d = 0; d < ndim; ++d) {
-          const TE te = FaceTE(d);
-          div += (v(b, te, ccbulk::bfield(), k + (d == 2), j + (d == 1), i + (d == 0)) -
-                  v(b, te, ccbulk::bfield(), k, j, i)) *
-                 InvDx(v, b, d);
-        }
-        v(b, ccbulk::divb(), k, j, i) = div;
-      });
+  switch (md->GetParentPointer()->ndim) {
+  case 1:
+    return CalculateDivBImpl<1>(md);
+  case 2:
+    return CalculateDivBImpl<2>(md);
+  default:
+    return CalculateDivBImpl<3>(md);
+  }
 }
 
 //----------------------------------------------------------------------------------------
@@ -312,22 +448,20 @@ Real total_magnetic_energy(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   auto v = riot::MakePack<ccbulk::bcc>(md);
   if (v.GetNBlocks() == 0) return 0.0;
-  const auto ib = md->GetBoundsI(IndexDomain::interior);
-  const auto jb = md->GetBoundsJ(IndexDomain::interior);
-  const auto kb = md->GetBoundsK(IndexDomain::interior);
-  Real eb = 0.0;
-  parthenon::par_reduce(
-      parthenon::loop_pattern_mdrange_tag, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
-      v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &leb) {
+  using rt = RiotUtils::ReductionType<Kokkos::Sum<Real>>;
+  auto idx_space = rt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md, TE::CC);
+  return RiotLoop::outer_reduce(
+      idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
         auto &coords = v.GetCoordinates(b);
-        leb += 0.5 *
-               (SQR(v(b, ccbulk::bcc(0), k, j, i)) + SQR(v(b, ccbulk::bcc(1), k, j, i)) +
-                SQR(v(b, ccbulk::bcc(2), k, j, i))) *
-               coords.CellVolume(k, j, i);
-      },
-      Kokkos::Sum<Real>(eb));
-  return eb;
+        auto pv = RiotLoop::make_pack_view(idx_range, v);
+        RiotLoop::inner_reduce(idx_range, [&](const auto c, Real &leb) {
+          const auto [k, j, i] = idx_range.GetKJI(c);
+          leb += 0.5 *
+                 (SQR(pv(ccbulk::bcc(0), c)) + SQR(pv(ccbulk::bcc(1), c)) +
+                  SQR(pv(ccbulk::bcc(2), c))) *
+                 coords.CellVolume(k, j, i);
+        });
+      });
 }
 
 //----------------------------------------------------------------------------------------
@@ -335,32 +469,14 @@ Real total_magnetic_energy(MeshData<Real> *md) {
 //! \brief History output: max |div B| dx_min over interior cells, recomputed from the
 //!        face field (so it does not depend on when ccbulk::divb was last filled).
 Real max_divb(MeshData<Real> *md) {
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  const int ndim = md->GetParentPointer()->ndim;
-  auto v = riot::MakePack<ccbulk::bfield>(md);
-  if (v.GetNBlocks() == 0) return 0.0;
-  const auto ib = md->GetBoundsI(IndexDomain::interior);
-  const auto jb = md->GetBoundsJ(IndexDomain::interior);
-  const auto kb = md->GetBoundsK(IndexDomain::interior);
-  Real divb_max = 0.0;
-  parthenon::par_reduce(
-      parthenon::loop_pattern_mdrange_tag, PARTHENON_AUTO_LABEL, DevExecSpace(), 0,
-      v.GetNBlocks() - 1, kb.s, kb.e, jb.s, jb.e, ib.s, ib.e,
-      KOKKOS_LAMBDA(const int b, const int k, const int j, const int i, Real &lmax) {
-        Real div = 0.0;
-        Real dxmin = std::numeric_limits<Real>::max();
-        for (int d = 0; d < ndim; ++d) {
-          const TE te = FaceTE(d);
-          const Real idx = InvDx(v, b, d);
-          div += (v(b, te, ccbulk::bfield(), k + (d == 2), j + (d == 1), i + (d == 0)) -
-                  v(b, te, ccbulk::bfield(), k, j, i)) *
-                 idx;
-          dxmin = std::min(dxmin, 1.0 / idx);
-        }
-        lmax = std::max(lmax, std::abs(div) * dxmin);
-      },
-      Kokkos::Max<Real>(divb_max));
-  return divb_max;
+  switch (md->GetParentPointer()->ndim) {
+  case 1:
+    return MaxDivBImpl<1>(md);
+  case 2:
+    return MaxDivBImpl<2>(md);
+  default:
+    return MaxDivBImpl<3>(md);
+  }
 }
 
 } // namespace Hydro
