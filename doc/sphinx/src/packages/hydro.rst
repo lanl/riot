@@ -211,6 +211,14 @@ All parameters below reside in the ``<hydro>`` block unless otherwise noted.
      - string
      - ``=recon``
      - Reconstruction method used for volume fractions.
+   * - plm_slope_limit
+     - Real
+     - ``1.99``
+     - PLM slope limit :math:`\alpha \in [1, 2]` in
+       :math:`\Delta q = \mathrm{minmod}(\Delta q_c, \alpha \min(|\Delta q_-|, |\Delta q_+|))`;
+       1 is minmod, 2 is MC. Applies to the bulk flow variables and magnetic field
+       (material density and internal energy use :math:`\min(\alpha, 1.5)`). Values
+       near 1 suppress post-shock oscillations, e.g. in MHD shock tubes.
    * - riemann
      - string
      - ``hllc``

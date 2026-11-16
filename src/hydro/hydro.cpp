@@ -99,6 +99,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("vfrac_recon", vfrac_recon_tag);
   params.Add("stencil_width", stencil_width);
 
+  // PLM slope limit theta in slope = minmod(central, theta * one-sided): 1 is minmod,
+  // 2 is MC. Applies to the bulk flow variables and magnetic field; material density
+  // and internal energy use min(theta, 1.5).
+  const Real plm_slope_limit = pin->GetOrAddReal(
+      "hydro", "plm_slope_limit", THETA,
+      "PLM slope limit in [1, 2] (1 = minmod, 2 = MC) for the flow variables");
+  PARTHENON_REQUIRE_THROWS(plm_slope_limit >= 1.0 && plm_slope_limit <= 2.0,
+                           "hydro/plm_slope_limit must be in [1, 2]");
+  params.Add("plm_slope_limit", plm_slope_limit);
+
   // CFL is 0.8 by default
   Real cfl = pin->GetOrAddReal("hydro", "cfl", 0.8, "Courant-Friedrichs-Lewy number");
   params.Add("cfl", cfl);
@@ -117,10 +127,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
       std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "hlld"},
       "Riemann solver to use (forced to hlld when MHD is enabled)");
   if (do_mhd) {
-    if (solver != "hlld" && user_set_solver &&
-        parthenon::Globals::my_rank == 0) {
+    if (solver != "hlld" && user_set_solver && parthenon::Globals::my_rank == 0) {
       PARTHENON_WARN("MHD is enabled, so the hlld Riemann solver will be used instead "
-                     "of " + solver);
+                     "of " +
+                     solver);
     }
     solver = "hlld";
   }
@@ -265,8 +275,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     hydro->AddField<ccbulk::bfield>(m);
 
     // Cell-centered magnetic field (average of the face fields)
-    m = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Vector, Metadata::Derived,
-                  Metadata::OneCopy},
+    m = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Vector,
+                  Metadata::Derived, Metadata::OneCopy},
                  vel_arr_size);
     hydro->AddField<ccbulk::bcc>(m);
 
