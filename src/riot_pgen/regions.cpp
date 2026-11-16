@@ -419,9 +419,15 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
 
   auto &cb = pmb->cellbounds;
   // Sample the python function name at the centers of element te (face or edge) over
-  // the entire domain; off[d] marks that te sits on the lower cell face in direction d.
+  // the entire domain and keep coordinate component comp; off[d] marks that te sits on
+  // the lower cell face in direction d. As for the cell state, positions and vector
+  // components seen by python are Cartesian (the x-z plane for cylindrical coordinates).
   auto sample = [&](const std::string &name, const TE te, const std::array<bool, 3> off,
                     const int comp, auto &&store) {
+    // python component holding coordinate component comp (cf. coordinate_velocities)
+    constexpr bool swap_yz = parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                             parthenon::IsCoord<parthenon::UniformSpherical>();
+    const int py_comp = (swap_yz && comp > 0) ? 3 - comp : comp;
     const auto ibe = cb.GetBoundsI(IndexDomain::entire, te);
     const auto jbe = cb.GetBoundsJ(IndexDomain::entire, te);
     const auto kbe = cb.GetBoundsK(IndexDomain::entire, te);
@@ -431,9 +437,13 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     for (int k = kbe.s; k <= kbe.e; k++) {
       for (int j = jbe.s; j <= jbe.e; j++) {
         for (int i = ibe.s; i <= ibe.e; i++) {
-          xs(m, 0) = (off[0] && ndim > 0) ? coords->Xf<X1DIR>(i) : coords->Xc<X1DIR>(i);
-          xs(m, 1) = (off[1] && ndim > 1) ? coords->Xf<X2DIR>(j) : coords->Xc<X2DIR>(j);
-          xs(m, 2) = (off[2] && ndim > 2) ? coords->Xf<X3DIR>(k) : coords->Xc<X3DIR>(k);
+          const auto [xx, yy, zz] = to_cartesian(
+              (off[0] && ndim > 0) ? coords->Xf<X1DIR>(i) : coords->Xc<X1DIR>(i),
+              (off[1] && ndim > 1) ? coords->Xf<X2DIR>(j) : coords->Xc<X2DIR>(j),
+              (off[2] && ndim > 2) ? coords->Xf<X3DIR>(k) : coords->Xc<X3DIR>(k));
+          xs(m, 0) = xx;
+          xs(m, 1) = yy;
+          xs(m, 2) = zz;
           m++;
         }
       }
@@ -444,7 +454,7 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     for (int k = kbe.s; k <= kbe.e; k++) {
       for (int j = jbe.s; j <= jbe.e; j++) {
         for (int i = ibe.s; i <= ibe.e; i++) {
-          store(k, j, i, out(m, comp));
+          store(k, j, i, out(m, py_comp));
           m++;
         }
       }
@@ -476,36 +486,44 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
                A[d](k, j, i) = a;
              });
     }
-    // B_d = d_p A_q - d_q A_p, p = (d+1)%3, q = (d+2)%3 (matches Hydro::UpdateFaceFields)
+    // B_d = (curl A)_d: by Stokes, the circulation of A around the F_d face divided by
+    // the face area, [(L A_q)|_{+p} - (L A_q)|_{0} - (L A_p)|_{+q} + (L A_p)|_{0}] / A_d
+    // with p = (d+1)%3, q = (d+2)%3 and L the edge lengths (matches
+    // Hydro::UpdateFaceFields)
+    auto measure = [&](const TE te, const int k, const int j, const int i) {
+      return coords->Volume(parthenon::CellLevel::same, te, k, j, i);
+    };
     for (int d = 0; d < 3; d++) {
       const int p = (d + 1) % 3;
       const int q = (d + 2) % 3;
       const bool p_active = (p < ndim);
       const bool q_active = (q < ndim);
-      const Real dxp = coords->Dx(p + 1);
-      const Real dxq = coords->Dx(q + 1);
       const auto ibe = cb.GetBoundsI(IndexDomain::entire, faces[d]);
       const auto jbe = cb.GetBoundsJ(IndexDomain::entire, faces[d]);
       const auto kbe = cb.GetBoundsK(IndexDomain::entire, faces[d]);
       for (int k = kbe.s; k <= kbe.e; k++) {
         for (int j = jbe.s; j <= jbe.e; j++) {
           for (int i = ibe.s; i <= ibe.e; i++) {
-            Real b = 0.0;
+            Real circ = 0.0;
             if (p_active) {
               const int kp = k + (p == 2), jp = j + (p == 1), ip = i + (p == 0);
               if (kp < A[q].extent_int(0) && jp < A[q].extent_int(1) &&
                   ip < A[q].extent_int(2)) {
-                b += (A[q](kp, jp, ip) - A[q](k, j, i)) / dxp;
+                circ += measure(edges[q], kp, jp, ip) * A[q](kp, jp, ip) -
+                        measure(edges[q], k, j, i) * A[q](k, j, i);
               }
             }
             if (q_active) {
               const int kq = k + (q == 2), jq = j + (q == 1), iq = i + (q == 0);
               if (kq < A[p].extent_int(0) && jq < A[p].extent_int(1) &&
                   iq < A[p].extent_int(2)) {
-                b -= (A[p](kq, jq, iq) - A[p](k, j, i)) / dxq;
+                circ -= measure(edges[p], kq, jq, iq) * A[p](kq, jq, iq) -
+                        measure(edges[p], k, j, i) * A[p](k, j, i);
               }
             }
-            bh(d, 0, 0, k, j, i) = b;
+            // radial faces on the axis have zero area (and circulation)
+            const Real area = measure(faces[d], k, j, i);
+            bh(d, 0, 0, k, j, i) = (area > 0.0) ? circ / area : 0.0;
           }
         }
       }
@@ -513,14 +531,21 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
   }
   bvar->data.DeepCopy(bh);
 
-  // add the magnetic energy of the cell-centered field to the total energy
+  // add the magnetic energy of the cell-centered field to the total energy; the cell
+  // field is interpolated as in Hydro::FaceToCellB
+  const bool curvilinear = !parthenon::IsCoord<parthenon::UniformCartesian>();
   block_loop<state>([&](const int k, const int j, const int i) {
     Real b2 = 0.0;
     for (int d = 0; d < 3; d++) {
       const Real blo = bh(d, 0, 0, k, j, i);
       const Real bhi = (d < ndim) ? bh(d, 0, 0, k + (d == 2), j + (d == 1), i + (d == 0))
                                   : blo;
-      b2 += SQR(0.5 * (blo + bhi));
+      Real whi = 0.5;
+      if (d == 0 && curvilinear) {
+        const Real xlo = coords->Xf<X1DIR>(i);
+        whi = (coords->Xc<X1DIR>(i) - xlo) / (coords->Xf<X1DIR>(i + 1) - xlo);
+      }
+      b2 += SQR((1.0 - whi) * blo + whi * bhi);
     }
     E(k, j, i) += 0.5 * b2;
   });

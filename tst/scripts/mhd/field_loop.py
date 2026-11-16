@@ -19,6 +19,7 @@
 
 # Modules
 import logging
+import os
 import numpy as np
 import scripts.utils.riot as riot
 
@@ -34,6 +35,11 @@ ME_RATIO_MIN = 0.8
 def run(**kwargs):
     logger.debug("Generating input " + __name__)
     riot.generate("mhd/field_loop.py", ["--nx", "64", "--tlim", "1.0", "--amr"])
+    # Parthenon appends to an existing history file, so remove one left by a previous
+    # run in a reused build directory
+    hst = "build/src/" + problem_id + ".out0.hst"
+    if os.path.exists(hst):
+        os.remove(hst)
     logger.debug("Runnning test " + __name__)
     arguments = [
         "parthenon/job/problem_id=" + problem_id,

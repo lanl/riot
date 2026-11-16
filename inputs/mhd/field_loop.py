@@ -15,7 +15,8 @@
 #
 # Gardiner & Stone (2005) field loop advection on [-1,1]x[-0.5,0.5]: a weak loop of
 # radius R in uniform flow, set from A_z = A0 max(R - r, 0). With --amr the mesh refines
-# on the magnetic field so the loop crosses fine/coarse boundaries.
+# on the magnetic field so the loop crosses fine/coarse boundaries. --ny sets the number
+# of cells in y (default nx/2, i.e. square cells).
 
 import argparse
 import numpy as np
@@ -29,6 +30,7 @@ R = 0.3
 def make_input():
     parser = argparse.ArgumentParser()
     parser.add_argument("--nx", type=int, default=128)
+    parser.add_argument("--ny", type=int, default=None)
     parser.add_argument("--tlim", type=float, default=2.0)
     parser.add_argument("--amr", action="store_true")
     args, _ = parser.parse_known_args()
@@ -58,7 +60,7 @@ def make_input():
         x1max=1.0,
         ix1_bc="periodic",
         ox1_bc="periodic",
-        nx2=args.nx // 2,
+        nx2=args.ny if args.ny is not None else args.nx // 2,
         x2min=-0.5,
         x2max=0.5,
         ix2_bc="periodic",

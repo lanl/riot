@@ -246,8 +246,10 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   }
 
   if (do_mhd) {
-    PARTHENON_REQUIRE_THROWS(parthenon::IsCoord<parthenon::UniformCartesian>(),
-                             "MHD is only implemented for uniform Cartesian coordinates");
+    PARTHENON_REQUIRE_THROWS(parthenon::IsCoord<parthenon::UniformCartesian>() ||
+                                 parthenon::IsCoord<parthenon::UniformCylindrical>(),
+                             "MHD is only implemented for uniform Cartesian and "
+                             "cylindrical coordinates");
     PARTHENON_REQUIRE_THROWS(!do_strength, "MHD is incompatible with material strength");
     PARTHENON_REQUIRE_THROWS(!do_ionization, "MHD is incompatible with ionization");
 
@@ -587,7 +589,12 @@ TaskStatus GuessCellVolumeFractions(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus Hydro::CalculateGeometricSource
-//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries
+//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries.
+//!        In cylindrical (r, z, phi) coordinates, the divergence of the momentum flux
+//!        tensor T = rho v v + (p + B^2/2) I - B B - sigma has the geometric parts
+//!          S_r = T_phiphi / r,  S_phi = -T_rphi / r,
+//!        i.e. pressure, deviatoric/viscous hoop stress, centrifugal and magnetic hoop
+//!        stress in S_r, and Coriolis and magnetic tension in S_phi.
 TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -602,12 +609,14 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
   auto &strength_mats = materials->Param<std::vector<int>>("strength_mats");
 
   const bool do_ionization = pm->packages.Get("riot")->Param<bool>("do_ionization");
+  const bool do_mhd = pm->packages.Get("hydro")->Param<bool>("do_mhd");
   bool do_plasma_viscosity = false;
   if (do_ionization) {
     do_plasma_viscosity = pm->packages.Get("ionization")->Param<bool>("plasma_viscosity");
   }
 
-  auto v = riot::MakePack<ccbulk::pressure, ccmat::volume_fraction, cm::deviatoric_stress,
+  auto v = riot::MakePack<ccbulk::pressure, ccbulk::rho, ccbulk::velocity, ccbulk::bcc,
+                          ccmat::volume_fraction, cm::deviatoric_stress,
                           ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(
       state, strength_mats);
   const int nblocks = v.GetNBlocks();
@@ -623,8 +632,9 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        // stress = T_phiphi (T_thetatheta + T_phiphi in spherical), shear = T_rphi
         auto stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
-        auto visc_stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
+        auto shear = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto geom = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto &coords = v.GetCoordinates(b);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
@@ -647,7 +657,27 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
         const int nstr_mat = v.GetSize(b, ccmat::volume_fraction());
         RiotLoop::inner(idx_range, [&](const auto kji) {
           stress(kji) = pv(ccbulk::pressure(), kji);
+          shear(kji) = 0.0;
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+            const Real rho = pv(ccbulk::rho(), kji);
+            const Real vr = pv(ccbulk::velocity(0), kji);
+            const Real vphi = pv(ccbulk::velocity(2), kji);
+            stress(kji) += rho * vphi * vphi;
+            shear(kji) = rho * vr * vphi;
+          }
         });
+
+        if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+          if (do_mhd) {
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              const Real br = pv(ccbulk::bcc(0), kji);
+              const Real bz = pv(ccbulk::bcc(1), kji);
+              const Real bphi = pv(ccbulk::bcc(2), kji);
+              stress(kji) += 0.5 * (br * br + bz * bz - bphi * bphi);
+              shear(kji) -= br * bphi;
+            });
+          }
+        }
 
         if (do_strength) {
           for (int n = 0; n < nstr_mat; n++) {
@@ -686,7 +716,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
         RiotLoop::inner(idx_range, [&](const auto kji) {
           pvsrc(ccbulk::momentum(0), kji) = stress(kji) * geom(kji);
           pvsrc(ccbulk::momentum(1), kji) = 0.0;
-          pvsrc(ccbulk::momentum(2), kji) = 0.0;
+          pvsrc(ccbulk::momentum(2), kji) = -shear(kji) * geom(kji);
         });
       });
 

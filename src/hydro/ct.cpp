@@ -54,11 +54,20 @@ constexpr parthenon::CoordinateDirection Dir(const int d) {
   return static_cast<parthenon::CoordinateDirection>(d + 1);
 }
 
-template <typename Coords_t>
-KOKKOS_FORCEINLINE_FUNCTION Real InvDx(const Coords_t &coords, const int d) {
-  return 1.0 / ((d == 0)   ? coords.template Dx<X1DIR>()
-                : (d == 1) ? coords.template Dx<X2DIR>()
-                           : coords.template Dx<X3DIR>());
+//! Edge length, face area or cell volume of element el at index idx of idx_range
+template <TE el, typename Coords_t, typename Range_t, typename Idx_t>
+KOKKOS_FORCEINLINE_FUNCTION Real Measure(const Coords_t &coords, const Range_t &idx_range,
+                                         const Idx_t idx) {
+  const auto [k, j, i] = idx_range.GetKJI(idx);
+  return coords.template Volume<el>(k, j, i);
+}
+
+//! Physical cell width along direction d at index idx of idx_range
+template <int d, typename Coords_t, typename Range_t, typename Idx_t>
+KOKKOS_FORCEINLINE_FUNCTION Real CellWidth(const Coords_t &coords, const Range_t &idx_range,
+                                           const Idx_t idx) {
+  const auto [k, j, i] = idx_range.GetKJI(idx);
+  return coords.template CellWidth<d + 1>(k, j, i);
 }
 
 //----------------------------------------------------------------------------------------
@@ -69,7 +78,8 @@ KOKKOS_FORCEINLINE_FUNCTION Real InvDx(const Coords_t &coords, const int d) {
 //!        c11 = e. The face EMFs come from the F_p faces at e-dq and e (slot0) and the F_q
 //!        faces at e-dp and e (slot1). Each face's upwind weight is
 //!        w = 0.5 + clamp(512 dt vrho/dx, +-0.5) (Athena++ GetWeightForCT), w = 1 meaning
-//!        fully upwinded from the lower cell; wfac_{p,q} = 512 dt / dx_{p,q}.
+//!        fully upwinded from the lower cell; wfac_{p,q} = 512 dt / dx_{p,q}, with dx the
+//!        physical cell width of cell e.
 template <int n, typename View_t, typename Idx_t, typename Off_t>
 KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e, const Off_t dp,
                                            const Off_t dq, const Real wfac_p,
@@ -135,12 +145,12 @@ void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto &coords = v.GetCoordinates(b);
-        const Real wfac_p = 512.0 * dt * InvDx(coords, p);
-        const Real wfac_q = 512.0 * dt * InvDx(coords, q);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         auto fv = RiotLoop::make_flux_pack_view(idx_range, v, edge_dir);
         RiotLoop::inner(idx_range, [&](const auto e) {
           if constexpr (p_active && q_active) {
+            const Real wfac_p = 512.0 * dt / CellWidth<p>(coords, idx_range, e);
+            const Real wfac_q = 512.0 * dt / CellWidth<q>(coords, idx_range, e);
             fv(ccbulk::bfield(), e) = CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
           } else if constexpr (p_active) {
             // E_n is slot0 on the F_p faces
@@ -170,9 +180,11 @@ void CalculateCornerEMFImpl(MeshData<Real> *md, const Real dt) {
 
 //----------------------------------------------------------------------------------------
 //! \brief Stage update of the F_d face field, u = gam0 u + gam1 u0 - beta_dt curl(E).
-//!        (curl E)_d = d_p E_q - d_q E_p with p = (d+1)%3, q = (d+2)%3; the E_q edges are
-//!        offset from the F_d face along p, the E_p edges along q. Every field touched is
-//!        node layout, so this uses flat views over NN memory.
+//!        By Stokes, (curl E)_d is the circulation of E around the face divided by its
+//!        area, [(L E_q)|_{+p} - (L E_q)|_{0} - (L E_p)|_{+q} + (L E_p)|_{0}] / A_d, with
+//!        p = (d+1)%3, q = (d+2)%3 and L the edge lengths; the E_q edges are offset from
+//!        the F_d face along p, the E_p edges along q. Every field touched is node layout,
+//!        so this uses flat views over NN memory.
 template <int d, int NDIM, typename Pack_t, typename Pack0_t>
 void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
                      const Real gam0, const Real gam1, const Real beta_dt) {
@@ -191,20 +203,25 @@ void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto &coords = v.GetCoordinates(b);
-        const Real idxp = InvDx(coords, p);
-        const Real idxq = InvDx(coords, q);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         auto pv0 = RiotLoop::make_pack_view(idx_range, v0);
         auto fp = RiotLoop::make_flux_pack_view(idx_range, v, ep_dir);
         auto fq = RiotLoop::make_flux_pack_view(idx_range, v, eq_dir);
         RiotLoop::inner(idx_range, [&](const auto f) {
-          Real curl = 0.0;
+          Real circ = 0.0;
           if constexpr (p < NDIM) {
-            curl += (fq(ccbulk::bfield(), f + dp) - fq(ccbulk::bfield(), f)) * idxp;
+            circ += Measure<EdgeTE(q)>(coords, idx_range, f + dp) *
+                        fq(ccbulk::bfield(), f + dp) -
+                    Measure<EdgeTE(q)>(coords, idx_range, f) * fq(ccbulk::bfield(), f);
           }
           if constexpr (q < NDIM) {
-            curl -= (fp(ccbulk::bfield(), f + dq) - fp(ccbulk::bfield(), f)) * idxq;
+            circ -= Measure<EdgeTE(p)>(coords, idx_range, f + dq) *
+                        fp(ccbulk::bfield(), f + dq) -
+                    Measure<EdgeTE(p)>(coords, idx_range, f) * fp(ccbulk::bfield(), f);
           }
+          // Radial faces on the axis have zero area (and circulation); leave them be
+          const Real area = Measure<te>(coords, idx_range, f);
+          const Real curl = (area > 0.0) ? circ / area : 0.0;
           pv(te, ccbulk::bfield(), f) = gam0 * pv(te, ccbulk::bfield(), f) +
                                         gam1 * pv0(te, ccbulk::bfield(), f) -
                                         beta_dt * curl;
@@ -227,37 +244,58 @@ void UpdateFaceFieldsImpl(MeshData<Real> *umd, MeshData<Real> *u0md, const Real 
 }
 
 //----------------------------------------------------------------------------------------
-//! \brief Cell average of face-field component d; components in collapsed directions
-//!        are uniform across the cell and copied.
-template <int d, int NDIM, typename View_t, typename Idx_t, typename Off_t>
-KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const View_t &pv, const Idx_t c,
-                                                const Off_t dd) {
+//! \brief Cell-centered value of face-field component d, interpolated linearly from the
+//!        two faces to the cell centroid (the midpoint except for the radial direction of
+//!        curvilinear coordinates). Components in collapsed directions are uniform across
+//!        the cell and copied.
+template <int d, int NDIM, typename Coords_t, typename Range_t, typename View_t,
+          typename Idx_t, typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const Coords_t &coords,
+                                                const Range_t &idx_range, const View_t &pv,
+                                                const Idx_t c, const Off_t dd) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   constexpr TE te = FaceTE(d);
   if constexpr (d < NDIM) {
-    return 0.5 * (pv(te, ccbulk::bfield(), c) + pv(te, ccbulk::bfield(), c + dd));
+    const Real blo = pv(te, ccbulk::bfield(), c);
+    const Real bhi = pv(te, ccbulk::bfield(), c + dd);
+    if constexpr (d == 0 && !parthenon::IsCoord<parthenon::UniformCartesian>()) {
+      const auto [k, j, i] = idx_range.GetKJI(c);
+      const Real xlo = coords.template Xf<X1DIR>(i);
+      const Real xhi = coords.template Xf<X1DIR>(i + 1);
+      const Real xc = coords.template Xc<X1DIR>(i);
+      return ((xhi - xc) * blo + (xc - xlo) * bhi) / (xhi - xlo);
+    } else {
+      return 0.5 * (blo + bhi);
+    }
   } else {
     return pv(te, ccbulk::bfield(), c);
   }
 }
 
 //----------------------------------------------------------------------------------------
-//! \brief Discrete divergence of the face field in cell c; d1..d3 are the unit offsets
-//!        and idx1..idx3 the inverse cell widths.
-template <int NDIM, typename View_t, typename Idx_t, typename Off_t>
-KOKKOS_FORCEINLINE_FUNCTION Real DivB(const View_t &pv, const Idx_t c, const Off_t d1,
-                                      const Off_t d2, const Off_t d3, const Real idx1,
-                                      const Real idx2, const Real idx3) {
+//! \brief Net magnetic flux out of cell c through its two F_d faces
+template <int d, typename Coords_t, typename Range_t, typename View_t, typename Idx_t,
+          typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real NetFlux(const Coords_t &coords, const Range_t &idx_range,
+                                         const View_t &pv, const Idx_t c, const Off_t dd) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  Real div =
-      (pv(TE::F1, ccbulk::bfield(), c + d1) - pv(TE::F1, ccbulk::bfield(), c)) * idx1;
-  if constexpr (NDIM > 1) {
-    div += (pv(TE::F2, ccbulk::bfield(), c + d2) - pv(TE::F2, ccbulk::bfield(), c)) * idx2;
-  }
-  if constexpr (NDIM > 2) {
-    div += (pv(TE::F3, ccbulk::bfield(), c + d3) - pv(TE::F3, ccbulk::bfield(), c)) * idx3;
-  }
-  return div;
+  constexpr TE te = FaceTE(d);
+  return Measure<te>(coords, idx_range, c + dd) * pv(te, ccbulk::bfield(), c + dd) -
+         Measure<te>(coords, idx_range, c) * pv(te, ccbulk::bfield(), c);
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Discrete divergence of the face field in cell c, the net flux through the cell
+//!        faces divided by the cell volume; d1..d3 are the unit offsets.
+template <int NDIM, typename Coords_t, typename Range_t, typename View_t, typename Idx_t,
+          typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real DivB(const Coords_t &coords, const Range_t &idx_range,
+                                      const View_t &pv, const Idx_t c, const Off_t d1,
+                                      const Off_t d2, const Off_t d3) {
+  Real flux = NetFlux<0>(coords, idx_range, pv, c, d1);
+  if constexpr (NDIM > 1) flux += NetFlux<1>(coords, idx_range, pv, c, d2);
+  if constexpr (NDIM > 2) flux += NetFlux<2>(coords, idx_range, pv, c, d3);
+  return flux / Measure<TE::CC>(coords, idx_range, c);
 }
 
 template <int NDIM>
@@ -294,11 +332,12 @@ void FaceToCellBImpl(MeshData<Real> *md, IndexDomain domain) {
   const auto d3 = idx_space.GetDelta(X3DIR);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        auto &coords = v.GetCoordinates(b);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto c) {
-          pv(ccbulk::bcc(0), c) = CellBComponent<0, NDIM>(pv, c, d1);
-          pv(ccbulk::bcc(1), c) = CellBComponent<1, NDIM>(pv, c, d2);
-          pv(ccbulk::bcc(2), c) = CellBComponent<2, NDIM>(pv, c, d3);
+          pv(ccbulk::bcc(0), c) = CellBComponent<0, NDIM>(coords, idx_range, pv, c, d1);
+          pv(ccbulk::bcc(1), c) = CellBComponent<1, NDIM>(coords, idx_range, pv, c, d2);
+          pv(ccbulk::bcc(2), c) = CellBComponent<2, NDIM>(coords, idx_range, pv, c, d3);
         });
       });
 }
@@ -316,12 +355,9 @@ void CalculateDivBImpl(MeshData<Real> *md) {
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto &coords = v.GetCoordinates(b);
-        const Real idx1 = InvDx(coords, 0);
-        const Real idx2 = InvDx(coords, 1);
-        const Real idx3 = InvDx(coords, 2);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto c) {
-          pv(ccbulk::divb(), c) = DivB<NDIM>(pv, c, d1, d2, d3, idx1, idx2, idx3);
+          pv(ccbulk::divb(), c) = DivB<NDIM>(coords, idx_range, pv, c, d1, d2, d3);
         });
       });
 }
@@ -341,16 +377,13 @@ Real MaxDivBImpl(MeshData<Real> *md) {
   return RiotLoop::outer_reduce(
       idx_space, KOKKOS_LAMBDA(const rt::idx_range_t &idx_range, const int b) {
         auto &coords = v.GetCoordinates(b);
-        const Real idx1 = InvDx(coords, 0);
-        const Real idx2 = InvDx(coords, 1);
-        const Real idx3 = InvDx(coords, 2);
-        Real dxmin = 1.0 / idx1;
-        if constexpr (NDIM > 1) dxmin = std::min(dxmin, 1.0 / idx2);
-        if constexpr (NDIM > 2) dxmin = std::min(dxmin, 1.0 / idx3);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner_reduce(idx_range, [&](const auto c, Real &lmax) {
-          lmax = std::max(
-              lmax, std::abs(DivB<NDIM>(pv, c, d1, d2, d3, idx1, idx2, idx3)) * dxmin);
+          Real dxmin = CellWidth<0>(coords, idx_range, c);
+          if constexpr (NDIM > 1) dxmin = std::min(dxmin, CellWidth<1>(coords, idx_range, c));
+          if constexpr (NDIM > 2) dxmin = std::min(dxmin, CellWidth<2>(coords, idx_range, c));
+          lmax = std::max(lmax,
+                          std::abs(DivB<NDIM>(coords, idx_range, pv, c, d1, d2, d3)) * dxmin);
         });
       });
 }
@@ -466,7 +499,8 @@ Real total_magnetic_energy(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::max_divb
-//! \brief History output: max |div B| dx_min over interior cells, recomputed from the
+//! \brief History output: max |div B| dx_min over interior cells (dx_min the smallest
+//!        physical cell width of each cell), recomputed from the
 //!        face field (so it does not depend on when ccbulk::divb was last filled).
 Real max_divb(MeshData<Real> *md) {
   switch (md->GetParentPointer()->ndim) {
