@@ -14,7 +14,9 @@
 # This file was made in part with generative AI.
 #
 # Orszag-Tang vortex on [0,1]^2 (Heaviside-Lorentz units, as in Athena++), with the
-# field set from an edge-centered vector potential so that div B = 0 initially.
+# field set from an edge-centered vector potential so that div B = 0 initially. With
+# --amr the mesh refines on density gradients up to --numlevel levels; --nblock sets the
+# meshblock size (default nx/2) and --dt the hdf5 output interval.
 
 import argparse
 import numpy as np
@@ -31,6 +33,10 @@ def make_input():
     parser = argparse.ArgumentParser()
     parser.add_argument("--nx", type=int, default=128)
     parser.add_argument("--tlim", type=float, default=0.5)
+    parser.add_argument("--nblock", type=int, default=None)
+    parser.add_argument("--amr", action="store_true")
+    parser.add_argument("--numlevel", type=int, default=3)
+    parser.add_argument("--dt", type=float, default=0.1)
     args, _ = parser.parse_known_args()
 
     riot.input("riot", problem="region_pgen")
@@ -46,13 +52,12 @@ def make_input():
             "c.c.bulk.divb",
         ],
         file_type="hdf5",
-        dt=0.1,
+        dt=args.dt,
     )
     riot.input(
         "parthenon/time", nlim=-1, tlim=args.tlim, integrator="rk2", ncycle_out=100
     )
-    riot.input(
-        "parthenon/mesh",
+    mesh = dict(
         nghost=4,
         nx1=args.nx,
         x1min=0.0,
@@ -70,7 +75,18 @@ def make_input():
         ix3_bc="periodic",
         ox3_bc="periodic",
     )
-    riot.input("parthenon/meshblock", nx1=args.nx // 2, nx2=args.nx // 2, nx3=1)
+    if args.amr:
+        mesh.update(refinement="adaptive", numlevel=args.numlevel)
+        riot.input(
+            "parthenon/refinement0",
+            method="derivative_order_1",
+            field="c.c.bulk.rho",
+            refine_tol=0.1,
+            derefine_tol=0.03,
+        )
+    riot.input("parthenon/mesh", **mesh)
+    nb = args.nblock if args.nblock is not None else args.nx // 2
+    riot.input("parthenon/meshblock", nx1=nb, nx2=nb, nx3=1)
 
     riot.input("material0", eos_type="IdealGas", Gamma=gamma, Cv=1.0)
     riot.input("physics", hydro=True)
