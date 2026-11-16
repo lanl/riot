@@ -296,7 +296,8 @@ parthenon::TaskCollection ElectronIonCouplingStep(Mesh *pm, parthenon::SimTime &
         couple, parthenon::Update::PreCommFillDerived<MeshData<Real>>, mdpart.get());
 
     namespace mdname = riot::container_names;
-    auto &mu0 = pm->mesh_data.GetOrAdd(mdname::u0, i);
+    auto &mu0 = pm->mesh_data.AddShallow(mdname::u0, mdpart,
+                                         pm->mesh_data.GetCreationFields(mdname::u0));
     bool multilevel = pm->multilevel;
     auto set_bc = parthenon::AddBoundaryExchangeTasks<parthenon::BoundaryType::any>(
         int_derived, tl, mu0, multilevel);
@@ -716,7 +717,8 @@ parthenon::TaskCollection ConductionStep(Mesh *pmesh, parthenon::SimTime &tm,
         update, parthenon::Update::PreCommFillDerived<MeshData<Real>>, md_base.get());
 
     namespace mdname = riot::container_names;
-    auto &mu0 = pmesh->mesh_data.GetOrAdd(mdname::u0, i);
+    auto &mu0 = pmesh->mesh_data.AddShallow(
+        mdname::u0, md_base, pmesh->mesh_data.GetCreationFields(mdname::u0));
     bool multilevel = pmesh->multilevel;
     auto set_bc = parthenon::AddBoundaryExchangeTasks<parthenon::BoundaryType::any>(
         int_derived, tl, mu0, multilevel);
