@@ -21,27 +21,35 @@ import argparse
 import riot
 
 
-axes = ["x", "y", "z"]
-
-
 def make_input():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", type=int, default=1, choices=[1, 2, 3])
-    parser.add_argument("--nx", type=int, default=256)
-    parser.add_argument("--tlim", type=float, default=0.1)
+    parser.add_argument(
+        "--dir", type=int, default=1, choices=[1, 2, 3], help="Shock direction"
+    )
+    parser.add_argument(
+        "--nx", type=int, default=256, help="Number of cells along the tube"
+    )
+    parser.add_argument("--tlim", type=float, default=0.1, help="Final time")
     parser.add_argument(
         "--full3d", action="store_true", help="Use 4 cells in all transverse directions"
     )
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
 
+    # Shock along nd; transverse directions below nd need > 1 cell so that the X2 and
+    # X3 runs see the same grid as the X1 run. Transverse cells are cubic.
     nd = args.dir - 1
+    nx = [
+        args.nx if d == nd else (4 if (d < nd or args.full3d) else 1) for d in range(3)
+    ]
+    xmax = [nx[d] / args.nx for d in range(3)]
+    bc = ["outflow" if d == nd else "periodic" for d in range(3)]
+
     riot.input("riot", problem="region_pgen")
+
     riot.input("parthenon/job", problem_id="brio_wu")
-    riot.input(
-        "parthenon/output0",
-        file_type="hst",
-        dt=0.01,
-    )
+
+    riot.input("parthenon/output0", file_type="hst", dt=0.01)
+
     riot.input(
         "parthenon/output1",
         variables=[
@@ -54,46 +62,42 @@ def make_input():
         file_type="hdf5",
         dt=args.tlim,
     )
+
     riot.input(
         "parthenon/time", nlim=-1, tlim=args.tlim, integrator="rk2", ncycle_out=100
     )
 
-    mesh = {}
-    block = {}
-    for d in range(3):
-        n = str(d + 1)
-        if d == nd:
-            mesh.update(
-                {
-                    "nx" + n: args.nx,
-                    "x" + n + "min": 0.0,
-                    "x" + n + "max": 1.0,
-                    "ix" + n + "_bc": "outflow",
-                    "ox" + n + "_bc": "outflow",
-                }
-            )
-            block["nx" + n] = args.nx
-        else:
-            # transverse directions below the shock direction need > 1 cell
-            ntr = 4 if (d < nd or args.full3d) else 1
-            mesh.update(
-                {
-                    "nx" + n: ntr,
-                    "x" + n + "min": 0.0,
-                    "x" + n + "max": ntr / args.nx,
-                    "ix" + n + "_bc": "periodic",
-                    "ox" + n + "_bc": "periodic",
-                }
-            )
-            block["nx" + n] = ntr
-    riot.input("parthenon/mesh", nghost=4, **mesh)
-    riot.input("parthenon/meshblock", **block)
+    riot.input(
+        "parthenon/mesh",
+        nghost=4,
+        nx1=nx[0],
+        x1min=0.0,
+        x1max=xmax[0],
+        ix1_bc=bc[0],
+        ox1_bc=bc[0],
+        nx2=nx[1],
+        x2min=0.0,
+        x2max=xmax[1],
+        ix2_bc=bc[1],
+        ox2_bc=bc[1],
+        nx3=nx[2],
+        x3min=0.0,
+        x3max=xmax[2],
+        ix3_bc=bc[2],
+        ox3_bc=bc[2],
+    )
+
+    riot.input("parthenon/meshblock", nx1=nx[0], nx2=nx[1], nx3=nx[2])
 
     riot.input("material0", eos_type="IdealGas", Gamma=2.0, Cv=1.0)
+
     riot.input("physics", hydro=True)
+
     riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
 
     riot.input("regions", file=__file__, name="brio_wu")
+
+    axis = ["x", "y", "z"][nd]
     riot.input(
         "region0",
         name="left",
@@ -101,8 +105,9 @@ def make_input():
         matid=0,
         c_m_rho=1.0,
         c_m_pressure=1.0,
-        **{axes[nd] + "1": 0.5},
+        **{axis + "1": 0.5},
     )
+
     riot.input(
         "region1",
         name="right",
@@ -110,18 +115,21 @@ def make_input():
         matid=0,
         c_m_rho=0.125,
         c_m_pressure=0.1,
-        **{axes[nd] + "0": 0.5},
+        **{axis + "0": 0.5},
     )
+
     riot.input("brio_wu/params", nd=nd)
 
 
 class brio_wu:
     def f_b_bfield(self, pos, b):
-        nt = (self.nd + 1) % 3
+        comp = [self.x, self.y, self.z]
+        n = comp[self.nd]
+        t = comp[(self.nd + 1) % 3]
         b[:, :] = 0.0
-        b[:, self.nd] = 0.75
-        b[:, nt] = 1.0
-        b[pos[:, self.nd] > 0.5, nt] = -1.0
+        b[:, n] = 0.75
+        b[:, t] = 1.0
+        b[pos[:, n] > 0.5, t] = -1.0
 
 
 if __name__ == "__main__":

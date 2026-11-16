@@ -538,7 +538,7 @@ template <parthenon::CoordinateDirection DIR, typename Pack_t, typename StrPack_
 void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &vstr,
                          const AdvPack_t &adv, const RiotReconstruction::Type recon_tag,
                          const RiotReconstruction::Type vfrac_recon_tag,
-                         const Real slope_limit, const RiemannSolver rsolver_tag,
+                         const SlopeLimits slope_limits, const RiemannSolver rsolver_tag,
                          const bool store_vf, const StrengthArr &mat_strength,
                          const bool do_viscosity) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -607,13 +607,11 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         halo_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
-          // Material density and internal energy use a slope limit of at most 1.5;
-          // bulk uses <hydro>/plm_slope_limit and vfrac the default THETA (1.99).
           ReconCells<cm::rho, ccmat::internal_energy>(spv, halo_range, delta, mat_minus,
                                                       mat_plus, recon_tag, m,
-                                                      std::min(slope_limit, 1.5));
+                                                      slope_limits.mat);
           ReconCells<ccmat::volume_fraction>(spv, halo_range, delta, mat_minus, mat_plus,
-                                             vfrac_recon_tag, m);
+                                             vfrac_recon_tag, m, slope_limits.vfrac);
           RiotLoop::inner(halo_range, [&](auto kji) {
             const Real vf_p =
                 std::min(1.0, std::max(mat_plus(ccmat::volume_fraction(), m, kji), 0.0));
@@ -711,7 +709,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         ReconCells<ccbulk::pressure, ccbulk::bulk_modulus, ccbulk::velocity>(
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag, 0,
-            slope_limit);
+            slope_limits.bulk);
         halo_range.TeamBarrier();
 
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
@@ -759,7 +757,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
           auto mhd_plus =
               GetTypeIndexedPerPointScratch<Real, mhd_recon_types>(halo_range);
           ReconCells<ccbulk::bcc>(pv, halo_range, delta, mhd_minus, mhd_plus, recon_tag,
-                                  0, slope_limit);
+                                  0, slope_limits.bulk);
           halo_range.TeamBarrier();
           BulkRiemannFluxesMHD<DIR>(v, idx_range, delta, set_bulk_minus, set_bulk_plus,
                                     sum_bulk_minus, sum_bulk_plus, mhd_minus, mhd_plus,
@@ -813,7 +811,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto &options = pm->packages.Get("hydro");
   const auto recon_tag = options->Param<RiotReconstruction::Type>("recon");
   const auto vfrac_recon_tag = options->Param<RiotReconstruction::Type>("vfrac_recon");
-  const Real slope_limit = options->Param<Real>("plm_slope_limit");
+  const auto slope_limits = options->Param<SlopeLimits>("plm_slope_limits");
   auto rsolver_tag = options->Param<RiemannSolver>("riemann_solver");
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
   if (do_strength) rsolver_tag = RiemannSolver::strong;
@@ -859,13 +857,13 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   // Normal face fields in a cell-aligned copy readable through the flat pack views
   if (do_mhd) CopyFaceBToAligned(md);
 
-  CalculateFluxesImpl<X1DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limit,
+  CalculateFluxesImpl<X1DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limits,
                              rsolver_tag, store_vf, mat_strength, do_viscosity);
   if (ndim > 1)
-    CalculateFluxesImpl<X2DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limit,
+    CalculateFluxesImpl<X2DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limits,
                                rsolver_tag, store_vf, mat_strength, do_viscosity);
   if (ndim > 2)
-    CalculateFluxesImpl<X3DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limit,
+    CalculateFluxesImpl<X3DIR>(md, v, vstr, adv, recon_tag, vfrac_recon_tag, slope_limits,
                                rsolver_tag, store_vf, mat_strength, do_viscosity);
 
   return TaskStatus::complete;

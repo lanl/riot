@@ -77,6 +77,15 @@ using strength_mat_recon_types =
 
 static constexpr Real THETA = 1.99;
 
+//! \brief PLM slope limits (<hydro>/plm_slope_limit*) of the bulk flow variables and
+//!         magnetic field, the material density and internal energy, and the volume
+//!         fractions.
+struct SlopeLimits {
+  Real bulk = THETA;
+  Real mat = 1.5;
+  Real vfrac = THETA;
+};
+
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::ReconCells
 //! \brief Reconstruct variable(s) VARS on the minus and plus faces of cells in the

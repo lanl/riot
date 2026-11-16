@@ -22,7 +22,6 @@ import argparse
 import numpy as np
 import riot
 
-
 gamma = 5.0 / 3.0
 B0 = 1.0 / np.sqrt(4.0 * np.pi)
 d0 = 25.0 / (36.0 * np.pi)
@@ -31,17 +30,26 @@ p0 = 5.0 / (12.0 * np.pi)
 
 def make_input():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nx", type=int, default=128)
-    parser.add_argument("--tlim", type=float, default=0.5)
-    parser.add_argument("--nblock", type=int, default=None)
-    parser.add_argument("--amr", action="store_true")
-    parser.add_argument("--numlevel", type=int, default=3)
-    parser.add_argument("--dt", type=float, default=0.1)
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--nx", type=int, default=128, help="Number of cells per side")
+    parser.add_argument("--tlim", type=float, default=0.5, help="Final time")
+    parser.add_argument(
+        "--nblock", type=int, default=None, help="Meshblock size (default nx/2)"
+    )
+    parser.add_argument(
+        "--amr", action="store_true", help="Refine on density gradients"
+    )
+    parser.add_argument(
+        "--numlevel", type=int, default=3, help="Number of refinement levels"
+    )
+    parser.add_argument("--dt", type=float, default=0.1, help="hdf5 output interval")
+    args = parser.parse_args()
 
     riot.input("riot", problem="region_pgen")
+
     riot.input("parthenon/job", problem_id="orszag_tang")
+
     riot.input("parthenon/output0", file_type="hst", dt=0.01)
+
     riot.input(
         "parthenon/output1",
         variables=[
@@ -54,10 +62,13 @@ def make_input():
         file_type="hdf5",
         dt=args.dt,
     )
+
     riot.input(
         "parthenon/time", nlim=-1, tlim=args.tlim, integrator="rk2", ncycle_out=100
     )
-    mesh = dict(
+
+    riot.input(
+        "parthenon/mesh",
         nghost=4,
         nx1=args.nx,
         x1min=0.0,
@@ -75,8 +86,9 @@ def make_input():
         ix3_bc="periodic",
         ox3_bc="periodic",
     )
+
     if args.amr:
-        mesh.update(refinement="adaptive", numlevel=args.numlevel)
+        riot.input("parthenon/mesh", refinement="adaptive", numlevel=args.numlevel)
         riot.input(
             "parthenon/refinement0",
             method="derivative_order_1",
@@ -84,15 +96,18 @@ def make_input():
             refine_tol=0.1,
             derefine_tol=0.03,
         )
-    riot.input("parthenon/mesh", **mesh)
+
     nb = args.nblock if args.nblock is not None else args.nx // 2
     riot.input("parthenon/meshblock", nx1=nb, nx2=nb, nx3=1)
 
     riot.input("material0", eos_type="IdealGas", Gamma=gamma, Cv=1.0)
+
     riot.input("physics", hydro=True)
+
     riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
 
     riot.input("regions", file=__file__, name="orszag_tang")
+
     riot.input(
         "region0",
         name="orszag_tang",
@@ -119,7 +134,8 @@ class orszag_tang:
         y = pos[:, self.y]
         a[:, :] = 0.0
         a[:, self.z] = B0 * (
-            np.cos(4.0 * np.pi * x) / (4.0 * np.pi) + np.cos(2.0 * np.pi * y) / (2.0 * np.pi)
+            np.cos(4.0 * np.pi * x) / (4.0 * np.pi)
+            + np.cos(2.0 * np.pi * y) / (2.0 * np.pi)
         )
 
 

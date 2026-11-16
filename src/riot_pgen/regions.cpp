@@ -390,7 +390,8 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
 //!           f_b_vector_potential(self, pos, out): A sampled at edge centers; B is its
 //!             discrete curl, so div B = 0 to round-off (preferred).
 //!           f_b_bfield(self, pos, out): B sampled at face centers; only the normal
-//!             component of each face is used. The user must ensure div B = 0.
+//!             component of each face is used. Init throws unless the discrete div B
+//!             vanishes to round-off.
 //!         out has shape (n, 3). Without either method B = 0. The cell-centered magnetic
 //!         energy is added to the total energy host mirror E over the interior.
 template <typename host_mirror_t>
@@ -405,19 +406,34 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
                            "Provide only one of f_b_vector_potential and f_b_bfield in "
                            "the <regions> python class.");
 
-  auto bvar = rc->GetVarPtr(ccbulk::bfield::name());
-  auto bh = bvar->data.GetHostMirror();
-  for (int d = 0; d < bh.GetDim(6); d++) {
-    for (int k = 0; k < bh.GetDim(3); k++) {
-      for (int j = 0; j < bh.GetDim(2); j++) {
-        for (int i = 0; i < bh.GetDim(1); i++) {
-          bh(d, 0, 0, k, j, i) = 0.0;
+  auto &cb = pmb->cellbounds;
+  // Counterpart of block_loop for element te (face or edge) over the entire domain
+  auto element_loop = [&](const TE te, auto &&f) {
+    const auto ibe = cb.GetBoundsI(IndexDomain::entire, te);
+    const auto jbe = cb.GetBoundsJ(IndexDomain::entire, te);
+    const auto kbe = cb.GetBoundsK(IndexDomain::entire, te);
+    for (int k = kbe.s; k <= kbe.e; k++) {
+      for (int j = jbe.s; j <= jbe.e; j++) {
+        for (int i = ibe.s; i <= ibe.e; i++) {
+          f(k, j, i);
         }
       }
     }
+  };
+  constexpr TE faces[3] = {TE::F1, TE::F2, TE::F3};
+  constexpr TE edges[3] = {TE::E1, TE::E2, TE::E3};
+  auto measure = [&](const TE te, const int k, const int j, const int i) {
+    return coords->Volume(parthenon::CellLevel::same, te, k, j, i);
+  };
+
+  auto bvar = rc->GetVarPtr(ccbulk::bfield::name());
+  auto bh = bvar->data.GetHostMirror();
+  for (int d = 0; d < 3; d++) {
+    element_loop(faces[d], [&](const int k, const int j, const int i) {
+      bh(d, 0, 0, k, j, i) = 0.0;
+    });
   }
 
-  auto &cb = pmb->cellbounds;
   // Sample the python function name at the centers of element te (face or edge) over
   // the entire domain and keep coordinate component comp; off[d] marks that te sits on
   // the lower cell face in direction d. As for the cell state, positions and vector
@@ -428,41 +444,28 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     constexpr bool swap_yz = parthenon::IsCoord<parthenon::UniformCylindrical>() ||
                              parthenon::IsCoord<parthenon::UniformSpherical>();
     const int py_comp = (swap_yz && comp > 0) ? 3 - comp : comp;
-    const auto ibe = cb.GetBoundsI(IndexDomain::entire, te);
-    const auto jbe = cb.GetBoundsJ(IndexDomain::entire, te);
-    const auto kbe = cb.GetBoundsK(IndexDomain::entire, te);
-    const int n = (ibe.e - ibe.s + 1) * (jbe.e - jbe.s + 1) * (kbe.e - kbe.s + 1);
+    int n = 0;
+    element_loop(te, [&](const int k, const int j, const int i) { n++; });
     sample_positions_t xs(n);
-    int m = 0;
-    for (int k = kbe.s; k <= kbe.e; k++) {
-      for (int j = jbe.s; j <= jbe.e; j++) {
-        for (int i = ibe.s; i <= ibe.e; i++) {
-          const auto [xx, yy, zz] = to_cartesian(
-              (off[0] && ndim > 0) ? coords->Xf<X1DIR>(i) : coords->Xc<X1DIR>(i),
-              (off[1] && ndim > 1) ? coords->Xf<X2DIR>(j) : coords->Xc<X2DIR>(j),
-              (off[2] && ndim > 2) ? coords->Xf<X3DIR>(k) : coords->Xc<X3DIR>(k));
-          xs(m, 0) = xx;
-          xs(m, 1) = yy;
-          xs(m, 2) = zz;
-          m++;
-        }
-      }
-    }
+    n = 0;
+    element_loop(te, [&](const int k, const int j, const int i) {
+      const auto [xx, yy, zz] = to_cartesian(
+          (off[0] && ndim > 0) ? coords->Xf<X1DIR>(i) : coords->Xc<X1DIR>(i),
+          (off[1] && ndim > 1) ? coords->Xf<X2DIR>(j) : coords->Xc<X2DIR>(j),
+          (off[2] && ndim > 2) ? coords->Xf<X3DIR>(k) : coords->Xc<X3DIR>(k));
+      xs(n, 0) = xx;
+      xs(n, 1) = yy;
+      xs(n, 2) = zz;
+      n++;
+    });
     field_data_t out(n, 3);
     pyreg.make_state(name)(xs, out);
-    m = 0;
-    for (int k = kbe.s; k <= kbe.e; k++) {
-      for (int j = jbe.s; j <= jbe.e; j++) {
-        for (int i = ibe.s; i <= ibe.e; i++) {
-          store(k, j, i, out(m, py_comp));
-          m++;
-        }
-      }
-    }
+    n = 0;
+    element_loop(te, [&](const int k, const int j, const int i) {
+      store(k, j, i, out(n, py_comp));
+      n++;
+    });
   };
-
-  constexpr TE faces[3] = {TE::F1, TE::F2, TE::F3};
-  constexpr TE edges[3] = {TE::E1, TE::E2, TE::E3};
   if (have_B) {
     for (int d = 0; d < 3; d++) {
       std::array<bool, 3> off{d == 0, d == 1, d == 2};
@@ -471,15 +474,44 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
                bh(d, 0, 0, k, j, i) = b;
              });
     }
+    // CT preserves div B but cannot remove it, so reject a sampled field that is not
+    // discretely divergence free: max |div B| dx_min must be round-off relative to |B|.
+    Real max_divb = 0.0;
+    Real max_b = 0.0;
+    for (int k = cb.ks(IndexDomain::interior); k <= cb.ke(IndexDomain::interior); k++) {
+      for (int j = cb.js(IndexDomain::interior); j <= cb.je(IndexDomain::interior); j++) {
+        for (int i = cb.is(IndexDomain::interior); i <= cb.ie(IndexDomain::interior);
+             i++) {
+          const Real dx[3] = {coords->CellWidth<X1DIR>(k, j, i),
+                              coords->CellWidth<X2DIR>(k, j, i),
+                              coords->CellWidth<X3DIR>(k, j, i)};
+          Real flux = 0.0;
+          Real dxmin = dx[0];
+          for (int d = 0; d < ndim; d++) {
+            const int kd = k + (d == 2), jd = j + (d == 1), id = i + (d == 0);
+            flux += measure(faces[d], kd, jd, id) * bh(d, 0, 0, kd, jd, id) -
+                    measure(faces[d], k, j, i) * bh(d, 0, 0, k, j, i);
+            dxmin = std::min(dxmin, dx[d]);
+            max_b = std::max(max_b, std::abs(bh(d, 0, 0, k, j, i)));
+          }
+          max_divb =
+              std::max(max_divb, std::abs(flux) / measure(TE::CC, k, j, i) * dxmin);
+        }
+      }
+    }
+    PARTHENON_REQUIRE_THROWS(
+        max_divb <= 1.0e-10 * max_b,
+        "f_b_bfield gives max |div B| dx = " + std::to_string(max_divb) +
+            "; use a divergence-free field or f_b_vector_potential");
   } else if (have_A) {
     // edge-centered vector potential, A_d on edges E_d over the entire domain
     std::array<parthenon::HostArray3D<Real>, 3> A;
     for (int d = 0; d < 3; d++) {
       const TE te = edges[d];
-      A[d] = parthenon::HostArray3D<Real>(
-          "A", cb.GetBoundsK(IndexDomain::entire, te).e + 1,
-          cb.GetBoundsJ(IndexDomain::entire, te).e + 1,
-          cb.GetBoundsI(IndexDomain::entire, te).e + 1);
+      A[d] =
+          parthenon::HostArray3D<Real>("A", cb.GetBoundsK(IndexDomain::entire, te).e + 1,
+                                       cb.GetBoundsJ(IndexDomain::entire, te).e + 1,
+                                       cb.GetBoundsI(IndexDomain::entire, te).e + 1);
       std::array<bool, 3> off{d != 0, d != 1, d != 2};
       sample("f_b_vector_potential", te, off, d,
              [&](const int k, const int j, const int i, const Real a) {
@@ -490,43 +522,33 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     // the face area, [(L A_q)|_{+p} - (L A_q)|_{0} - (L A_p)|_{+q} + (L A_p)|_{0}] / A_d
     // with p = (d+1)%3, q = (d+2)%3 and L the edge lengths (matches
     // Hydro::UpdateFaceFields)
-    auto measure = [&](const TE te, const int k, const int j, const int i) {
-      return coords->Volume(parthenon::CellLevel::same, te, k, j, i);
-    };
     for (int d = 0; d < 3; d++) {
       const int p = (d + 1) % 3;
       const int q = (d + 2) % 3;
       const bool p_active = (p < ndim);
       const bool q_active = (q < ndim);
-      const auto ibe = cb.GetBoundsI(IndexDomain::entire, faces[d]);
-      const auto jbe = cb.GetBoundsJ(IndexDomain::entire, faces[d]);
-      const auto kbe = cb.GetBoundsK(IndexDomain::entire, faces[d]);
-      for (int k = kbe.s; k <= kbe.e; k++) {
-        for (int j = jbe.s; j <= jbe.e; j++) {
-          for (int i = ibe.s; i <= ibe.e; i++) {
-            Real circ = 0.0;
-            if (p_active) {
-              const int kp = k + (p == 2), jp = j + (p == 1), ip = i + (p == 0);
-              if (kp < A[q].extent_int(0) && jp < A[q].extent_int(1) &&
-                  ip < A[q].extent_int(2)) {
-                circ += measure(edges[q], kp, jp, ip) * A[q](kp, jp, ip) -
-                        measure(edges[q], k, j, i) * A[q](k, j, i);
-              }
-            }
-            if (q_active) {
-              const int kq = k + (q == 2), jq = j + (q == 1), iq = i + (q == 0);
-              if (kq < A[p].extent_int(0) && jq < A[p].extent_int(1) &&
-                  iq < A[p].extent_int(2)) {
-                circ -= measure(edges[p], kq, jq, iq) * A[p](kq, jq, iq) -
-                        measure(edges[p], k, j, i) * A[p](k, j, i);
-              }
-            }
-            // radial faces on the axis have zero area (and circulation)
-            const Real area = measure(faces[d], k, j, i);
-            bh(d, 0, 0, k, j, i) = (area > 0.0) ? circ / area : 0.0;
+      element_loop(faces[d], [&](const int k, const int j, const int i) {
+        Real circ = 0.0;
+        if (p_active) {
+          const int kp = k + (p == 2), jp = j + (p == 1), ip = i + (p == 0);
+          if (kp < A[q].extent_int(0) && jp < A[q].extent_int(1) &&
+              ip < A[q].extent_int(2)) {
+            circ += measure(edges[q], kp, jp, ip) * A[q](kp, jp, ip) -
+                    measure(edges[q], k, j, i) * A[q](k, j, i);
           }
         }
-      }
+        if (q_active) {
+          const int kq = k + (q == 2), jq = j + (q == 1), iq = i + (q == 0);
+          if (kq < A[p].extent_int(0) && jq < A[p].extent_int(1) &&
+              iq < A[p].extent_int(2)) {
+            circ -= measure(edges[p], kq, jq, iq) * A[p](kq, jq, iq) -
+                    measure(edges[p], k, j, i) * A[p](k, j, i);
+          }
+        }
+        // radial faces on the axis have zero area (and circulation)
+        const Real area = measure(faces[d], k, j, i);
+        bh(d, 0, 0, k, j, i) = (area > 0.0) ? circ / area : 0.0;
+      });
     }
   }
   bvar->data.DeepCopy(bh);
@@ -538,8 +560,8 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     Real b2 = 0.0;
     for (int d = 0; d < 3; d++) {
       const Real blo = bh(d, 0, 0, k, j, i);
-      const Real bhi = (d < ndim) ? bh(d, 0, 0, k + (d == 2), j + (d == 1), i + (d == 0))
-                                  : blo;
+      const Real bhi =
+          (d < ndim) ? bh(d, 0, 0, k + (d == 2), j + (d == 1), i + (d == 0)) : blo;
       Real whi = 0.5;
       if (d == 0 && curvilinear) {
         const Real xlo = coords->Xf<X1DIR>(i);

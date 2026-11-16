@@ -86,7 +86,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     auto recon_tag = RiotReconstruction::NAME_MAP.at(recon_name);
     int stencil_width = RiotReconstruction::STENCIL_WIDTH.at(recon_tag);
     stencil_width += (do_ionization && do_plasma_viscosity);
-    // CT corner EMFs need face EMFs from one transverse ghost row
+    // CT corner EMFs need face EMFs from one transverse ghost row. MHD is incompatible
+    // with ionization (below), so this never stacks with the viscosity ghost.
     stencil_width += do_mhd;
     PARTHENON_REQUIRE(nghost > stencil_width,
                       "Must have enough ghosts for reconstruction stencil " + recon_name);
@@ -99,15 +100,24 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("vfrac_recon", vfrac_recon_tag);
   params.Add("stencil_width", stencil_width);
 
-  // PLM slope limit theta in slope = minmod(central, theta * one-sided): 1 is minmod,
-  // 2 is MC. Applies to the bulk flow variables and magnetic field; material density
-  // and internal energy use min(theta, 1.5).
-  const Real plm_slope_limit = pin->GetOrAddReal(
-      "hydro", "plm_slope_limit", THETA,
-      "PLM slope limit in [1, 2] (1 = minmod, 2 = MC) for the flow variables");
-  PARTHENON_REQUIRE_THROWS(plm_slope_limit >= 1.0 && plm_slope_limit <= 2.0,
-                           "hydro/plm_slope_limit must be in [1, 2]");
-  params.Add("plm_slope_limit", plm_slope_limit);
+  // PLM slope limits theta in slope = minmod(central, theta * one-sided): 1 is minmod,
+  // 2 is MC.
+  SlopeLimits slope_limits;
+  auto GetSlopeLimit = [&](const std::string &name, const Real def,
+                           const std::string &what) {
+    const Real theta = pin->GetOrAddReal(
+        "hydro", name, def, "PLM slope limit in [1, 2] (1 = minmod, 2 = MC) for " + what);
+    PARTHENON_REQUIRE_THROWS(theta >= 1.0 && theta <= 2.0,
+                             "hydro/" + name + " must be in [1, 2]");
+    return theta;
+  };
+  slope_limits.bulk = GetSlopeLimit("plm_slope_limit", slope_limits.bulk,
+                                    "the bulk flow variables and magnetic field");
+  slope_limits.mat = GetSlopeLimit("plm_slope_limit_mat", slope_limits.mat,
+                                   "the material density and internal energy");
+  slope_limits.vfrac =
+      GetSlopeLimit("plm_slope_limit_vfrac", slope_limits.vfrac, "the volume fractions");
+  params.Add("plm_slope_limits", slope_limits);
 
   // CFL is 0.8 by default
   Real cfl = pin->GetOrAddReal("hydro", "cfl", 0.8, "Courant-Friedrichs-Lewy number");

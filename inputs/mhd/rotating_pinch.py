@@ -25,7 +25,6 @@ import argparse
 import numpy as np
 import riot
 
-
 RHO = 1.0
 OMEGA = 1.0
 B0 = 0.5
@@ -35,13 +34,16 @@ P0 = 2.0
 
 def make_input():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nr", type=int, default=64)
-    parser.add_argument("--tlim", type=float, default=0.2)
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--nr", type=int, default=64, help="Number of cells in r")
+    parser.add_argument("--tlim", type=float, default=0.2, help="Final time")
+    args = parser.parse_args()
 
     riot.input("riot", problem="region_pgen")
+
     riot.input("parthenon/job", problem_id="rotating_pinch")
+
     riot.input("parthenon/output0", file_type="hst", dt=0.01)
+
     riot.input(
         "parthenon/output1",
         variables=[
@@ -54,9 +56,11 @@ def make_input():
         file_type="hdf5",
         dt=args.tlim,
     )
+
     riot.input(
         "parthenon/time", nlim=-1, tlim=args.tlim, integrator="rk2", ncycle_out=100
     )
+
     riot.input(
         "parthenon/mesh",
         nghost=4,
@@ -76,13 +80,17 @@ def make_input():
         ix3_bc="periodic",
         ox3_bc="periodic",
     )
+
     riot.input("parthenon/meshblock", nx1=16, nx2=16, nx3=1)
 
     riot.input("material0", eos_type="IdealGas", Gamma=5.0 / 3.0, Cv=1.0)
+
     riot.input("physics", hydro=True)
+
     riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
 
     riot.input("regions", file=__file__, name="rotating_pinch")
+
     riot.input(
         "region0",
         name="rotating_pinch",

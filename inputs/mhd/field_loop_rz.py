@@ -23,7 +23,6 @@ import argparse
 import numpy as np
 import riot
 
-
 A0 = 1.0e-3
 R = 0.3
 R0 = 1.0
@@ -31,15 +30,18 @@ R0 = 1.0
 
 def make_input():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nr", type=int, default=64)
-    parser.add_argument("--nz", type=int, default=64)
-    parser.add_argument("--tlim", type=float, default=2.0)
-    parser.add_argument("--amr", action="store_true")
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--nr", type=int, default=64, help="Number of cells in r")
+    parser.add_argument("--nz", type=int, default=64, help="Number of cells in z")
+    parser.add_argument("--tlim", type=float, default=2.0, help="Final time")
+    parser.add_argument("--amr", action="store_true", help="Refine on the field")
+    args = parser.parse_args()
 
     riot.input("riot", problem="region_pgen")
+
     riot.input("parthenon/job", problem_id="field_loop_rz")
+
     riot.input("parthenon/output0", file_type="hst", dt=0.01)
+
     riot.input(
         "parthenon/output1",
         variables=[
@@ -52,10 +54,13 @@ def make_input():
         file_type="hdf5",
         dt=0.5,
     )
+
     riot.input(
         "parthenon/time", nlim=-1, tlim=args.tlim, integrator="rk2", ncycle_out=100
     )
-    mesh = dict(
+
+    riot.input(
+        "parthenon/mesh",
         nghost=4,
         nx1=args.nr,
         x1min=R0 - 0.5,
@@ -73,14 +78,18 @@ def make_input():
         ix3_bc="periodic",
         ox3_bc="periodic",
     )
+
     if args.amr:
-        mesh.update(refinement="adaptive", numlevel=2)
-    riot.input("parthenon/mesh", **mesh)
+        riot.input("parthenon/mesh", refinement="adaptive", numlevel=2)
+
     riot.input("parthenon/meshblock", nx1=16, nx2=16, nx3=1)
 
     riot.input("material0", eos_type="IdealGas", Gamma=5.0 / 3.0, Cv=1.0)
+
     riot.input("physics", hydro=True)
+
     riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
+
     if args.amr:
         # Refine where B_r > 0 or B_z > 0, so fine/coarse boundaries cut through the loop
         for n in range(2):
@@ -94,6 +103,7 @@ def make_input():
             )
 
     riot.input("regions", file=__file__, name="field_loop_rz")
+
     riot.input(
         "region0",
         name="field_loop_rz",
