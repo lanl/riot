@@ -69,7 +69,7 @@ class PoissonEquation {
     if (pack.GetNBlocks() == 0) return TaskStatus::complete;
 
     using lt = RiotUtils::LoopType<LoopConstraint::NoGhost>;
-    auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 0, pack.GetNBlocks(),
+    auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, pack.GetNBlocks(),
                                        md_diag.get(), TE::CC);
     // Combines per-direction face areas and center-to-center distances across a
     // neighbor stencil, so this uses (k, j, i).
