@@ -31,6 +31,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto thinc = std::make_shared<StateDescriptor>("thinc");
   Params &params = thinc->AllParams();
 
+  PARTHENON_REQUIRE(parthenon::Globals::nghost > 1,
+                    "THINC requires at least two ghost cells.");
+
   // Steepness parameter
   params.Add("beta",
              pin->GetOrAddReal("thinc", "beta", 1.6, "Profile steepness for interfaces"));
