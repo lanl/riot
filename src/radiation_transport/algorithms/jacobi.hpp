@@ -38,7 +38,8 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt);
 
 //----------------------------------------------------------------------------------------
 // Jacobi Transport (host-driven, subcycle-capable): solve and commit phases
-TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt);
+TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt,
+                           const Real dt_ratio);
 TaskCollection JacobiCommit(Mesh *pmesh, const Real dt);
 TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             TaskList &solver, TaskID solver_id,
@@ -47,21 +48,24 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             std::shared_ptr<MeshData<Real>> riter,
                             std::shared_ptr<MeshData<Real>> rout,
                             std::shared_ptr<MeshData<Real>> ubase, const Real dt);
-TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *riter,
-                            MeshData<Real> *rout);
+TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *rbase,
+                            MeshData<Real> *riter, MeshData<Real> *rout);
 TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *vresidual, Mesh *pmesh);
 TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real> *riter,
                               MeshData<Real> *rout);
 TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase);
 TaskStatus ResetIterator(MeshData<Real> *rbase, const Real time, const Real dt);
+TaskStatus ExtrapolateIterate(MeshData<Real> *rbase, MeshData<Real> *riter,
+                              const Real dt_ratio);
+TaskStatus CopyToIterate(MeshData<Real> *src, MeshData<Real> *riter);
 TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
-                        MeshData<Real> *rout, const Real dt);
+                        MeshData<Real> *rout, const Real dt, const int color);
 
 //----------------------------------------------------------------------------------------
 // Coupling
 TaskStatus UpdateOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase);
 TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> *ubase,
-                    const Real dt);
+                    const Real dt, const int color);
 TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
                           MeshData<Real> *rout, MeshData<Real> *ubase, const Real dt);
 
@@ -104,32 +108,49 @@ FaceTauWeights(V1 &pack, const parthenon::Coordinates_t &coords, const int ndim,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  std::array<Real, 6> FaceAreas
+//! \brief Areas of the lower and upper faces of each active direction
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 6>
+FaceAreas(const parthenon::Coordinates_t &coords, const int ndim, const int &k,
+          const int &j, const int &i) {
+  std::array<Real, 6> fa = {0.0};
+  fa[0] = coords.FaceArea<X1DIR>(k, j, i);
+  fa[1] = coords.FaceArea<X1DIR>(k, j, i + 1);
+  if (ndim > 1) {
+    fa[2] = coords.FaceArea<X2DIR>(k, j, i);
+    fa[3] = coords.FaceArea<X2DIR>(k, j + 1, i);
+  }
+  if (ndim > 2) {
+    fa[4] = coords.FaceArea<X3DIR>(k, j, i);
+    fa[5] = coords.FaceArea<X3DIR>(k + 1, j, i);
+  }
+  return fa;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void GCoef
 //! \brief Computes matrix coefficients for Jacobi
 template <int SDIR>
 KOKKOS_FORCEINLINE_FUNCTION static void
-GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+GCoef(const std::array<Real, 6> &fa, const ParArrayND<Real> &cp,
       const std::array<int, 3> &NDIR, const Real &ivol, const bool &split_g1,
-      const std::array<Real, 6> &tw, const int &aa, const int &k, const int &j,
-      const int &i, Real &g1p, Real &g1pp, Real &glra, Real &glrb) {
+      const std::array<Real, 6> &tw, const int &aa, Real &g1p, Real &g1pp, Real &glra,
+      Real &glrb) {
   // Directions
   const Real &nn = cp(aa, NDIR[SDIR - 1]);
   const bool up = (nn >= 0.0);
   const bool down = (nn < 0.0);
   const int sgnn = up - down;
-  constexpr bool x1d = (SDIR == X1DIR);
-  constexpr bool x2d = (SDIR == X2DIR);
-  constexpr bool x3d = (SDIR == X3DIR);
 
   // Compute L and R wave speeds at i face
-  Real ww = ivol * nn * coords.FaceArea<SDIR>(k, j, i);
+  Real ww = ivol * nn * fa[2 * (SDIR - 1)];
   Real ss = sgnn * tw[2 * (SDIR - 1)];
   g1p += ww * (ss - (!split_g1 || down));
   g1pp += -split_g1 * up * ww;
   glra = -ww * (1.0 + ss);
 
   // Compute L and R wave speeds at i+1 face
-  ww = ivol * nn * coords.FaceArea<SDIR>(k + x3d, j + x2d, i + x1d);
+  ww = ivol * nn * fa[2 * (SDIR - 1) + 1];
   ss = sgnn * tw[2 * (SDIR - 1) + 1];
   g1p += ww * (ss + (!split_g1 || up));
   g1pp += split_g1 * down * ww;
@@ -142,12 +163,11 @@ GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
 //! \fn  void GCoef
 //! \brief Computes matrix coefficients for Jacobi
 KOKKOS_FORCEINLINE_FUNCTION static Real
-G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+G1Coef(const std::array<Real, 6> &fa, const ParArrayND<Real> &cp,
        const std::array<int, 3> &NDIR, const int ndim, const ParArrayND<Real> &wght,
        const ParArrayND<Real> &gflx, const ParArrayND<Real> &arcw,
        const ParArrayND<int> &numn, const Real &ivol, const Real &mcw,
-       const bool &split_g1, const std::array<Real, 6> &tw, const int &aa, const int &k,
-       const int &j, const int &i) {
+       const bool &split_g1, const std::array<Real, 6> &tw, const int &aa) {
   // Contributions from each spatial flux direction
   Real g1p = 1.0;
   for (int dir = X1DIR; dir <= ndim; ++dir) {
@@ -156,17 +176,14 @@ G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
     const bool up = (nn >= 0.0);
     const bool down = (nn < 0.0);
     const int sgnn = up - down;
-    const bool x1d = (dir == X1DIR);
-    const bool x2d = (dir == X2DIR);
-    const bool x3d = (dir == X3DIR);
 
     // Compute L and R wave speeds at i face
-    Real ww = ivol * nn * coords.FaceArea(dir, k, j, i);
+    Real ww = ivol * nn * fa[2 * (dir - 1)];
     Real ss = sgnn * tw[2 * (dir - 1)];
     g1p += ww * (ss - (!split_g1 || down));
 
     // Compute L and R wave speeds at i+1 face
-    ww = ivol * nn * coords.FaceArea(dir, k + x3d, j + x2d, i + x1d);
+    ww = ivol * nn * fa[2 * (dir - 1) + 1];
     ss = sgnn * tw[2 * (dir - 1) + 1];
     g1p += ww * (ss + (!split_g1 || up));
   }

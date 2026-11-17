@@ -59,8 +59,9 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   const Real opac_temp_min = rad_pkg->Param<Real>("opac_temp_min");
   const Real opac_rho_max = rad_pkg->Param<Real>("opac_rho_max");
   const Real opac_temp_max = rad_pkg->Param<Real>("opac_temp_max");
+  const bool fixed_pgen_opac = rad_pkg->Param<bool>("fixed_pgen_opac");
 
-  // Set opacities
+  // Set opacities (unless set by the pgen)
   // NOTE(@pdmullen): We are not required to set opacities in the initialization,
   // however, this makes them visible in the initial condition which is useful for viz
   static auto desc =
@@ -76,36 +77,38 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
                                      parthenon::TopologicalElement::CC);
-  RiotLoop::outer(
-      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-        RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-          const Real temp = std::clamp(v(b, ccbulk::temperature(), k, j, i),
-                                       opac_temp_min, opac_temp_max);
-          for (int gg = 0; gg < ngroups; ++gg) {
-            // Set opacities
-            Real &aa = v(b, ccrad::aa(gg), k, j, i) = 0.0;
-            Real &ss = v(b, ccrad::ss(gg), k, j, i) = 0.0;
-            for (int m = 0; m < v.GetSize(b, ccmat::rho()); ++m) {
-              const Real &rhom = v(b, cm::rho(m), k, j, i);
-              const Real &rhobarm = v(b, ccmat::rho(m), k, j, i);
-              const Real &vfracm = v(b, ccmat::volume_fraction(m), k, j, i);
-              const int &mat_id = v(b, ccmat::rho(m)).sparse_id;
-              const int &phase_id = v(b, ccmat::rho(m)).v;
-              const int opac_id = opac_from_matid(mat_id) + phase_id;
-              const auto &oam = opac_a(opac_id);
-              const auto &osm = opac_s(opac_id);
-              const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
-              const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
-              aa += (rhobarm > 0.0)
-                        ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
-                        : 0.0;
-              ss += (rhobarm > 0.0)
-                        ? MMOpacity(osm, rm, rbarm, vfracm, temp, gg, mix_frac)
-                        : 0.0;
+  if (!fixed_pgen_opac) {
+    RiotLoop::outer(
+        idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+          RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
+            const Real temp = std::clamp(v(b, ccbulk::temperature(), k, j, i),
+                                         opac_temp_min, opac_temp_max);
+            for (int gg = 0; gg < ngroups; ++gg) {
+              // Set opacities
+              Real &aa = v(b, ccrad::aa(gg), k, j, i) = 0.0;
+              Real &ss = v(b, ccrad::ss(gg), k, j, i) = 0.0;
+              for (int m = 0; m < v.GetSize(b, ccmat::rho()); ++m) {
+                const Real &rhom = v(b, cm::rho(m), k, j, i);
+                const Real &rhobarm = v(b, ccmat::rho(m), k, j, i);
+                const Real &vfracm = v(b, ccmat::volume_fraction(m), k, j, i);
+                const int &mat_id = v(b, ccmat::rho(m)).sparse_id;
+                const int &phase_id = v(b, ccmat::rho(m)).v;
+                const int opac_id = opac_from_matid(mat_id) + phase_id;
+                const auto &oam = opac_a(opac_id);
+                const auto &osm = opac_s(opac_id);
+                const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
+                const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
+                aa += (rhobarm > 0.0)
+                          ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
+                          : 0.0;
+                ss += (rhobarm > 0.0)
+                          ? MMOpacity(osm, rm, rbarm, vfracm, temp, gg, mix_frac)
+                          : 0.0;
+              }
             }
-          }
+          });
         });
-      });
+  }
 
   // Extract initialization type
   const std::string init_type = rad_pkg->Param<std::string>("initialization_type");

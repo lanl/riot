@@ -49,36 +49,51 @@ using RiotLimits::MAX_MATERIALS;
 using RiotLimits::MAX_STRONG;
 
 //----------------------------------------------------------------------------------------
-//! \brief Transverse velocity differences (dvn, dvt) used by the low-Mach solvers
-//!        (chllc/lhllc). Reads the (already-ghost-filled) state velocities at neighbor
-//!        cells -- a wide input stencil on available data, not a producer halo -- and
-//!        writes one dvn/dvt per face cell. Normal/transverse offsets+components come
-//!        from the (cyclic) DirBasis, so this body is direction-agnostic.
-template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
-          typename Basis, typename Scratch>
-KOKKOS_INLINE_FUNCTION void GetVdiff(const Pack_t &v, const IdxRange &idx_range,
-                                     const Basis &basis, Scratch &dvn, Scratch &dvt) {
+//! \fn Real Hydro::ShockSensor
+//! \brief Minoshima & Miyoshi shock sensor. Compares the normal velocity jump across the
+//!        face (dvn) with the min-limited transverse velocity gradient in the two
+//!        adjacent cells (dvt), both relative to cmax, the larger reconstructed face
+//!        sound speed. Faces parallel to a shock (strong transverse compression) go to 0.
+template <typename PackView, typename Index, typename Basis>
+KOKKOS_FORCEINLINE_FUNCTION Real ShockSensor(const PackView &pv, const Index &kji,
+                                             const Basis &basis, const Real cmax) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto pv = RiotLoop::make_pack_view(idx_range, v);
   const auto dn = basis.normal();
-  RiotLoop::inner(idx_range, [&](const auto kji) {
-    auto V = [&](int c, auto idx) { return pv(ccbulk::velocity(c), idx); };
-    // Min-limited transverse gradient of velocity component c along offset t (normal dn).
-    auto trans = [&](int c, auto t) {
-      return std::min(
-          std::min(V(c, kji - dn) - V(c, kji - dn - t), V(c, kji) - V(c, kji - t)),
-          std::min(V(c, kji + t - dn) - V(c, kji - dn), V(c, kji + t) - V(c, kji)));
-    };
-    dvn(kji) = V(Basis::nc, kji) - V(Basis::nc, kji - dn);
+  auto V = [&](int c, auto idx) { return pv(ccbulk::velocity(c), idx); };
+  // Min-limited transverse gradient of velocity component c along offset t (normal dn).
+  auto trans = [&](int c, auto t) {
+    return std::min(
+        std::min(V(c, kji - dn) - V(c, kji - dn - t), V(c, kji) - V(c, kji - t)),
+        std::min(V(c, kji + t - dn) - V(c, kji - dn), V(c, kji + t) - V(c, kji)));
+  };
+  const Real dvn = V(Basis::nc, kji) - V(Basis::nc, kji - dn);
 
-    constexpr Real BIG = std::numeric_limits<Real>::max();
-    Real t = BIG;
-    if (!RiotUtils::IsZeroOffset(basis.trans_a()))
-      t = std::min(t, trans(Basis::tac, basis.trans_a()));
-    if (!RiotUtils::IsZeroOffset(basis.trans_b()))
-      t = std::min(t, trans(Basis::tbc, basis.trans_b()));
-    dvt(kji) = (t == BIG) ? 0.0 : t;
-  });
+  constexpr Real BIG = std::numeric_limits<Real>::max();
+  Real t = BIG;
+  if (!RiotUtils::IsZeroOffset(basis.trans_a()))
+    t = std::min(t, trans(Basis::tac, basis.trans_a()));
+  if (!RiotUtils::IsZeroOffset(basis.trans_b()))
+    t = std::min(t, trans(Basis::tbc, basis.trans_b()));
+  const Real dvt = (t == BIG) ? 0.0 : t;
+
+  const Real rt6th =
+      std::min(1.0, (cmax - std::min(dvn, 0.0)) / (cmax - std::min(dvt, 0.0)));
+  return SQR(rt6th * rt6th * rt6th);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void Hydro::StoreFacePressure
+//! \brief Store the pressure part of the X1 normal-momentum flux, F_mom - F_rho * v_face,
+//!        into ccbulk::face_pressure for CalculateGeometricSource. Curvilinear only.
+template <parthenon::CoordinateDirection DIR, typename PackView, typename Index>
+KOKKOS_FORCEINLINE_FUNCTION void StoreFacePressure(const PackView &pv, const Index &kji,
+                                                   const Real f_vn, const Real frho,
+                                                   const Real vn) {
+  if constexpr (DIR == X1DIR && !parthenon::IsCoord<parthenon::UniformCartesian>()) {
+    namespace ccbulk = cell_variables::cell_averaged::bulk;
+    using TE = parthenon::TopologicalElement;
+    pv(TE::F1, ccbulk::face_pressure(), kji) = f_vn - frho * vn;
+  }
 }
 
 //----------------------------------------------------------------------------------------
@@ -112,7 +127,7 @@ KOKKOS_FORCEINLINE_FUNCTION void StoreFaceVelocity(const PackView &pv, const Ind
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::BulkRiemannFluxes
 //! \brief Bulk Riemann flux loop for the HLLC-style solvers (hllc/hllcf/hll). Produces
-//!        the bulk momentum/energy fluxes and the face_vel/riemann_vel scratch consumed
+//!        the bulk momentum/energy fluxes and the riemann_vel scratch consumed
 //!        by the (solver-independent) material-density flux loop, and stores the signal
 //!        speed. Templated on DIR and the solver function FLUX_FN.
 template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
@@ -122,7 +137,7 @@ KOKKOS_INLINE_FUNCTION void
 BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                   const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
                   const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
-                  Scratch &face_vel, Scratch &riemann_vel, const bool store_vf) {
+                  Scratch &riemann_vel, const bool store_vf) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
@@ -155,17 +170,44 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
-    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
+    const Real frho = riemann_vel(kji) * ((riemann_vel(kji) >= 0.0)
+                                              ? sum_bulk_plus(ccbulk::rho(), kji_L)
+                                              : sum_bulk_minus(ccbulk::rho(), kji_R));
+    StoreFacePressure<DIR>(pv, kji, f_v1, frho, v1face);
+  });
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void Hydro::GetSensors
+//! \brief Evaluate the ShockSensor into the per-face weight th consumed by
+//!        BulkRiemannFluxesLM. cmax uses the same reconstructed face sound speeds as the
+//!        Riemann solve, so the face states must be complete (and barriered) before this
+//!        is called.
+template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
+          typename Basis, typename Delta, typename SumBulk, typename Scratch>
+KOKKOS_INLINE_FUNCTION void
+GetSensors(const Pack_t &v, const IdxRange &idx_range, const Basis &basis, Delta delta,
+           const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus, Scratch &th) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  auto pv = RiotLoop::make_pack_view(idx_range, v);
+  RiotLoop::inner(idx_range, [&](const auto kji) {
+    const auto kji_L = kji - delta;
+    const auto kji_R = kji;
+    const Real cs_L = BulkSoundSpeed(sum_bulk_plus(ccbulk::bulk_modulus(), kji_L),
+                                     sum_bulk_plus(ccbulk::rho(), kji_L));
+    const Real cs_R = BulkSoundSpeed(sum_bulk_minus(ccbulk::bulk_modulus(), kji_R),
+                                     sum_bulk_minus(ccbulk::rho(), kji_R));
+    th(kji) = ShockSensor(pv, kji, basis, std::max(cs_L, cs_R));
   });
 }
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::BulkRiemannFluxesLM
 //! \brief Low-Mach variant of BulkRiemannFluxes for chllc/lhllc: identical, but also
-//!        feeds the per-face transverse velocity differences dvn/dvt (from GetVdiff)
-//!        into the solver's extended signature.
+//!        feeds the per-face sensor weight th (from GetSensors) into the solver's
+//!        extended signature.
 template <parthenon::CoordinateDirection DIR, auto FLUX_FN, typename Pack_t,
           typename IdxRange, typename Delta, typename SetBulk, typename SumBulk,
           typename Scratch>
@@ -173,8 +215,7 @@ KOKKOS_INLINE_FUNCTION void
 BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                     const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
                     const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
-                    Scratch &face_vel, Scratch &riemann_vel, Scratch &dvn, Scratch &dvt,
-                    const bool store_vf) {
+                    Scratch &riemann_vel, Scratch &th, const bool store_vf) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
@@ -201,15 +242,18 @@ BulkRiemannFluxesLM(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                 sum_bulk_minus(ccbulk::internal_energy(), kji_R),
                 set_bulk_plus(ccbulk::pressure(), kji_L),
                 set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R, f_v1, f_v2, f_v3,
-                f_eng, v1face, v2face, v3face, riemann_vel(kji), dvn(kji), dvt(kji));
+                f_eng, v1face, v2face, v3face, riemann_vel(kji), th(kji));
 
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
-    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
+    const Real frho = riemann_vel(kji) * ((riemann_vel(kji) >= 0.0)
+                                              ? sum_bulk_plus(ccbulk::rho(), kji_L)
+                                              : sum_bulk_minus(ccbulk::rho(), kji_R));
+    StoreFacePressure<DIR>(pv, kji, f_v1, frho, v1face);
   });
 }
 
@@ -234,7 +278,7 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
                const HaloRange &halo_range, Delta delta, const SetBulk &set_bulk_minus,
                const SetBulk &set_bulk_plus, const SumBulk &sum_bulk_minus,
                const SumBulk &sum_bulk_plus, const Mat &mat_minus, const Mat &mat_plus,
-               Scratch &face_vel, Scratch &riemann_vel, const int b, const int nmat,
+               Scratch &riemann_vel, const int b, const int nmat,
                const RiotReconstruction::Type recon_tag,
                const StrengthArr &mat_strength) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -249,6 +293,8 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
   // sparse index IS the compact strong index; we recover the corresponding material index
   // m in v by matching sparse ids. (No assumption about relative pack densification
   // order: m is derived from the matched sparse id.)
+  const auto geom = MakeReconGeometry<DIR>(v.GetCoordinates(b), halo_range);
+
   int strong_of[MAX_STRONG]; // compact strong index s -> material index m
   int nstrong = 0;
   for (int m = 0; m < nmat; ++m) {
@@ -289,11 +335,12 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
     // index is exactly the compact strong index s.
     auto spv = RiotLoop::make_sparse_pack_view(idx_range, vstr, s);
     ReconCells<cm::deviatoric_stress, cm::shear_modulus>(
-        spv, halo_range, delta, smat_minus, smat_plus, recon_tag, s);
+        spv, halo_range, delta, smat_minus, smat_plus, recon_tag, s,
+        RiotReconstruction::kSlopeLimit, geom);
     if constexpr (DoTHINC) {
       halo_range.TeamBarrier();
       THINC::ReconstructStrength(v, vstr, idx_range, halo_range, delta, b, m, s,
-                                 smat_minus, smat_plus);
+                                 smat_minus, smat_plus, geom);
       halo_range.TeamBarrier();
     }
     RiotLoop::inner(halo_range, [&](auto kji) {
@@ -363,16 +410,22 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
     fv(ccbulk::momentum(1), kji) = f_v2;
     fv(ccbulk::momentum(2), kji) = f_v3;
     fv(ccbulk::total_material_energy(), kji) = f_eng;
-    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
     // Strength implies store_vf, so always persist the face velocity for the strain-rate
     // source (CalculateStrengthSource).
     StoreFaceVelocity<DIR>(pv, kji, true, v1face, v2face, v3face);
+    const bool up_l = (v1face >= 0.0);
+    const Real frho = riemann_vel(kji) * ((riemann_vel(kji) >= 0.0)
+                                              ? sum_bulk_plus(ccbulk::rho(), kji_L)
+                                              : sum_bulk_minus(ccbulk::rho(), kji_R));
+    const Real sxx = up_l ? sbulk_plus(cm::deviatoric_stress(0), kji_L)
+                          : sbulk_minus(cm::deviatoric_stress(0), kji_R);
+    StoreFacePressure<DIR>(pv, kji, f_v1 + sxx, frho, v1face);
   });
 
   // Per-strong-material stress fluxes: advect each of the 5 components with the
-  // material's rho flux (frho), upwinded on face_vel. (frho is trivially recomputed here
-  // to keep the strength path self-contained.)
+  // material's rho flux (frho), upwinded on riemann_vel. (frho is trivially recomputed
+  // here to keep the strength path self-contained.)
   for (int s = 0; s < nstrong; ++s) {
     const int m = strong_of[s];
     // stress flux uses the compact strong index s into vstr; rho uses material m in v.
@@ -381,13 +434,13 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
       const auto kji_L = kji - delta;
       const auto kji_R = kji;
       const Real frho =
-          riemann_vel(kji) * ((face_vel(kji) >= 0.0) * mat_plus(cm::rho(), m, kji_L) +
-                              (face_vel(kji) < 0.0) * mat_minus(cm::rho(), m, kji_R));
+          riemann_vel(kji) * ((riemann_vel(kji) >= 0.0) * mat_plus(cm::rho(), m, kji_L) +
+                              (riemann_vel(kji) < 0.0) * mat_minus(cm::rho(), m, kji_R));
       for (int c = 0; c < 5; ++c) {
         fmat(ccmat::deviatoric_stress(c), kji) =
             frho *
-            ((face_vel(kji) >= 0.0) * smat_plus(cm::deviatoric_stress(c), s, kji_L) +
-             (face_vel(kji) < 0.0) * smat_minus(cm::deviatoric_stress(c), s, kji_R));
+            ((riemann_vel(kji) >= 0.0) * smat_plus(cm::deviatoric_stress(c), s, kji_L) +
+             (riemann_vel(kji) < 0.0) * smat_minus(cm::deviatoric_stress(c), s, kji_R));
       }
     });
   }
@@ -452,17 +505,18 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
     }
   }
 
+  const auto geom = MakeReconGeometry<DIR>(v.GetCoordinates(b), halo_range);
   for (int n = 0; n < nadv; ++n) {
     // Reconstruct the passive scalar into halo scratch (plus = left face, minus = right
     // face), then flux over idx_range. The barrier separates the recon writes (over the
     // halo) from the flux reads.
     auto q = RiotLoop::make_var_view(idx_range, adv.Prims(), n);
-    ReconVar(q, halo_range, delta, adv_minus, adv_plus, recon_tag);
+    ReconVar(q, halo_range, delta, adv_minus, adv_plus, recon_tag, THETA, geom);
     halo_range.TeamBarrier();
     if constexpr (DoTHINC) {
       if (adv_mat[n] >= 0) {
         THINC::ReconstructAdvected(v, idx_range, halo_range, delta, b, adv_mat[n], q,
-                                   adv_minus, adv_plus);
+                                   adv_minus, adv_plus, THETA, geom);
         halo_range.TeamBarrier();
       }
     }
@@ -500,13 +554,13 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
 //! \brief Replace mixed-cell face states with THINC profiles (no-op without DoTHINC).
 template <parthenon::CoordinateDirection DIR, bool DoTHINC, typename Pack_t,
           typename IdxRange, typename HaloRange, typename Delta, typename MatScratch,
-          typename SumBulk>
+          typename SumBulk, typename Geom_t>
 KOKKOS_INLINE_FUNCTION void
 ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_range,
                 const int b, const int ndim, Delta delta, Delta delta1, Delta delta2,
                 Delta delta3, const Real thinc_beta, const int nmat,
                 MatScratch &mat_minus, MatScratch &mat_plus, SumBulk &sum_bulk_minus,
-                SumBulk &sum_bulk_plus, const bool do_electrons) {
+                SumBulk &sum_bulk_plus, const bool do_electrons, const Geom_t &geom) {
   if constexpr (DoTHINC) {
     auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
     auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
@@ -519,7 +573,7 @@ ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &hal
     halo_range.TeamBarrier();
     THINC::ReconstructMaterialStates(v, idx_range, halo_range, b, delta, mat_minus,
                                      mat_plus, sum_bulk_minus, sum_bulk_plus,
-                                     do_electrons);
+                                     do_electrons, geom);
     halo_range.TeamBarrier();
   }
 }
@@ -565,7 +619,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
   AddTypeIndexedPerPointScratch<Real, halo, mat_recon_types, MAX_MATERIALS>(idx_space, 2);
   AddTypeIndexedPerPointScratch<Real, halo, mat_sum_recon_types>(idx_space, 2);
   AddPerPointScratch<Real, halo>(idx_space, 4);
-  AddPerPointScratch<Real>(idx_space, 4); // face_vel, riemann_vel, dvn, dvt
+  AddPerPointScratch<Real>(idx_space, 2); // riemann_vel, th
   if constexpr (DoTHINC) AddPerPointScratch<Real, halo, MAX_MATERIALS>(idx_space, 2);
   // Strength path scratch: per-strong-material stress and shear modulus, and their
   // summed bulk face states. Only touched on the strength ("strong") solver path.
@@ -578,7 +632,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
   const auto delta1 = idx_space.GetDelta(X1DIR);
   const auto delta2 = idx_space.GetDelta(X2DIR);
   const auto delta3 = idx_space.GetDelta(X3DIR);
-  // Directional basis (normal + cyclic transverse offsets/components) for GetVdiff.
+  // Directional basis (normal + cyclic transverse offsets/components) for the sensors.
   auto basis = RiotUtils::MakeDirBasis<DIR>(idx_space);
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
@@ -586,6 +640,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
 
         // Index range over which quantities are reconstructed on plus and minus faces
         auto halo_range = idx_range.template AddHalo<halo>();
+        const auto geom = MakeReconGeometry<DIR>(v.GetCoordinates(b), halo_range);
 
         // Per material recon and collect slopes for volume fraction rescaling
         auto mat_minus =
@@ -605,12 +660,13 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         halo_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
-          // Material density and internal energy use a tighter MC slope limit (1.5);
-          // bulk and vfrac use the default THETA (1.99).
+          // Flow quantities use the tighter kSlopeLimit; vfrac and passive scalars
+          // use the default THETA.
           ReconCells<cm::rho, cm::internal_energy>(spv, halo_range, delta, mat_minus,
-                                                   mat_plus, recon_tag, m, 1.5);
+                                                   mat_plus, recon_tag, m,
+                                                   RiotReconstruction::kSlopeLimit, geom);
           ReconCells<ccmat::volume_fraction>(spv, halo_range, delta, mat_minus, mat_plus,
-                                             vfrac_recon_tag, m);
+                                             vfrac_recon_tag, m, THETA, geom);
           RiotLoop::inner(halo_range, [&](auto kji) {
             const Real vf_p =
                 std::min(1.0, std::max(mat_plus(ccmat::volume_fraction(), m, kji), 0.0));
@@ -674,10 +730,12 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
           ReconCells<cm::bulk_modulus>(spv, halo_range, delta, msum_minus, msum_plus,
-                                       recon_tag);
+                                       recon_tag, 0, RiotReconstruction::kSlopeLimit,
+                                       geom);
           if (do_electrons) {
-            ReconCells<cm::electron_internal_energy>(spv, halo_range, delta, msum_minus,
-                                                     msum_plus, recon_tag);
+            ReconCells<cm::electron_internal_energy>(
+                spv, halo_range, delta, msum_minus, msum_plus, recon_tag, 0,
+                RiotReconstruction::kSlopeLimit, geom);
           }
           RiotLoop::inner(halo_range, [&](auto kji) {
             mat_plus(cm::rho(), m, kji) = std::max(0.0, mat_plus(cm::rho(), m, kji));
@@ -735,57 +793,56 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             GetTypeIndexedPerPointScratch<Real, set_bulk_recon_types>(halo_range);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         ReconCells<ccbulk::pressure, ccbulk::velocity>(
-            pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
+            pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag, 0,
+            RiotReconstruction::kSlopeLimit, geom);
         halo_range.TeamBarrier();
 
         ThincFaceStates<DIR, DoTHINC>(
             v, idx_range, halo_range, b, ndim, delta, delta1, delta2, delta3, thinc_beta,
-            nmat, mat_minus, mat_plus, sum_bulk_minus, sum_bulk_plus, do_electrons);
+            nmat, mat_minus, mat_plus, sum_bulk_minus, sum_bulk_plus, do_electrons, geom);
 
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
         // BulkRiemannFluxes<DIR, FLUX_FN> instantiation. The low-Mach solvers
-        // (chllc/lhllc) additionally need the transverse velocity differences dvn/dvt
-        // from GetVdiff and run through BulkRiemannFluxesLM.
-        auto face_vel = GetPerPointScratch<Real>(idx_range);
+        // (chllc/lhllc) additionally need the per-face sensor weight th from GetSensors
+        // and run through BulkRiemannFluxesLM.
         auto riemann_vel = GetPerPointScratch<Real>(idx_range);
-        auto dvn = GetPerPointScratch<Real>(idx_range);
-        auto dvt = GetPerPointScratch<Real>(idx_range);
+        auto th = GetPerPointScratch<Real>(idx_range);
         constexpr int dir = static_cast<int>(DIR);
         switch (rsolver_tag) {
         case RiemannSolver::hllc:
           BulkRiemannFluxes<DIR, lr_to_flux_hllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              sum_bulk_plus, riemann_vel, store_vf);
           break;
         case RiemannSolver::hllcf:
           BulkRiemannFluxes<DIR, lr_to_flux_fleischmann<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              sum_bulk_plus, riemann_vel, store_vf);
           break;
         case RiemannSolver::hll:
           BulkRiemannFluxes<DIR, lr_to_flux_hll<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, store_vf);
+              sum_bulk_plus, riemann_vel, store_vf);
           break;
         case RiemannSolver::chllc:
-          GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus, th);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_chllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
+              sum_bulk_plus, riemann_vel, th, store_vf);
           break;
         case RiemannSolver::lhllc:
-          GetVdiff<DIR>(v, idx_range, basis, dvn, dvt);
+          GetSensors<DIR>(v, idx_range, basis, delta, sum_bulk_minus, sum_bulk_plus, th);
           idx_range.TeamBarrier();
           BulkRiemannFluxesLM<DIR, lr_to_flux_lhllc<dir>>(
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
-              sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
+              sum_bulk_plus, riemann_vel, th, store_vf);
           break;
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG, DoTHINC>(
               v, vstr, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
-              sum_bulk_minus, sum_bulk_plus, mat_minus, mat_plus, face_vel, riemann_vel,
-              b, nmat, recon_tag, mat_strength);
+              sum_bulk_minus, sum_bulk_plus, mat_minus, mat_plus, riemann_vel, b, nmat,
+              recon_tag, mat_strength);
           break;
         }
 
@@ -797,8 +854,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             const auto kji_R = kji;
             fmat(ccmat::rho(), kji) =
                 riemann_vel(kji) *
-                ((face_vel(kji) >= 0.0) * mat_plus(cm::rho(), m, kji_L) +
-                 (face_vel(kji) < 0.0) * mat_minus(cm::rho(), m, kji_R));
+                ((riemann_vel(kji) >= 0.0) * mat_plus(cm::rho(), m, kji_L) +
+                 (riemann_vel(kji) < 0.0) * mat_minus(cm::rho(), m, kji_R));
           });
         }
 
@@ -877,9 +934,9 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto v =
       riot::MakePack<ccbulk::pressure, ccbulk::velocity, ccbulk::momentum,
                      ccbulk::total_material_energy, ccbulk::electron_internal_energy,
-                     ccbulk::face_signal, ccbulk::face_velocity, ccmat::volume_fraction,
-                     ccmat::rho, cm::rho, cm::internal_energy, cm::bulk_modulus,
-                     cm::electron_internal_energy>(
+                     ccbulk::face_signal, ccbulk::face_velocity, ccbulk::face_pressure,
+                     ccmat::volume_fraction, ccmat::rho, cm::rho, cm::internal_energy,
+                     cm::bulk_modulus, cm::electron_internal_energy>(
           md, std::vector<int>{},
           std::set<parthenon::PDOpt>{parthenon::PDOpt::WithFluxes});
   const int nblocks = v.GetNBlocks();

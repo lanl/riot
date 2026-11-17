@@ -142,16 +142,16 @@ TEST_CASE("mc (monotonized-central) limits the slope to alpha*min(|dm|,|dp|)",
         Approx(-3.0));
 }
 
-TEST_CASE("ComputeMCSlope reproduces a linear slope and clips at extrema",
-          "[reconstruction][limiter][mcslope]") {
+TEST_CASE("ComputeMinModSlope reproduces a linear slope and clips at extrema",
+          "[reconstruction][limiter][minmodslope]") {
   // Uniform linear ramp u = {0,1,2}, dx = 1 on both sides: slope == 1.
   CHECK(RunScalar(KOKKOS_LAMBDA(Real & x) {
-          x = Recon::ComputeMCSlope(0.0, 1.0, 2.0, 1.0, 1.0);
+          x = Recon::ComputeMinModSlope(0.0, 1.0, 2.0, 1.0, 1.0);
         }) == Approx(1.0));
   // Local maximum u = {0,1,0}: forward and backward slopes disagree in sign, so
   // the limited slope is exactly zero.
   CHECK(RunScalar(KOKKOS_LAMBDA(Real & x) {
-          x = Recon::ComputeMCSlope(0.0, 1.0, 0.0, 1.0, 1.0);
+          x = Recon::ComputeMinModSlope(0.0, 1.0, 0.0, 1.0, 1.0);
         }) == Approx(0.0).margin(kTol));
 }
 

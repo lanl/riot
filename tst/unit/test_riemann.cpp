@@ -148,27 +148,23 @@ Flux RunFleischmann(const State &l, const State &r) {
   });
 }
 
-// LHLLC / CHLLC take extra dvn/dvt shock-detector arguments (non-const in/out
-// references), so they need mutable copies declared inside the device kernel.
+// LHLLC / CHLLC take an extra per-face sensor weight th (1 leaves the HLLC flux
+// untouched).
 template <int DIR>
-Flux RunLHLLC(const State &l, const State &r, Real dvn = 0.0, Real dvt = 0.0) {
+Flux RunLHLLC(const State &l, const State &r, Real th = 1.0) {
   return RunOnDevice(KOKKOS_LAMBDA(Flux & f) {
-    Real dvn_ = dvn, dvt_ = dvt;
-    f.smax = Hydro::lr_to_flux_lhllc<DIR>(l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3,
-                                          r.v3, l.u, r.u, l.P, r.P, l.c, r.c, f.f_v1,
-                                          f.f_v2, f.f_v3, f.f_eng, f.v1face, f.v2face,
-                                          f.v3face, f.riemann_vel, dvn_, dvt_);
+    f.smax = Hydro::lr_to_flux_lhllc<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        f.f_v1, f.f_v2, f.f_v3, f.f_eng, f.v1face, f.v2face, f.v3face, f.riemann_vel, th);
   });
 }
 
 template <int DIR>
-Flux RunCHLLC(const State &l, const State &r, Real dvn = 0.0, Real dvt = 0.0) {
+Flux RunCHLLC(const State &l, const State &r, Real th = 1.0) {
   return RunOnDevice(KOKKOS_LAMBDA(Flux & f) {
-    Real dvn_ = dvn, dvt_ = dvt;
-    f.smax = Hydro::lr_to_flux_chllc<DIR>(l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3,
-                                          r.v3, l.u, r.u, l.P, r.P, l.c, r.c, f.f_v1,
-                                          f.f_v2, f.f_v3, f.f_eng, f.v1face, f.v2face,
-                                          f.v3face, f.riemann_vel, dvn_, dvt_);
+    f.smax = Hydro::lr_to_flux_chllc<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        f.f_v1, f.f_v2, f.f_v3, f.f_eng, f.v1face, f.v2face, f.v3face, f.riemann_vel, th);
   });
 }
 
