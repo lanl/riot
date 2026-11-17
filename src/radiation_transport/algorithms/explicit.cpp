@@ -64,7 +64,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int nangles = shared.nangles;
   const int ngroups = shared.ngroups;
 
-  // Algorithm-shared Boundary Conditions (default, drive)
+  // Algorithm-shared Boundary Conditions (default, drive, reflect)
   RadiationBC::EnrollRadiationBC(explicit_pkg.get(), pin, params);
 
   // Algorithm-shared Initializations (none, zero, thermal)
@@ -418,6 +418,8 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   const Real mix_frac = explicit_pkg->Param<Real>("mix_frac");
   const Real opac_rho_min = explicit_pkg->Param<Real>("opac_rho_min");
   const Real opac_temp_min = explicit_pkg->Param<Real>("opac_temp_min");
+  const Real opac_rho_max = explicit_pkg->Param<Real>("opac_rho_max");
+  const Real opac_temp_max = explicit_pkg->Param<Real>("opac_temp_max");
 
   // Opacity parameters
   auto &mat_pkg = pm->packages.Get("materials");
@@ -444,8 +446,8 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
                     const int &i) {
         Real &aa = pack(b, ccrad::aa(gg), k, j, i) = 0.0;
         Real &ss = pack(b, ccrad::ss(gg), k, j, i) = 0.0;
-        const Real temp =
-            std::max(pack(b, ccbulk::temperature(), k, j, i), opac_temp_min);
+        const Real temp = std::clamp(pack(b, ccbulk::temperature(), k, j, i),
+                                     opac_temp_min, opac_temp_max);
         for (int m = 0; m < pack.GetSize(b, cm::rho()); ++m) {
           const Real &rhom = pack(b, cm::rho(m), k, j, i);
           const Real &rhobarm = pack(b, ccmat::rho(m), k, j, i);
@@ -455,8 +457,8 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
           const int opac_id = opac_from_matid(mat_id) + phase_id;
           const auto &oam = opac_a(opac_id);
           const auto &osm = opac_s(opac_id);
-          const Real rm = std::max(rhom, opac_rho_min);
-          const Real rbarm = std::max(rhobarm, opac_rho_min);
+          const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
+          const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
           aa += (rhobarm > 0.0) ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
                                 : 0.0;
           ss += (rhobarm > 0.0) ? MMOpacity(osm, rm, rbarm, vfracm, temp, gg, mix_frac)
@@ -558,7 +560,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
           ii.flux(b, X3DIR, n, k, j, i) =
               SpatialFlux<X3DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
           if (k == kb.e) {
-            const Real &dx3p = coords.CellWidth<X3DIR>(k + 1, j, i);
+            dx = coords.CellWidth<X3DIR>(k + 1, j, i);
             ii.flux(b, X3DIR, n, k + 1, j, i) =
                 SpatialFlux<X3DIR>(ii, cn, b, n, k + 1, j, i, op, gg, beta, dx, tmax);
           }

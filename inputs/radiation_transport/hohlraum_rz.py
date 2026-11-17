@@ -138,9 +138,13 @@ riot.input(
 )
 
 riot.input(
+    "radiation_transport/bc",
+    ix2_bc="drive",
+)
+
+riot.input(
     "radiation_transport/drive",
     trad_bc=1.0,  # uniform boundary source
-    ix2_bc="drive",
 )
 
 riot.input(

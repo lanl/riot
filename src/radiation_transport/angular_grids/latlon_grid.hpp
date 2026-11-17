@@ -19,6 +19,8 @@
 #define RADIATION_TRANSPORT_ANGULAR_GRIDS_LATLON_GRID_HPP_
 // This file was made in part with generative AI.
 
+#include <array>
+
 #include <parthenon/package.hpp>
 
 using namespace parthenon;
@@ -62,6 +64,11 @@ class LatLonGrid {
   ParArrayND<Real> cart_pos_unit;
   ParArrayND<Real> cart_pos_mid;
   ParArrayND<Real> gflux;
+  ParArrayND<int> num_reflect;  // (3, nangles) # interior angles feeding a mirrored ghost
+  ParArrayND<int> ind_reflect;  // (3, nangles, nmax) interior angle indices
+  ParArrayND<Real> wgt_reflect; // (3, nangles, nmax) reflection weights
+
+  void BuildReflectionMaps(const std::array<bool, 3> &comps);
 
   void ApplyFiniteVolumeCorrections(
       ParArrayHost<Real> &theta_f, ParArrayHost<Real> &phi_f,
@@ -70,6 +77,12 @@ class LatLonGrid {
       ParArrayHost<int> &num_neighbors_h, ParArrayHost<int> &ind_neighbors_h);
 
  private:
+  Real DCosTheta() const { return 2.0 / ntheta_; }
+  // In RZ each stored cell represents both signs of the azimuthal direction cosine.
+  Real DPhi() const {
+    return (parthenon::IsCoord<parthenon::UniformCylindrical>() ? M_PI : 2.0 * M_PI) /
+           nphi_;
+  }
   void ComputeThetaLevels(ParArrayHost<Real> &theta_v, ParArrayHost<Real> &theta_f,
                           ParArrayHost<Real> &costheta_v, ParArrayHost<Real> &costheta_f);
   void ComputePhiAngles(ParArrayHost<Real> &phi_v, ParArrayHost<Real> &phi_f);

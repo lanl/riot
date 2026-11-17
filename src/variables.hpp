@@ -159,7 +159,6 @@ VARIABLE_VECTOR(c.c.rad, s1, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s2, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s3, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, divfa, false, 1);     // ngroups
-VARIABLE_VECTOR(c.c.rad, tauw, false, 1);      // ngroups
 VARIABLE_SCALAR(c.c.rad, temperature, false);
 } // namespace rad
 

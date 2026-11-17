@@ -15,6 +15,7 @@
 // This file was made in part with generative AI.
 
 // C++ headers
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <string>
@@ -125,17 +126,17 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
   RootUtils rutils;
   if (coupling) {
     // Flux params
-    const Real beta_default = (do_angular_fluxes) ? 0.0 : 1.0;
     futils.beta = pin->GetOrAddReal(
-        radiation_block, "beta", beta_default,
+        radiation_block, "beta", 3.0,
         "Coefficient weighting the local optical depth for the Rusanov flux");
     futils.taumax =
         pin->GetOrAddReal(radiation_block, "taumax", std::numeric_limits<Real>::max(),
                           "Optical depth max used in Rusanov flux");
     PARTHENON_REQUIRE(futils.taumax > 0.0, "Tau max must be > 0!");
     // Root find params
-    rutils.tol = pin->GetOrAddReal(radiation_block, "troot_tol", 1.0e-8,
-                                   "Tolerance for non-linear temperature root find ");
+    rutils.tol = pin->GetOrAddReal(
+        radiation_block, "troot_tol", 1.0e-8,
+        "Relative temperature tolerance for non-linear temperature root find");
     rutils.titer = pin->GetOrAddInteger(
         radiation_block, "troot_max_iter", 25,
         "Maximum #iter permitted for non-linear temperature root find");
@@ -258,10 +259,21 @@ inline void AddOpacFloors(ParameterInput *pin, Params &params) {
   const Real opac_temp_min =
       pin->GetOrAddReal(radiation_block, "opac_temp_min", 0.0,
                         "Temperature floor [K] for opacity evaluations");
+  const Real opac_rho_max = pin->GetOrAddReal(
+      radiation_block, "opac_rho_max", std::numeric_limits<Real>::infinity(),
+      "Density ceiling [g/cc] for opacity evaluations");
+  const Real opac_temp_max = pin->GetOrAddReal(
+      radiation_block, "opac_temp_max", std::numeric_limits<Real>::infinity(),
+      "Temperature ceiling [K] for opacity evaluations");
   PARTHENON_REQUIRE(opac_rho_min >= 0.0, "opac_rho_min must be >= 0!");
   PARTHENON_REQUIRE(opac_temp_min >= 0.0, "opac_temp_min must be >= 0!");
+  PARTHENON_REQUIRE(opac_rho_max > opac_rho_min, "opac_rho_max must be > opac_rho_min!");
+  PARTHENON_REQUIRE(opac_temp_max > opac_temp_min,
+                    "opac_temp_max must be > opac_temp_min!");
   params.Add("opac_rho_min", opac_rho_min);
   params.Add("opac_temp_min", opac_temp_min);
+  params.Add("opac_rho_max", opac_rho_max);
+  params.Add("opac_temp_max", opac_temp_max);
 }
 
 //----------------------------------------------------------------------------------------
