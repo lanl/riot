@@ -1,5 +1,5 @@
 //========================================================================================
-// (C) (or copyright) 2023-2026. Triad National Security, LLC. All rights reserved.
+// (C) (or copyright) 2026. Triad National Security, LLC. All rights reserved.
 //
 // This program was produced under U.S. Government contract 89233218CNA000001 for Los
 // Alamos National Laboratory (LANL), which is operated by Triad National Security, LLC
@@ -23,7 +23,6 @@
 #include <basic_types.hpp>
 #include <cmath>
 #include <coordinates/coordinates.hpp>
-#include <limits>
 #include <memory>
 #include <parthenon/package.hpp>
 
@@ -66,55 +65,68 @@ KOKKOS_INLINE_FUNCTION Real NeighborDelta(Real a, Real left, Real right, int sid
 //! \brief A multidimensional interface may turn inside a coordinate-direction stencil.
 //!         Project its faces onto surrounding-cell bounds without assuming a 1D slope.
 //!         The common multiplier preserves the simplex, including absent materials.
+//!         The face sum is piecewise linear and nonincreasing in the multiplier, with
+//!         breakpoints where a material reaches a bound, so its zero is found exactly
+//!         on the bracketing segment.
 KOKKOS_INLINE_FUNCTION void ProjectStencilFace(int count, const Real *alpha,
                                                const Real *minimum, const Real *maximum,
-                                               Real *face, Real max_enrichment) {
-  Real lo = 1, hi = -1;
+                                               Real *face) {
+  constexpr int N = RiotLimits::MAX_MATERIALS;
+  Real lower[N], upper[N], knots[2 * N];
+  int nknots = 0;
+  auto Insert = [&](Real knot) { // insertion sort of the breakpoints
+    int k = nknots++;
+    for (; k > 0 && knots[k - 1] > knot; --k)
+      knots[k] = knots[k - 1];
+    knots[k] = knot;
+  };
   for (int m = 0; m < count; ++m) {
-    const Real room = max_enrichment * std::min(alpha[m], 1 - alpha[m]);
-    const Real lower = std::max(-room, minimum[m] - alpha[m]);
-    const Real upper = std::min(room, maximum[m] - alpha[m]);
-    lo = std::min(lo, face[m] - alpha[m] - upper);
-    hi = std::max(hi, face[m] - alpha[m] - lower);
+    const Real room = std::min(alpha[m], 1 - alpha[m]);
+    lower[m] = std::max(-room, minimum[m] - alpha[m]);
+    upper[m] = std::min(room, maximum[m] - alpha[m]);
+    Insert(face[m] - alpha[m] - upper[m]);
+    Insert(face[m] - alpha[m] - lower[m]);
   }
-  for (int it = 0; it < 56; ++it) {
-    const Real mid = lo + .5 * (hi - lo);
-    if (mid == lo || mid == hi) break;
+  auto Shift = [&](int m, Real lambda) {
+    return std::max(lower[m], std::min(upper[m], face[m] - alpha[m] - lambda));
+  };
+  auto Sum = [&](Real lambda) {
     Real sum = 0;
-    for (int m = 0; m < count; ++m) {
-      const Real room = max_enrichment * std::min(alpha[m], 1 - alpha[m]);
-      sum += std::max(
-          std::max(-room, minimum[m] - alpha[m]),
-          std::min(std::min(room, maximum[m] - alpha[m]), face[m] - alpha[m] - mid));
-    }
-    if (sum > 0)
-      lo = mid;
-    else
-      hi = mid;
+    for (int m = 0; m < count; ++m)
+      sum += Shift(m, lambda);
+    return sum;
+  };
+  // Sum(knots[0]) >= 0 >= Sum(knots[nknots - 1])
+  Real lambda = knots[0], sum = Sum(lambda);
+  for (int k = 1; k < nknots && sum > 0; ++k) {
+    const Real next = Sum(knots[k]);
+    lambda = next > 0 ? knots[k]
+                      : knots[k - 1] + sum * (knots[k] - knots[k - 1]) / (sum - next);
+    sum = next;
   }
-  const Real lambda = lo + .5 * (hi - lo);
-  for (int m = 0; m < count; ++m) {
-    const Real room = max_enrichment * std::min(alpha[m], 1 - alpha[m]);
-    face[m] = alpha[m] + std::max(std::max(-room, minimum[m] - alpha[m]),
-                                  std::min(std::min(room, maximum[m] - alpha[m]),
-                                           face[m] - alpha[m] - lambda));
-  }
+  for (int m = 0; m < count; ++m)
+    face[m] = alpha[m] + Shift(m, lambda);
 }
 
-constexpr Real kMaterialSlopeLimit = 1.5;
-constexpr Real kMaxGeometricEnrichment = 1;
+//----------------------------------------------------------------------------------------
+//! \fn  bool THINC::MixedCell
+//! \brief More than one material (or phase) is present; pure cells keep ordinary hydro.
+template <typename Pack, typename BaseRange, typename Index>
+KOKKOS_INLINE_FUNCTION bool MixedCell(const Pack &v, const BaseRange &base, int count,
+                                      Index idx) {
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  int active = 0;
+  for (int m = 0; m < count; ++m) {
+    auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
+    active += pm(ccmat::volume_fraction(), idx) > 0;
+  }
+  return active > 1;
+}
 
 //----------------------------------------------------------------------------------------
-//! \struct  THINC::IntrinsicState
+//! \struct  THINC::MaterialState
 //! \brief
-struct IntrinsicState {
-  Real density, internal_energy, bulk_modulus, electron_internal_energy;
-};
-
-//----------------------------------------------------------------------------------------
-//! \struct  THINC::PartialState
-//! \brief
-struct PartialState {
+struct MaterialState {
   Real density, internal_energy, bulk_modulus, electron_internal_energy;
 };
 
@@ -122,7 +134,7 @@ struct PartialState {
 //! \struct  THINC::MaterialFaces
 //! \brief
 struct MaterialFaces {
-  PartialState minus, plus;
+  MaterialState minus, plus;
 };
 
 //----------------------------------------------------------------------------------------
@@ -132,8 +144,8 @@ struct MaterialFaces {
 KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(Real left, Real center, Real right,
                                                  Real alpha_minus, Real alpha_plus,
                                                  Real &minus, Real &plus) {
-  const Real dq =
-      RiotReconstruction::PiecewiseLinearSlope(left, center, right, kMaterialSlopeLimit);
+  const Real dq = RiotReconstruction::PiecewiseLinearSlope(
+      left, center, right, RiotReconstruction::MATERIAL_SLOPE_LIMIT);
   minus = alpha_minus * (center - dq);
   plus = alpha_plus * (center + dq);
 }
@@ -143,9 +155,9 @@ KOKKOS_INLINE_FUNCTION void ReconstructIntrinsic(Real left, Real center, Real ri
 //! \brief Pass the center state as both neighbors on unsupported material stencils.
 //!        Each intrinsic quantity is limited separately, and each face state is weighted
 //!        by the face volume fraction.
-KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const IntrinsicState &left,
-                                                         const IntrinsicState &center,
-                                                         const IntrinsicState &right,
+KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const MaterialState &left,
+                                                         const MaterialState &center,
+                                                         const MaterialState &right,
                                                          Real alpha_minus,
                                                          Real alpha_plus) {
   MaterialFaces f;
@@ -344,29 +356,36 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
       offset = .5 * (std::log(alpha[m]) - std::log(residual_mass));
       const Real radius = .5 * beta * width;
       Real lo = offset - radius, hi = offset + radius;
-      for (int it = 0; it < 48; ++it) {
-        Real mean = 0, derivative = 0;
+      // Solve on the side of the smaller mass. The complement profile H(-z) = 1 - H(z)
+      // is evaluated directly, so neither mass is lost to cancellation.
+      const bool complement = alpha[m] > residual_mass;
+      const Real target = complement ? residual_mass : alpha[m];
+      // Safeguarded Newton solves the same monotone volume constraint. The analytic
+      // bracket remains authoritative if a Newton step leaves it. Refine to
+      // floating-point resolution: stop once a step no longer moves the offset or no
+      // value remains strictly inside the bracket, which shrinks every pass.
+      bool refine = true;
+      while (refine) {
+        Real mass = 0, derivative = 0;
         for (int q = 0; q < cell_points; ++q) {
           Real weight;
-          const Real h = ProfileFraction(beta * CellPoint(n, q, weight) + offset);
+          const Real z = beta * CellPoint(n, q, weight) + offset;
+          const Real h = ProfileFraction(complement ? -z : z);
           weight *= remainder[q];
-          mean += weight * h;
-          derivative += 2 * weight * h * (1 - h);
+          mass += weight * h;
+          derivative += 2 * weight * h * (1 - h); // magnitude of d(mass)/d(offset)
         }
-        if (std::abs(mean - alpha[m]) <=
-            4 * std::numeric_limits<Real>::epsilon() * std::min(alpha[m], residual_mass))
-          break;
-        if (mean < alpha[m])
+        if ((mass < target) != complement)
           lo = offset;
         else
           hi = offset;
-        // Safeguarded Newton solves the same monotone volume constraint. The
-        // analytic bracket remains authoritative if a Newton step leaves it.
         Real next =
-            derivative > 0 ? offset + (alpha[m] - mean) / derivative : .5 * (lo + hi);
-        if (!(next > lo && next < hi)) next = .5 * (lo + hi);
-        if (next == offset) break;
-        offset = next;
+            derivative > 0
+                ? offset + (complement ? mass - target : target - mass) / derivative
+                : .5 * (lo + hi);
+        if (next != offset && !(next > lo && next < hi)) next = .5 * (lo + hi);
+        refine = mass != target && next != offset && next > lo && next < hi;
+        if (refine) offset = next;
       }
     }
     for (int q = 0; q < cell_points; ++q) {
@@ -420,15 +439,16 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
   RiotLoop::inner(range, [&](auto idx) {
     Real alpha[N], minus[N], plus[N], left[N], right[N];
     Real minimum[N], maximum[N];
-    int active = 0;
     for (int m = 0; m < count; ++m) {
       fallback_minus(m, idx) = mat_minus(ccmat::volume_fraction(), m, idx);
       fallback_plus(m, idx) = mat_plus(ccmat::volume_fraction(), m, idx);
+    }
+    if (!MixedCell(v, base, count, idx)) return; // retain ordinary hydro in pure cells
+    for (int m = 0; m < count; ++m) {
       auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
       alpha[m] = pm(ccmat::volume_fraction(), idx);
       left[m] = pm(ccmat::volume_fraction(), idx - dn);
       right[m] = pm(ccmat::volume_fraction(), idx + dn);
-      active += alpha[m] > 0;
       auto A = [&](auto offset) { return pm(ccmat::volume_fraction(), idx + offset); };
       minimum[m] = std::min(alpha[m], std::min(left[m], right[m]));
       maximum[m] = std::max(alpha[m], std::max(left[m], right[m]));
@@ -460,7 +480,6 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
         }
       }
     }
-    if (active <= 1) return; // retain ordinary hydro in pure cells
     // Project once onto the per-material bounds and simplex below. Applying
     // the common-factor enrichment limiter first lets a trace material flatten
     // all the other materials, even when their geometric faces are admissible.
@@ -470,8 +489,8 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
       plus[m] = pm(ccmat::thinc_states(2 * axis + 1), idx);
     }
     if (ndim > 1) {
-      ProjectStencilFace(count, alpha, minimum, maximum, minus, kMaxGeometricEnrichment);
-      ProjectStencilFace(count, alpha, minimum, maximum, plus, kMaxGeometricEnrichment);
+      ProjectStencilFace(count, alpha, minimum, maximum, minus);
+      ProjectStencilFace(count, alpha, minimum, maximum, plus);
     } else {
       for (int side = -1; side <= 1; side += 2) {
         for (int m = 0; m < count; ++m) {
@@ -479,8 +498,7 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
           minimum[m] = alpha[m] + std::min(0.0, bound);
           maximum[m] = alpha[m] + std::max(0.0, bound);
         }
-        ProjectStencilFace(count, alpha, minimum, maximum, side < 0 ? minus : plus,
-                           kMaxGeometricEnrichment);
+        ProjectStencilFace(count, alpha, minimum, maximum, side < 0 ? minus : plus);
       }
     }
 
@@ -532,14 +550,9 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
   namespace cm = cell_variables::material_averaged;
   const int count = v.GetSize(b, ccmat::volume_fraction());
   RiotLoop::inner(range, [&](auto idx) {
-    int active = 0;
-    for (int m = 0; m < count; ++m) {
-      auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
-      active += pm(ccmat::volume_fraction(), idx) > 0;
-    }
-    if (active <= 1) return;
-    PartialState sum_m{0, 0, 0, 0}, sum_p{0, 0, 0, 0};
-    auto accumulate = [](PartialState &sum, const PartialState &face) {
+    if (!MixedCell(v, base, count, idx)) return;
+    MaterialState sum_m{0, 0, 0, 0}, sum_p{0, 0, 0, 0};
+    auto accumulate = [](MaterialState &sum, const MaterialState &face) {
       sum.density += face.density;
       sum.internal_energy += face.internal_energy;
       sum.bulk_modulus += face.bulk_modulus;
@@ -547,15 +560,15 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
     };
     for (int m = 0; m < count; ++m) {
       auto pm = RiotLoop::make_sparse_pack_view(base, v, m);
-      auto state = [&](auto i) -> IntrinsicState {
+      auto state = [&](auto i) -> MaterialState {
         return {pm(cm::rho(), i), pm(cm::internal_energy(), i), pm(cm::bulk_modulus(), i),
                 electrons ? pm(cm::electron_internal_energy(), i) : 0.0};
       };
       const Real alpha = pm(ccmat::volume_fraction(), idx);
       const Real left = pm(ccmat::volume_fraction(), idx - dn);
       const Real right = pm(ccmat::volume_fraction(), idx + dn);
-      const IntrinsicState center = state(idx);
-      IntrinsicState state_left = center, state_right = center;
+      const MaterialState center = state(idx);
+      MaterialState state_left = center, state_right = center;
       if (alpha > 0 && left > 0 && right > 0 && center.density > 0 &&
           pm(ccmat::rho(), idx - dn) > 0 && pm(ccmat::rho(), idx + dn) > 0) {
         state_left = state(idx - dn);
@@ -571,7 +584,7 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
       accumulate(sum_m, faces.minus);
       accumulate(sum_p, faces.plus);
     }
-    auto store = [&](SumScratch &sum, const PartialState &face) {
+    auto store = [&](SumScratch &sum, const MaterialState &face) {
       sum(ccbulk::rho(), idx) = face.density;
       sum(ccbulk::internal_energy(), idx) = face.internal_energy;
       sum(ccbulk::bulk_modulus(), idx) = face.bulk_modulus;
@@ -593,27 +606,26 @@ ReconstructMaterialStates(const Pack &v, const BaseRange &base, const Range &ran
 template <typename Pack, typename BaseRange, typename Range, typename Delta, typename Var,
           typename Scratch>
 KOKKOS_INLINE_FUNCTION void
-ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, Delta dn,
-                    int b, int m, const Var &q, Scratch &minus, Scratch &plus) {
+ReconstructAdvected(const Pack &v, const BaseRange &base, const Range &range, int b,
+                    Delta dn, int m, const Var &q, Scratch &minus, Scratch &plus) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   const int count = v.GetSize(b, ccmat::volume_fraction());
   const int id = v(b, ccmat::volume_fraction(m)).sparse_id;
   RiotLoop::inner(range, [&](auto idx) {
-    int active = 0;
-    Real alpha = 0, left = 0, right = 0; // material fractions, summed over phases
+    if (!MixedCell(v, base, count, idx)) return; // preserve ordinary reconstruction
+    Real alpha = 0, left = 0, right = 0;         // material fractions, summed over phases
     for (int n = 0; n < count; ++n) {
-      auto other = RiotLoop::make_sparse_pack_view(base, v, n);
-      active += other(ccmat::volume_fraction(), idx) > 0;
       if (v(b, ccmat::volume_fraction(n)).sparse_id != id) continue;
+      auto other = RiotLoop::make_sparse_pack_view(base, v, n);
       alpha += other(ccmat::volume_fraction(), idx);
       left += other(ccmat::volume_fraction(), idx - dn);
       right += other(ccmat::volume_fraction(), idx + dn);
     }
-    if (active <= 1) return; // preserve ordinary reconstruction in pure cells
     const bool supported = alpha > 0 && left > 0 && right > 0;
     const Real center = alpha > 0 ? q(idx) : 0;
     const Real dq = supported ? RiotReconstruction::PiecewiseLinearSlope(
-                                    q(idx - dn), center, q(idx + dn), kMaterialSlopeLimit)
+                                    q(idx - dn), center, q(idx + dn),
+                                    RiotReconstruction::MATERIAL_SLOPE_LIMIT)
                               : 0;
     minus(idx) = center - dq;
     plus(idx) = center + dq;
@@ -627,7 +639,7 @@ template <typename Pack, typename StrengthPack, typename BaseRange, typename Ran
           typename Delta, typename Stress>
 KOKKOS_INLINE_FUNCTION void
 ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &base,
-                    const Range &range, Delta dn, int b, int m, int s,
+                    const Range &range, int b, Delta dn, int m, int s,
                     Stress &stress_minus, Stress &stress_plus) {
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -635,12 +647,7 @@ ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &ba
   auto material = RiotLoop::make_sparse_pack_view(base, v, m);
   auto strong = RiotLoop::make_sparse_pack_view(base, vstr, s);
   RiotLoop::inner(range, [&](auto idx) {
-    int active = 0;
-    for (int n = 0; n < count; ++n) {
-      auto other = RiotLoop::make_sparse_pack_view(base, v, n);
-      active += other(ccmat::volume_fraction(), idx) > 0;
-    }
-    if (active <= 1) return; // preserve ordinary reconstruction in pure cells
+    if (!MixedCell(v, base, count, idx)) return; // preserve ordinary reconstruction
     const Real alpha = material(ccmat::volume_fraction(), idx);
     const bool supported = alpha > 0 &&
                            material(ccmat::volume_fraction(), idx - dn) > 0 &&
@@ -649,7 +656,7 @@ ReconstructStrength(const Pack &v, const StrengthPack &vstr, const BaseRange &ba
       const Real q = alpha > 0 ? strong(var, idx) : 0;
       const Real dq = supported ? RiotReconstruction::PiecewiseLinearSlope(
                                       strong(var, idx - dn), q, strong(var, idx + dn),
-                                      kMaterialSlopeLimit)
+                                      RiotReconstruction::MATERIAL_SLOPE_LIMIT)
                                 : 0;
       stress_minus(var, s, idx) = q - dq;
       stress_plus(var, s, idx) = q + dq;

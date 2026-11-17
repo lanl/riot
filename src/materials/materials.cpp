@@ -169,7 +169,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Custom Metadata flags
   auto BurnFlag = Metadata::GetOrAddFlag(riot::metadata::TNBurn);
-  auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
+  auto MetadataKinematicAdvected =
+      Metadata::GetUserFlag(riot::metadata::KinematicAdvected);
 
   // Material Density
   // TODO(JCD): how should these thresholds really be set?

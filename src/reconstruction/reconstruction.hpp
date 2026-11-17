@@ -41,6 +41,10 @@ const std::unordered_map<std::string, Type> NAME_MAP = {{"CONSTANT", Type::CONST
                                                         {"WENO5", Type::WENO5},
                                                         {"MP5", Type::MP5}};
 
+// MC slope limit for intrinsic material quantities (density, internal energy), tighter
+// than the bulk limit Hydro::THETA. Shared by the ordinary and THINC material paths.
+constexpr Real MATERIAL_SLOPE_LIMIT = 1.5;
+
 //----------------------------------------------------------------------------------------
 //! \fn  Real RiotReconstruction::mc
 //! \brief

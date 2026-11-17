@@ -38,7 +38,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   auto physics = std::make_shared<StateDescriptor>("scalars");
   Params &params = physics->AllParams();
-  auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
+  auto MetadataKinematicAdvected =
+      Metadata::GetUserFlag(riot::metadata::KinematicAdvected);
 
   std::string base_name("scalars");
   int numscalar = 0;
