@@ -53,9 +53,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS On)
 
 # regression test reference data
-set(RIOT_REGRESSION_GOLD_VER 20261117 CACHE STRING "Version of gold standard to download and use")
+set(RIOT_REGRESSION_GOLD_VER 20261117b CACHE STRING "Version of gold standard to download and use")
 set(RIOT_REGRESSION_GOLD_HASH
-  "SHA512=c5a40b7742876e4ef6698828f5ba9c8898e6b161411f65b8e2470e2b009ae4b698b817b7d55e1747016c2e78dded57b32567308f52cc9eb84e3430f12a229d21"
+  "SHA512=b623d0004263ec1d4ae73ce33573aadda818fa8a2782ff7ef70a81fae7efed481ba7f557eb909c1860ba630ad76ed4d433c156bac59eaaaf805de5d5b7163ebc"
   CACHE STRING "Hash of default gold standard file to download")
 option(RIOT_REGRESSION_GOLD_SYNC "Automatically sync gold standard files." ON)
 set(RIOT_REGRESSION_GOLD_LOCAL "" CACHE STRING

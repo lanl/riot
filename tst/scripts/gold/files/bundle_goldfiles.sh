@@ -15,10 +15,29 @@
 
 set -euo pipefail
 
-version="${RIOT_GOLD_VERSION:-$(date +%Y%m%d)}"
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+# A version pinned by any past commit has already been published; reusing it
+# would overwrite that tarball and break its pinned hash.
+was_pinned() {
+    [[ -n $(git -C "${script_dir}/../../../.." log --oneline \
+        -S "RIOT_REGRESSION_GOLD_VER $1 " -- CMakeLists.txt 2> /dev/null) ]]
+}
+
+# Default to today's date. A second gold set on the same day gets the next
+# free letter suffix (20261117 -> 20261117b -> 20261117c).
+today=$(date +%Y%m%d)
+if [[ -n "${RIOT_GOLD_VERSION:-}" ]]; then
+    version="$RIOT_GOLD_VERSION"
+else
+    version="$today"
+    for suffix in {b..z}; do
+        was_pinned "$version" || break
+        version="${today}${suffix}"
+    done
+fi
 outname="${RIOT_GOLD_NAME:-riot_regression_gold_${version}.tgz}"
 expected_outname="riot_regression_gold_${version}.tgz"
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 # sha512sum is not available on all macOS versions; fall back to shasum
 sha512() {
@@ -49,7 +68,8 @@ usage() {
     echo "                 version and SHA-512 after bundling"
     echo "Shell variables:"
     echo "  RIOT_GOLD_VERSION sets the goldfiles version."
-    echo "     default is today's date in YYYYMMDD format."
+    echo "     default is today's date in YYYYMMDD format, plus the next free"
+    echo "     letter (b, c, ...) if today's date was already pinned."
     echo "     currently set to ${version}"
     echo "  RIOT_GOLD_NAME sets the tarball name."
     echo "     default is riot_regression_gold_[version].tgz."
@@ -92,6 +112,21 @@ fi
 if "$update_cmake" && [[ "$(basename -- "$outname")" != "$expected_outname" ]]; then
     echo "ERROR: --update-cmake requires an archive named '$expected_outname'." >&2
     exit 2
+fi
+
+if [[ ! "$version" =~ ^[0-9]{8}[a-z]?$ ]]; then
+    echo "ERROR: Gold version '$version' must be YYYYMMDD, optionally followed by one letter." >&2
+    exit 2
+fi
+
+if was_pinned "$version"; then
+    echo "ERROR: Gold version '$version' was already pinned by a past commit." >&2
+    echo "       Unset RIOT_GOLD_VERSION to pick the next free version automatically." >&2
+    exit 2
+fi
+
+if [[ "$version" != "$today" && -z "${RIOT_GOLD_VERSION:-}" ]]; then
+    echo "Using gold version ${version} (${today} is already pinned by a past commit)."
 fi
 
 for required_file in current_version README.md; do
