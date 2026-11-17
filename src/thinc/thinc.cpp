@@ -41,4 +41,65 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   return thinc;
 }
 
+//----------------------------------------------------------------------------------------
+//! \fn  TaskStatus THINC::CalculateStates
+//! \brief Reconstruct the interface profile of every mixed cell once per stage.
+TaskStatus CalculateStates(MeshData<Real> *md) {
+  namespace ccmat = cell_variables::cell_averaged::mat;
+  constexpr int N = RiotLimits::MAX_MATERIALS;
+  if (md->NumBlocks() == 0) return TaskStatus::complete;
+  auto pmesh = md->GetParentPointer();
+  const int ndim = pmesh->ndim;
+  const Real beta = pmesh->packages.Get("thinc")->Param<Real>("beta");
+  const bool viscosity =
+      pmesh->packages.Get("riot")->Param<bool>("do_ionization") &&
+      pmesh->packages.Get("ionization")->Param<bool>("plasma_viscosity");
+
+  auto v = riot::MakePack<ccmat::volume_fraction, ccmat::thinc_states>(md);
+  const int nblocks = v.GetNBlocks();
+  if (nblocks == 0) return TaskStatus::complete;
+
+  // Every cell reconstructed by the flux sweeps, see Hydro::CalculateFluxesImpl
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space = lt::GetIndexSpace(IndexDomain::interior, 2 * viscosity + 1, nblocks,
+                                     md, parthenon::TopologicalElement::CC);
+  const auto dx = idx_space.GetDelta(X1DIR);
+  const auto dy = idx_space.GetDelta(X2DIR);
+  const auto dz = idx_space.GetDelta(X3DIR);
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        const int count = v.GetSize(b, ccmat::volume_fraction());
+        const auto &coords = v.GetCoordinates(b);
+        RiotLoop::inner(idx_range, [&](auto idx) {
+          Real alpha[N], faces[N][6];
+          Point gradient[N];
+          int ids[N], active = 0;
+          for (int m = 0; m < count; ++m) {
+            auto pm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+            alpha[m] = pm(ccmat::volume_fraction(), idx);
+            active += alpha[m] > 0;
+          }
+          if (active <= 1) return; // pure cells retain ordinary hydro
+          for (int m = 0; m < count; ++m) {
+            auto pm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+            auto A = [&](auto offset) {
+              return pm(ccmat::volume_fraction(), idx + offset);
+            };
+            gradient[m] = YoungsGradient(A, ndim, dx, dy, dz);
+            ids[m] = v(b, ccmat::volume_fraction(m)).sparse_id;
+          }
+          const auto [k, j, i] = idx_range.GetKJI(idx);
+          Real radial[4];
+          RadialWeights(coords, i, radial);
+          ReconstructProfile<N>(ndim, count, alpha, gradient, ids, radial, beta, faces);
+          for (int m = 0; m < count; ++m) {
+            auto pm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
+            for (int c = 0; c < 2 * ndim; ++c)
+              pm(ccmat::thinc_states(c), idx) = faces[m][c];
+          }
+        });
+      });
+  return TaskStatus::complete;
+}
+
 } // namespace THINC
