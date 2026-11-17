@@ -582,7 +582,8 @@ TaskCollection MultiGroup<temperature>::Step(Mesh *pmesh, parthenon::SimTime &tm
     auto c2p_time = timings->GetOrAddAndRegister("C2P", tl);
     c2p_time->StartCollectingTasks();
     namespace mdname = riot::container_names;
-    auto &md = pmesh->mesh_data.GetOrAdd(mdname::u0, partition);
+    auto &md = pmesh->mesh_data.AddShallow(
+        mdname::u0, md_base, pmesh->mesh_data.GetCreationFields(mdname::u0));
     auto int_derived = tl.AddTask(
         update_fluid, parthenon::Update::PreCommFillDerived<MeshData<Real>>, md.get());
     auto set_bc = AddBoundaryExchangeTasks<parthenon::BoundaryType::any>(int_derived, tl,

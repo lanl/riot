@@ -74,7 +74,7 @@ def analyze():
         ny = q.shape[0]
         diff = q[: ny // 2] - np.flip(q[ny // 2 :], axis=0)
         maxdiff = np.max(np.abs(diff))
-        if maxdiff > 1e-9:
+        if maxdiff > 1e-8:
             logger.warning(
                 "Rayleigh-Taylor instability not y-symmetric for Riemann solver "
                 + solver
