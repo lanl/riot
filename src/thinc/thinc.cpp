@@ -12,6 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <string>
@@ -74,9 +75,10 @@ TaskStatus CalculateStates(MeshData<Real> *md) {
           // Pure cells keep ordinary hydro
           if (!MixedCell(v, idx_range, count, kji)) return;
 
-          Real alpha[N], faces[N][6];
-          Point gradient[N];
-          int ids[N];
+          std::array<Real, N> alpha;
+          std::array<std::array<Real, 6>, N> faces;
+          std::array<Point, N> gradient;
+          std::array<int, N> ids;
           for (int m = 0; m < count; ++m) {
             auto pm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
             alpha[m] = pm(ccmat::volume_fraction(), kji);
@@ -87,9 +89,8 @@ TaskStatus CalculateStates(MeshData<Real> *md) {
             ids[m] = v(b, ccmat::volume_fraction(m)).sparse_id;
           }
           const auto [k, j, i] = idx_range.GetKJI(kji);
-          Real radial[4];
-          RadialWeights(coords, i, radial);
-          ReconstructProfile<N>(ndim, count, alpha, gradient, ids, radial, beta, faces);
+          const auto radial = RadialWeights(coords, i);
+          ReconstructProfile(ndim, count, alpha, gradient, ids, radial, beta, faces);
           for (int m = 0; m < count; ++m) {
             auto pm = RiotLoop::make_sparse_pack_view(idx_range, v, m);
             for (int c = 0; c < 2 * ndim; ++c)

@@ -11,6 +11,9 @@
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
 // This file was made in part with generative AI.
+// THINC References:
+//   Xiao et al. (2005), IJNMF, 48, 1023
+//   Ii et al. (2012), JCP, 231, 2328
 #ifndef THINC_THINC_HPP_
 #define THINC_THINC_HPP_
 
@@ -20,6 +23,7 @@
 #include "variables.hpp"
 #include <Kokkos_Core.hpp>
 #include <algorithm>
+#include <array>
 #include <basic_types.hpp>
 #include <cmath>
 #include <coordinates/coordinates.hpp>
@@ -40,13 +44,9 @@ std::shared_ptr<parthenon::StateDescriptor> Initialize(parthenon::ParameterInput
 TaskStatus CalculateStates(MeshData<Real> *md);
 
 //----------------------------------------------------------------------------------------
-//! \struct  THINC::Point
+//! \typedef  THINC::Point
 //! \brief Components along the active coordinate directions; inactive ones stay zero.
-struct Point {
-  Real value[3] = {0, 0, 0};
-  KOKKOS_INLINE_FUNCTION Real &operator[](int d) { return value[d]; }
-  KOKKOS_INLINE_FUNCTION Real operator[](int d) const { return value[d]; }
-};
+using Point = std::array<Real, 3>;
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real THINC::NeighborDelta
@@ -64,14 +64,16 @@ KOKKOS_INLINE_FUNCTION Real NeighborDelta(Real a, Real left, Real right, int sid
 //! \fn  void THINC::ProjectStencilFace
 //! \brief A multidimensional interface may turn inside a coordinate-direction stencil.
 //!         Project its faces onto surrounding-cell bounds without assuming a 1D slope.
-//!         The common multiplier preserves the simplex, including absent materials.
+//!         A common multiplier keeps the face fractions summing to one, and absent
+//!         materials stay absent.
 //!         The face sum is piecewise linear and nonincreasing in the multiplier, with
 //!         breakpoints where a material reaches a bound, so its zero is found exactly
 //!         on the bracketing segment.
-KOKKOS_INLINE_FUNCTION void ProjectStencilFace(int count, const Real *alpha,
-                                               const Real *minimum, const Real *maximum,
-                                               Real *face) {
-  constexpr int N = RiotLimits::MAX_MATERIALS;
+template <std::size_t N>
+KOKKOS_INLINE_FUNCTION void
+ProjectStencilFace(int count, const std::array<Real, N> &alpha,
+                   const std::array<Real, N> &minimum, const std::array<Real, N> &maximum,
+                   std::array<Real, N> &face) {
   Real lower[N], upper[N], knots[2 * N];
   int nknots = 0;
   auto Insert = [&](Real knot) { // insertion sort of the breakpoints
@@ -176,37 +178,41 @@ KOKKOS_INLINE_FUNCTION MaterialFaces ReconstructMaterial(const MaterialState &le
 }
 
 // Four-point Gauss-Legendre rule on the unit cell [-1/2, 1/2].
+constexpr int NGAUSS = 4;
 KOKKOS_INLINE_FUNCTION constexpr Real GaussPoint(int q) {
-  constexpr Real x[4] = {-.4305681557970263, -.1699905217924281, .1699905217924281,
-                         .4305681557970263};
+  constexpr Real x[NGAUSS] = {-.4305681557970263, -.1699905217924281, .1699905217924281,
+                              .4305681557970263};
   return x[q];
 }
 KOKKOS_INLINE_FUNCTION constexpr Real GaussWeight(int q) {
-  constexpr Real w[4] = {.1739274225687269, .3260725774312731, .3260725774312731,
-                         .1739274225687269};
+  constexpr Real w[NGAUSS] = {.1739274225687269, .3260725774312731, .3260725774312731,
+                              .1739274225687269};
   return w[q];
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  void THINC::RadialWeights
+//! \fn  std::array<Real, NGAUSS> THINC::RadialWeights
 //! \brief Volume weights at the x1 Gauss points of cell i, normalized to unit mean.
 template <typename Coords>
-KOKKOS_INLINE_FUNCTION void RadialWeights(const Coords &coords, int i, Real *radial) {
-  for (int q = 0; q < 4; ++q)
+KOKKOS_INLINE_FUNCTION std::array<Real, NGAUSS> RadialWeights(const Coords &coords,
+                                                              int i) {
+  std::array<Real, NGAUSS> radial;
+  for (int q = 0; q < NGAUSS; ++q)
     radial[q] = 1;
   if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
     constexpr int power = parthenon::IsCoord<parthenon::UniformSpherical>() ? 2 : 1;
     const Real dr = coords.template Dxf<parthenon::X1DIR>(i);
     const Real r0 = coords.template Xf<parthenon::X1DIR>(i) + .5 * dr;
     Real mean = 0;
-    for (int q = 0; q < 4; ++q) {
+    for (int q = 0; q < NGAUSS; ++q) {
       const Real r = std::abs(r0 + GaussPoint(q) * dr);
       radial[q] = power == 2 ? r * r : r;
       mean += GaussWeight(q) * radial[q];
     }
-    for (int q = 0; q < 4; ++q)
+    for (int q = 0; q < NGAUSS; ++q)
       radial[q] /= mean;
   }
+  return radial;
 }
 
 //----------------------------------------------------------------------------------------
@@ -216,7 +222,7 @@ KOKKOS_INLINE_FUNCTION void RadialWeights(const Coords &coords, int i, Real *rad
 template <typename Field, typename Delta>
 KOKKOS_INLINE_FUNCTION Point YoungsGradient(const Field &A, int ndim, Delta dx, Delta dy,
                                             Delta dz) {
-  Point gradient;
+  Point gradient{};
   if (ndim == 1) {
     gradient[0] = 0.5 * (A(dx) - A(-dx));
   } else if (ndim == 2) {
@@ -229,11 +235,11 @@ KOKKOS_INLINE_FUNCTION Point YoungsGradient(const Field &A, int ndim, Delta dx, 
     for (int d = 0; d < 3; ++d) {
       const Delta a1 = axes[(d + 1) % 3], a2 = axes[(d + 2) % 3];
       Real sum = 0;
-      for (int k = -1; k <= 1; ++k)
-        for (int j = -1; j <= 1; ++j) {
-          const auto t = j * a1 + k * a2;
+      for (int o2 = -1; o2 <= 1; ++o2)
+        for (int o1 = -1; o1 <= 1; ++o1) {
+          const auto t = o1 * a1 + o2 * a2;
           sum +=
-              (2 - std::abs(j)) * (2 - std::abs(k)) * (A(axes[d] + t) - A(t - axes[d]));
+              (2 - std::abs(o1)) * (2 - std::abs(o2)) * (A(axes[d] + t) - A(t - axes[d]));
         }
       gradient[d] = sum / 32;
     }
@@ -245,7 +251,7 @@ KOKKOS_INLINE_FUNCTION Point YoungsGradient(const Field &A, int ndim, Delta dx, 
 //! \fn  Real THINC::ProfileFraction
 //! \brief Continuous THINC-type partition. Each conditional material profile is a
 //!        hyperbolic tangent with one offset fixed by its cell average. The residual
-//!        belongs to the remaining materials pointwise, preserving the simplex.
+//!        belongs to the remaining materials pointwise, so the fractions sum to one.
 KOKKOS_INLINE_FUNCTION Real ProfileFraction(Real z) {
   const Real e = std::exp(-2 * std::abs(z));
   return z >= 0 ? 1 / (1 + e) : e / (1 + e);
@@ -254,15 +260,21 @@ KOKKOS_INLINE_FUNCTION Real ProfileFraction(Real z) {
 //----------------------------------------------------------------------------------------
 //! \fn  void THINC::ReconstructProfile
 //! \brief Face averages of the profile, faces[m][2 * axis + (0 minus, 1 plus)].
-template <int N>
+template <std::size_t N>
 KOKKOS_INLINE_FUNCTION void
-ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient,
-                   const int *ids, const Real *radial, Real beta, Real (*faces)[6]) {
-  // Tensor Gauss rules with 4^ndim cell points and 4^(ndim-1) face points. Base-4 digit d
-  // of a cell point index selects its coordinate along direction d; face points
-  // enumerate the transverse directions in increasing order.
-  constexpr int kMaxCellPoints = 64, kMaxFacePoints = 16;
-  const int cell_points = 1 << (2 * ndim), face_points = 1 << (2 * (ndim - 1));
+ReconstructProfile(int ndim, int count, const std::array<Real, N> &alpha,
+                   const std::array<Point, N> &gradient, const std::array<int, N> &ids,
+                   const std::array<Real, NGAUSS> &radial, Real beta,
+                   std::array<std::array<Real, 6>, N> &faces) {
+  // Tensor Gauss rules with NGAUSS^ndim cell points and NGAUSS^(ndim-1) face points.
+  // Base-NGAUSS digit d of a cell point index selects its coordinate along direction d;
+  // face points enumerate the transverse directions in increasing order.
+  constexpr int kMaxFacePoints = NGAUSS * NGAUSS,
+                kMaxCellPoints = NGAUSS * kMaxFacePoints;
+  int face_points = 1;
+  for (int d = 1; d < ndim; ++d)
+    face_points *= NGAUSS;
+  const int cell_points = NGAUSS * face_points;
   auto Dot = [&](const Point &a, const Point &b) {
     Real sum = 0;
     for (int d = 0; d < ndim; ++d)
@@ -271,10 +283,10 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
   };
   auto CellPoint = [&](const Point &n, int q, Real &weight) {
     Real projection = 0;
-    weight = GaussWeight(q % 4) * radial[q % 4];
-    for (int d = 0; d < ndim; ++d, q /= 4) {
-      projection += n[d] * GaussPoint(q % 4);
-      if (d > 0) weight *= GaussWeight(q % 4);
+    weight = GaussWeight(q % NGAUSS) * radial[q % NGAUSS];
+    for (int d = 0; d < ndim; ++d, q /= NGAUSS) {
+      projection += n[d] * GaussPoint(q % NGAUSS);
+      if (d > 0) weight *= GaussWeight(q % NGAUSS);
     }
     return projection;
   };
@@ -282,8 +294,8 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
     Real projection = 0;
     for (int d = 0; d < ndim; ++d) {
       if (d == axis) continue;
-      projection += n[d] * GaussPoint(f % 4);
-      f /= 4;
+      projection += n[d] * GaussPoint(f % NGAUSS);
+      f /= NGAUSS;
     }
     return projection;
   };
@@ -294,8 +306,9 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
       face_weight[axis][f] = 1;
       for (int d = 0, r = f; d < ndim; ++d) {
         if (d == axis) continue;
-        face_weight[axis][f] *= GaussWeight(r % 4) * (d == 0 ? radial[r % 4] : 1);
-        r /= 4;
+        face_weight[axis][f] *=
+            GaussWeight(r % NGAUSS) * (d == 0 ? radial[r % NGAUSS] : 1);
+        r /= NGAUSS;
       }
     }
   int order[N], active = 0;
@@ -326,7 +339,7 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
     for (int f = 0; f < face_points; ++f)
       face_minus[axis][f] = face_plus[axis][f] = 1;
   Real remaining = 0;
-  Point remaining_gradient;
+  Point remaining_gradient{};
   for (int m = 0; m < count; ++m) {
     remaining += alpha[m];
     for (int d = 0; d < ndim; ++d)
@@ -335,7 +348,7 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
   for (int s = 0; s < active; ++s) {
     const int m = order[s];
     const bool last = s + 1 == active;
-    Point n;
+    Point n{};
     for (int d = 0; d < ndim; ++d)
       n[d] = remaining * gradient[m][d] - alpha[m] * remaining_gradient[d];
     const Real norm = std::sqrt(Dot(n, n));
@@ -394,8 +407,8 @@ ReconstructProfile(int ndim, int count, const Real *alpha, const Point *gradient
       remainder[q] *= last ? 0 : ProfileFraction(-z);
     }
     for (int axis = 0; axis < ndim; ++axis) {
-      const Real *wf = face_weight[axis];
-      Real *fm = face_minus[axis], *fp = face_plus[axis];
+      const auto &wf = face_weight[axis];
+      auto &fm = face_minus[axis], &fp = face_plus[axis];
       for (int f = 0; f < face_points; ++f) {
         const Real normal = n[axis];
         const Real transverse = FaceProjection(n, axis, f);
@@ -428,8 +441,6 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
                      MatScratch &mat_minus, MatScratch &mat_plus,
                      Fallback &fallback_minus, Fallback &fallback_plus) {
   namespace ccmat = cell_variables::cell_averaged::mat;
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  namespace cm = cell_variables::material_averaged;
   constexpr int N = RiotLimits::MAX_MATERIALS;
   constexpr int axis = DIR - 1;
   const int count = v.GetSize(b, ccmat::volume_fraction());
@@ -437,8 +448,7 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
   // Transverse directions of this sweep (t2 only in 3D)
   const Delta dn = axes[axis], t1 = axes[(axis + 1) % ndim], t2 = axes[(axis + 2) % ndim];
   RiotLoop::inner(range, [&](auto idx) {
-    Real alpha[N], minus[N], plus[N], left[N], right[N];
-    Real minimum[N], maximum[N];
+    std::array<Real, N> alpha, minus, plus, left, right, minimum, maximum;
     for (int m = 0; m < count; ++m) {
       fallback_minus(m, idx) = mat_minus(ccmat::volume_fraction(), m, idx);
       fallback_plus(m, idx) = mat_plus(ccmat::volume_fraction(), m, idx);
@@ -453,10 +463,10 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
       minimum[m] = std::min(alpha[m], std::min(left[m], right[m]));
       maximum[m] = std::max(alpha[m], std::max(left[m], right[m]));
       if (ndim > 1) {
-        for (int k = -(ndim > 2); k <= (ndim > 2); ++k)
-          for (int j = -1; j <= 1; ++j)
-            for (int i = -1; i <= 1; ++i) {
-              const Real value = A(i * dx + j * dy + k * dz);
+        for (int ok = -(ndim > 2); ok <= (ndim > 2); ++ok)
+          for (int oj = -1; oj <= 1; ++oj)
+            for (int oi = -1; oi <= 1; ++oi) {
+              const Real value = A(oi * dx + oj * dy + ok * dz);
               minimum[m] = std::min(minimum[m], value);
               maximum[m] = std::max(maximum[m], value);
             }
@@ -465,10 +475,10 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
         // than an individual row through a curved interface.
         auto Plane = [&](auto shift) {
           Real sum = 0;
-          for (int k = -(ndim > 2); k <= (ndim > 2); ++k)
-            for (int j = -1; j <= 1; ++j)
-              sum += (2 - std::abs(j)) * (ndim > 2 ? 2 - std::abs(k) : 1) *
-                     A(shift + j * t1 + k * t2);
+          for (int o2 = -(ndim > 2); o2 <= (ndim > 2); ++o2)
+            for (int o1 = -1; o1 <= 1; ++o1)
+              sum += (2 - std::abs(o1)) * (ndim > 2 ? 2 - std::abs(o2) : 1) *
+                     A(shift + o1 * t1 + o2 * t2);
           return sum / (ndim > 2 ? 16 : 4);
         };
         const Real center = Plane(0 * dn);
@@ -480,7 +490,7 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
         }
       }
     }
-    // Project once onto the per-material bounds and simplex below. Applying
+    // Project once onto the per-material bounds, keeping the sum at one. Applying
     // the common-factor enrichment limiter first lets a trace material flatten
     // all the other materials, even when their geometric faces are admissible.
     for (int m = 0; m < count; ++m) {
@@ -512,9 +522,9 @@ ReconstructFractions(const Pack &v, const StatePack &vth, const BaseRange &base,
 //----------------------------------------------------------------------------------------
 //! \fn  void THINC::SelectFaceProfiles
 //! \brief Face-local boundary variation selection. A single choice for the complete
-//!        material vector preserves both donor simplices. Each face owns exactly one
-//!        minus and one plus scratch entry, so adjacent faces do not race on writes.
-//!        This minimizes the compositional jump presented to the Riemann solver
+//!        material vector keeps both face states summing to one. Each face owns exactly
+//!        one minus and one plus scratch entry, so adjacent faces do not race on writes.
+//!        This minimizes the compositional jump presented to the Riemann solver.
 template <typename Range, typename Delta, typename Mat, typename Fallback>
 KOKKOS_INLINE_FUNCTION void
 SelectFaceProfiles(const Range &faces, Delta dn, int count, Mat &minus, Mat &plus,
