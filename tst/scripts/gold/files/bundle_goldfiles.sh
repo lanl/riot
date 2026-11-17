@@ -20,6 +20,15 @@ outname="${RIOT_GOLD_NAME:-riot_regression_gold_${version}.tgz}"
 expected_outname="riot_regression_gold_${version}.tgz"
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
+# sha512sum is not available on all macOS versions; fall back to shasum
+sha512() {
+    if command -v sha512sum > /dev/null 2>&1; then
+        sha512sum "$@"
+    else
+        shasum -a 512 "$@"
+    fi
+}
+
 usage() {
     echo "Usage: ${0} [--update-cmake] [test run directory]"
     echo
@@ -157,7 +166,7 @@ tar czf "$outname" "${targetfiles[@]}" current_version README.md
 echo "Created tarball $outname, SHA-512 hash:"
 echo
 
-sha512sum "$outname"
+sha512 "$outname"
 
 if "$update_cmake"; then
     cmake_file="${script_dir}/../../../../CMakeLists.txt"
@@ -166,8 +175,10 @@ if "$update_cmake"; then
         exit 1
     fi
 
-    gold_hash=$(sha512sum "$outname" | awk '{print $1}')
+    gold_hash=$(sha512 "$outname" | awk '{print $1}')
     cmake_tmp=$(mktemp "${cmake_file}.tmp.XXXXXX")
+    # Copy so the temp file keeps the original's permissions (portable to macOS)
+    cp -p "$cmake_file" "$cmake_tmp"
     if ! awk -v version="$version" -v hash="$gold_hash" '
         BEGIN { version_found = 0; hash_found = 0; in_hash = 0 }
         /^set\(RIOT_REGRESSION_GOLD_VER / {
@@ -199,7 +210,6 @@ if "$update_cmake"; then
         exit 1
     fi
 
-    chmod --reference="$cmake_file" "$cmake_tmp"
     mv "$cmake_tmp" "$cmake_file"
     echo "Updated $cmake_file with gold version $version and its SHA-512 hash."
 
@@ -213,6 +223,7 @@ if "$update_cmake"; then
     fi
 
     ci_tmp=$(mktemp "${ci_file}.tmp.XXXXXX")
+    cp -p "$ci_file" "$ci_tmp"
     if ! awk -v version="$version" -v hash="$gold_hash" '
         BEGIN { version_found = 0; hash_found = 0 }
         /^  GOLD_VER:/ {
@@ -237,7 +248,6 @@ if "$update_cmake"; then
         exit 1
     fi
 
-    chmod --reference="$ci_file" "$ci_tmp"
     mv "$ci_tmp" "$ci_file"
     echo "Updated $ci_file with gold version $version and its SHA-512 hash."
 fi
