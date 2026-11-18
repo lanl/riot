@@ -19,6 +19,9 @@
 #define RADIATION_TRANSPORT_ANGULAR_GRIDS_GEODESIC_GRID_HPP_
 // This file was made in part with generative AI.
 
+// C++ headers
+#include <array>
+
 // Parthenon headers
 #include <parthenon/package.hpp>
 
@@ -32,7 +35,7 @@ using namespace parthenon::package::prelude;
 
 class GeodesicGrid {
  public:
-  GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole);
+  GeodesicGrid(int nlev, int rotate, Real zpole, Real ppole, bool fv_fix);
   ~GeodesicGrid();
 
   int nangles; // number of angles (derived from nlevel, 5*(2*nlevel^2) + 2)
@@ -42,19 +45,23 @@ class GeodesicGrid {
   ParArrayND<Real> weights;            // solid angles / 4pi
   ParArrayND<Real> arc_weights;        // arc lengths / 4pi
   ParArrayND<Real> cart_pos;           // coord position (cartesian) at face center
-  ParArrayND<Real> cart_pos_mid;       // coord position (cartesian) at face edges
+  ParArrayND<Real> cart_pos_unit;      // true unit direction cosines at face center
   ParArrayND<Real> gflux;              // flux at face edges for 1D sph and 2D RZ
+  ParArrayND<int> num_reflect;  // (3, nangles) # interior angles feeding a mirrored ghost
+  ParArrayND<int> ind_reflect;  // (3, nangles, nmax) interior angle indices
+  ParArrayND<Real> wgt_reflect; // (3, nangles, nmax) reflection weights
+
+  void BuildReflectionMaps(const std::array<bool, 3> &comps);
 
   // functions
   void GridCartPosition(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm, int n,
                         int nlev, Real &x, Real &y, Real &z);
-  void GridCartPositionMid(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm, int n,
-                           int nb, int nlev, Real &x, Real &y, Real &z);
   void Neighbors(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                  ParArrayHost<int> aind, int n, int nlev, int &num_nghbr,
                  int neighbors[6]);
   void CircumcenterNormalized(Real x1, Real x2, Real x3, Real y1, Real y2, Real y3,
                               Real z1, Real z2, Real z3, Real &x, Real &y, Real &z);
+  void SharedCircumcenter(int n0, int n1, int n2, Real v[3]);
   void SolidAngleAndArcLengths(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                                ParArrayHost<int> aind, int n, int nlev, Real &weight,
                                Real length[6]);
@@ -65,9 +72,15 @@ class GeodesicGrid {
   void RotateGrid(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm, int nlev,
                   Real znew, Real pnew);
 
-  void UnitFluxDir(Real zetav, Real psiv, Real zetaf, Real psif, Real &dzeta, Real &dpsi);
-  void GreatCircleParam(Real zeta1, Real zeta2, Real psi1, Real psi2, Real &apar,
-                        Real &psi0);
+  Real GfluxEdgeIntegral(const Real v1[3], const Real v2[3], const Real center[3],
+                         int comp);
+
+  void ApplyFiniteVolumeCorrections(ParArrayHost<Real> &cart_pos_h,
+                                    ParArrayHost<Real> &weights_h,
+                                    ParArrayHost<Real> &arc_weights_h,
+                                    ParArrayHost<Real> &gflux_h,
+                                    ParArrayHost<int> &num_neighbors_h,
+                                    ParArrayHost<int> &ind_neighbors_h);
 
  private:
   int nlevel;     // level of the geodesic mesh (==0 is 1 angle per octant for testing)

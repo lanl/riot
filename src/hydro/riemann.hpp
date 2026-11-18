@@ -52,6 +52,13 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_fleischmann(
   Real phi = std::sin(std::min(1.0, Ma_local / 0.1) * 0.5 * M_PI);
   Real ss = (sl >= 0) * vpl + (sr <= 0) * vpr +
             (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + (Pr - Pl)) / (rhocsl - rhocsr);
+  // both star states are used below, so keep the contact strictly inside the wave fan.
+  // If the contact had to be clamped, fall back to HLLC (phi = 1) so the singular star
+  // state terms cancel.
+  const Real ds = (sl * sr < 0) * 1.e-8 * (sr - sl);
+  const Real ss_clamped = std::min(std::max(ss, sl + ds), sr - ds);
+  if (ss_clamped != ss) phi = 1.0;
+  ss = ss_clamped;
 
   const Real rhos_rhol = (sl - vpl) / (sl - ss);
   const Real rhos_rhor = (sr - vpr) / (sr - ss);
@@ -133,6 +140,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
 
   Real ss = (sl >= 0) * vpl + (sr <= 0) * vpr +
             (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + Pr - Pl) / (rhocsl - rhocsr);
+  ss = std::min(std::max(ss, sl), sr);
   const Real l_flag = 1.0 * (ss >= 0);
   const Real r_flag = 1.0 - l_flag;
   const Real rho = l_flag * rhol + r_flag * rhor;
@@ -158,7 +166,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hllc(
   if constexpr (DIR == X2DIR) f_v2 += P;
   if constexpr (DIR == X3DIR) f_v3 += P;
 
-  const Real ske = v1 * v1 + v2 * v2 + v3 * v3;
+  const Real velocity_sq_x = Kokkos::fma(v1, v1, Real(0.0));
+  const Real velocity_sq_y = Kokkos::fma(v2, v2, Real(0.0));
+  const Real velocity_sq_z = Kokkos::fma(v3, v3, Real(0.0));
+  const Real ske = velocity_sq_x + velocity_sq_y + velocity_sq_z;
   const Real E = u + 0.5 * rho * ske;
   const Real Es = rhos_rho * (E + (ss - vp) * (rho * ss + P / (s - vp)));
   f_eng = vp * (E + P) + s * (Es - E);
@@ -208,7 +219,8 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   const Real rhocsl = rhol * (sl - vpl);
   const Real rhocsr = rhor * (sr - vpr);
   const Real irhocslr = 1.0 / (rhocsl - rhocsr);
-  const Real am = irhocslr * (rhocsl * vpl - rhocsr * vpr + th * (Pr - Pl));
+  const Real am = std::min(
+      std::max(irhocslr * (rhocsl * vpl - rhocsr * vpr + th * (Pr - Pl)), sl), sr);
   // JMM: this low-Mach correction causes odd-even decoupling breaks symmetry
   Real phi = 1.0;
   if constexpr (enable_low_mach) {
@@ -255,9 +267,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_lhllc_base(
   if constexpr (DIR == X3DIR) frIVZ += Pr;
 
   // Compute HLLC flux weights
-  const Real wl = (am >= 0.0) * am / (am - bm);
-  const Real wr = (am < 0.0) * -am / (bp - am);
-  const Real sm = (am >= 0.0) * (-bm / (am - bm)) + (am < 0.0) * (bp / (bp - am));
+  const bool am_pos = (am >= 0.0);
+  const Real wl = am_pos ? am / (am - bm) : 0.0;
+  const Real wr = am_pos ? 0.0 : -am / (bp - am);
+  const Real sm = am_pos ? -bm / (am - bm) : bp / (bp - am);
 
   // Compute the HLLC momentum and total energy fluxes
   f_v1 = wl * flIVX + wr * frIVX;
@@ -332,8 +345,9 @@ lr_to_flux_hll(Real rhol, Real rhor, Real v1l, Real v1r, Real v2l, Real v2r, Rea
   const Real hll_flag = (sl < 0.0 && sr > 0.0);
   const Real isrsl = hll_flag ? 1.0 / (sr - sl) : 0.0;
 
-  const Real ss =
+  Real ss =
       (sl >= 0.0) * vpl + (sr <= 0.0) * vpr + hll_flag * frho_num * isrsl / rho_upwind;
+  ss = std::min(std::max(ss, sl), sr);
 
   const Real l_flag = 1.0 * (ss >= 0.0);
   const Real r_flag = 1.0 - l_flag;
@@ -432,6 +446,7 @@ KOKKOS_INLINE_FUNCTION Real lr_to_flux_strength(
   Real ss =
       (sl >= 0) * vpl + (sr <= 0) * vpr +
       (sl * sr < 0) * (rhocsl * vpl - rhocsr * vpr + Pr - sddr - Pl + sddl) * irhocslr;
+  ss = std::min(std::max(ss, sl), sr);
 
   // flag to determine if we're inside the longitudinal waves
   const Real is_subsonic = 1.0 * (sl * sr < 0);

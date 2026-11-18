@@ -22,10 +22,12 @@
 // This file was made in part with generative AI.
 
 // C++ includes
+#include <array>
 #include <limits>
 #include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +41,7 @@
 #include <utils/error_checking.hpp>
 
 // Riot includes
+#include "microphysics/opacity_models.hpp"
 #include "radiation_transport/angular_grids/angular_grid_utils.hpp"
 #include "riot_utils/riot_loops.hpp"
 #include "variables.hpp"
@@ -67,7 +70,6 @@ DNAME(r1);
 DNAME(a0);
 DNAME(ro);
 // Jacobi MeshData Registers
-DNAME(ropac);
 DNAME(rbase);
 DNAME(riter);
 DNAME(rout);
@@ -120,7 +122,7 @@ struct FluxUtils {
 };
 
 struct RootUtils {
-  Real tol = 0.0; // coupling tolerance for advanced temperature
+  Real tol = 0.0; // relative temperature tolerance for advanced temperature
   int titer = 0;  // max #iter for advanced temp root find
 };
 
@@ -130,6 +132,29 @@ struct UnitUtils {
   Real boltzmann = 0.0; // boltzmann's constant
   Real arad = 0.0;      // radiation constant
 };
+
+//----------------------------------------------------------------------------------------
+//! \fn Real MMOpacity
+//! \brief Evaluate one material's contribution to a mixed-cell opacity using the
+//! Amagat/homogeneous interpolation.
+template <typename Opacity>
+KOKKOS_INLINE_FUNCTION static Real
+MMOpacity(const Opacity &opac, const Real rm, const Real rbarm, const Real vfracm,
+          const Real temp, const int gg, const Real mix_frac) {
+  const Real wamg = (1.0 - mix_frac) * vfracm;
+  const Real whom = mix_frac;
+
+  Real opac_amg = 0.0;
+  Real opac_hom = 0.0;
+  if constexpr (std::is_same_v<Opacity, RiotOpacity::MeanOpacA>) {
+    if (wamg > 0.0) opac_amg = opac.AbsorptionCoefficient(rm, temp, gg);
+    if (whom > 0.0) opac_hom = opac.AbsorptionCoefficient(rbarm, temp, gg);
+  } else {
+    if (wamg > 0.0) opac_amg = opac.ScatteringCoefficient(rm, temp, gg);
+    if (whom > 0.0) opac_hom = opac.ScatteringCoefficient(rbarm, temp, gg);
+  }
+  return wamg * opac_amg + whom * opac_hom;
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real OpacityStencil
@@ -430,6 +455,22 @@ static Real Li4(Real x) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  Real PlanckEdge
+//! \brief Band-edge term of the group-integrated Planck emissivity.  With x = h nu / kT,
+//! F(x) = x^3 ln(1 - e^-x) - 3 x^2 Li2(e^-x) - 6 x Li3(e^-x) - 6 Li4(e^-x), so that
+//! eps_g = a_r T^4 (15 / pi^4) [F(x_{g+1}) - F(x_g)], with F(0) = -pi^4 / 15 and
+//! F(infty) = 0
+KOKKOS_FORCEINLINE_FUNCTION static Real PlanckEdge(const Real hikt, const Real nu) {
+  if (nu == 0.0) return -SQR(SQR(M_PI)) / 15.0;
+  if (nu == std::numeric_limits<Real>::infinity()) return 0.0;
+  const Real ln = hikt * nu;
+  const Real lnsq = SQR(ln);
+  const Real xx = std::exp(-ln);
+  return lnsq * ln * std::log1p(-xx) - 3.0 * lnsq * Li2(xx) - 6.0 * ln * Li3(xx) -
+         6.0 * Li4(xx);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  Real Emissivity
 //! \brief Computes the group-integrated Planck emissivity (gray when ngroups == 1)
 KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp,
@@ -443,33 +484,44 @@ KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp
   const Real hikt = uu.planck / (uu.boltzmann * temp);
   const Real fac = 15.0 / SQR(SQR(M_PI));
   const Real prefac = gray * fac;
-  if (fbnd(gg) == 0.0) { // 0-->vf bin
-    const Real lnp = hikt * fbnd(gg + 1);
-    const Real lnpsq = SQR(lnp);
-    const Real xp = std::exp(-lnp);
-    const Real ee = 1.0 / fac + lnpsq * lnp * std::log(1.0 - xp) - 3.0 * lnpsq * Li2(xp) -
-                    6.0 * lnp * Li3(xp) - 6.0 * Li4(xp);
-    return std::max(prefac * ee, 0.0);
-  } else if (fbnd(gg + 1) == std::numeric_limits<Real>::infinity()) { // vf-->infty bin
-    const Real lnm = hikt * fbnd(gg);
-    const Real lnmsq = SQR(lnm);
-    const Real xm = std::exp(-lnm);
-    const Real ee = -lnmsq * lnm * std::log(1.0 - xm) + 3.0 * lnmsq * Li2(xm) +
-                    6.0 * lnm * Li3(xm) + 6.0 * Li4(xm);
-    return std::max(prefac * ee, 0.0);
-  } else { // vfm-->vfp bin
-    const Real lnm = hikt * fbnd(gg);
-    const Real lnp = hikt * fbnd(gg + 1);
-    const Real lnmsq = SQR(lnm);
-    const Real lnpsq = SQR(lnp);
-    const Real xm = std::exp(-lnm);
-    const Real xp = std::exp(-lnp);
-    const Real ee = lnpsq * lnp * std::log(1.0 - xp) - lnmsq * lnm * std::log(1.0 - xm) -
-                    3.0 * (lnpsq * Li2(xp) - lnmsq * Li2(xm)) -
-                    6.0 * (lnp * Li3(xp) - lnm * Li3(xm)) - 6.0 * (Li4(xp) - Li4(xm));
+  const Real ee = PlanckEdge(hikt, fbnd(gg + 1)) - PlanckEdge(hikt, fbnd(gg));
+  return std::max(prefac * ee, 0.0);
+}
+
+//----------------------------------------------------------------------------------------
+//! \struct EmissivitySweep
+//! \brief Emissivity() of groups 0, 1, ..., ngroups - 1 in turn at a fixed temperature.
+//! Adjacent groups share a band edge, so carrying the upper edge term forward evaluates
+//! ngroups + 1 edges rather than 2 ngroups.  Next() must be called once per group, in
+//! ascending group order.
+struct EmissivitySweep {
+  KOKKOS_FORCEINLINE_FUNCTION
+  EmissivitySweep(const Real temp, const parthenon::ParArray1D<Real> fbnd_,
+                  const int ngroups, const UnitUtils uu)
+      : fbnd(fbnd_), gray(ngroups == 1) {
+    prefac = uu.arad * SQR(SQR(temp));
+    if (gray) return;
+    hikt = uu.planck / (uu.boltzmann * temp);
+    const Real fac = 15.0 / SQR(SQR(M_PI));
+    prefac *= fac;
+    flo = PlanckEdge(hikt, fbnd(0));
+  }
+
+  KOKKOS_FORCEINLINE_FUNCTION Real Next() {
+    if (gray) return prefac;
+    const Real fhi = PlanckEdge(hikt, fbnd(++gg));
+    const Real ee = fhi - flo;
+    flo = fhi;
     return std::max(prefac * ee, 0.0);
   }
-}
+
+  parthenon::ParArray1D<Real> fbnd;
+  bool gray;
+  int gg = 0;        // upper edge of the previous group
+  Real prefac = 0.0; // a_r T^4 (15 / pi^4), or a_r T^4 when gray
+  Real hikt = 0.0;   // h / kT
+  Real flo = 0.0;    // F at the lower edge of the next group
+};
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real EmissivityDT
@@ -478,10 +530,8 @@ KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp
 //! and the gray ngroups==1 result is 4 a_r T^3).  Writing eps_g = a_r T^4 * F_g with F_g
 //! the normalized Planck fraction over the band (x = h nu / kT, dx/dT = -x/T), the
 //! derivative of the band integral reduces to the integrand at the band edges -- no
-//! polylogarithms.  The integral part reuses Emissivity(); the boundary part is
-//! elementary:
-//!   deps_g/dT = 4 eps_g / T - (a_r T^3)(15/pi^4)[ x_hi^4/(e^x_hi-1) - x_lo^4/(e^x_lo-1)
-//!   ].
+//! polylogarithms.  The integral part reuses Emissivity(); boundary is:
+//!   deps_dT = 4 eps_g / T - (a_r T^3)(15/pi^4)[ x_hi^4/(e^x_hi-1) - x_lo^4/(e^x_lo-1) ].
 KOKKOS_FORCEINLINE_FUNCTION static Real
 EmissivityDT(const int gg, const Real temp, const parthenon::ParArray1D<Real> fbnd,
              const int ngroups, const UnitUtils uu) {
@@ -529,10 +579,24 @@ InternalEnergy(const Real temp, const int nm1, const EOS eos, const EOSMAP map,
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  Real PolyRoot
-//! \brief Constructs polynomial for temperature root find
+//! \struct RootResidual
+//! \brief Residual of the advanced temperature root find
+struct RootResidual {
+  Real res = 0.0;   // absorption - emission + ubulk - u(T)
+  Real emiss = 0.0; // emission term, a lower bound on T |d(res)/dT| (see PolyRoot)
+  Real scale = 0.0; // sum of term magnitudes, setting the roundoff floor of res
+};
+
+//----------------------------------------------------------------------------------------
+//! \fn  RootResidual PolyRoot
+//! \brief Constructs polynomial for temperature root find.  The residual is left
+//! unnormalized: any energy scale built from ubulk and u(T) depends on the arbitrary zero
+//! of the EOS energy (which may also be negative, e.g. in tension).
+//! NOTE: Each band emissivity satisfies T d(eps_g)/dT >= eps_g (the Planck function obeys
+//! T dB_nu/dT = B_nu x e^x / (e^x - 1) >= B_nu), so for cv >= 0 the emission term bounds
+//! T |d(res)/dT| from below.
 template <typename V1, typename EOS, typename EOSMAP, typename V2>
-KOKKOS_FORCEINLINE_FUNCTION static Real
+KOKKOS_FORCEINLINE_FUNCTION static RootResidual
 PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
          // Radiation
          const int ngroups, const parthenon::ParArray1D<Real> fbnd, const V1 vr,
@@ -542,20 +606,25 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
          const int b, const int k, const int j, const int i) {
   namespace ccrad = cell_variables::cell_averaged::rad;
 
-  Real term = 0.0;
+  Real absr = 0.0;
+  Real emis = 0.0;
+  EmissivitySweep emissivity(tp1, fbnd, ngroups, uu);
   for (int gg = 0; gg < ngroups; ++gg) {
     const Real cdtsiga = cdt * vr(b, ccrad::aa(gg), k, j, i);
     const Real &aa1 = vr(b, ccrad::s1(gg), k, j, i);
     const Real &aa2 = vr(b, ccrad::s2(gg), k, j, i);
     const Real &aa3 = vr(b, ccrad::s3(gg), k, j, i);
-    const Real &ee = Emissivity(gg, tp1, fbnd, ngroups, uu);
-    term += ee * cdtsiga * (aa1 * aa3 - 1.0) + cdtsiga * aa2 * aa3;
+    const Real ee = emissivity.Next();
+    absr += cdtsiga * aa2 * aa3;
+    emis += ee * cdtsiga * (1.0 - aa1 * aa3);
   }
-  const Real &aa = term;
-  const Real &bb = ubulk;
-  const Real &cc = InternalEnergy(tp1, nm1, eos, map, vu, b, k, j, i);
-  const Real iwght = 1.0 / std::max(1.0e-12, std::abs(aa) + std::abs(bb) + std::abs(cc));
-  return iwght * (aa + bb - cc);
+  const Real cc = InternalEnergy(tp1, nm1, eos, map, vu, b, k, j, i);
+
+  RootResidual rr;
+  rr.res = absr - emis + ubulk - cc;
+  rr.emiss = std::max(emis, 0.0);
+  rr.scale = std::abs(absr) + std::abs(emis) + std::abs(ubulk) + std::abs(cc);
+  return rr;
 }
 
 //----------------------------------------------------------------------------------------
@@ -577,7 +646,6 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
 
   // Internal energy at T^m
   Real ubase = Null<Real>();
-
   [[maybe_unused]] auto &vu_ = vu;
   if constexpr (jacobi) {
     ubase = vu_(b, ccbulk::internal_energy(), k, j, i);
@@ -585,91 +653,96 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     ubase = InternalEnergy(tbase, nm1, eos, map, vu, b, k, j, i);
   }
 
+  // Residual at temperature tt
+  auto residual = [&](const Real tt) -> RootResidual {
+    return PolyRoot(tt, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
+  };
+
+  // Convergence test
+  auto converged = [&](const Real tt, const RootResidual &rr, const Real slope) -> bool {
+    constexpr Real eps = std::numeric_limits<Real>::epsilon();
+    const Real dresdt = std::max(rr.emiss / tt, slope);
+    return std::abs(rr.res) <= std::max(ru.tol * tt * dresdt, 64.0 * eps * rr.scale);
+  };
+
+  // Slope between two evaluations
+  auto secant = [](const Real t1, const Real y1, const Real t2, const Real y2) -> Real {
+    const Real dt = std::abs(t2 - t1);
+    return (dt <= 0.25 * std::min(t1, t2)) ? std::abs(y2 - y1) / dt : 0.0;
+  };
+
   // See if guess itself is within tolerance
-  const Real yg =
-      PolyRoot(temp, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-  if (std::abs(yg) <= ru.tol) return true;
+  const RootResidual rg = residual(temp);
+  if (converged(temp, rg, 0.0)) return true;
+
+  // Accept a converged root if it is physical
+  auto accept = [&](const Real troot) -> bool {
+    if (troot > tflr) {
+      temp = troot;
+      return true;
+    }
+    if (verbose) PARTHENON_WARN("Radiation temperature root unphysical!");
+    return false;
+  };
 
   // Attempt to bound the root
-  constexpr int NBND = 6;
-  constexpr Real tmag[NBND] = {1.1, 2.0, 1e1, 1e2, 1e4, 1e8};
-  int mag = 0;
-  Real ta = Null<Real>(), tb = Null<Real>();
-  Real ya = std::numeric_limits<Real>::max(), yb = std::numeric_limits<Real>::max();
-  while (ya * yb > 0.0) {
-    if (mag == NBND) {
-      if (verbose) PARTHENON_WARN("Cannot bound temperature root!");
-      return false;
+  constexpr std::array<Real, 10> tmag = {1.1, 2.0, 1e1, 1e2, 1e3,
+                                         1e4, 1e5, 1e6, 1e7, 1e8};
+  Real ta = temp, tb = temp;
+  Real ya = rg.res, yb = rg.res;
+  bool bounded = false;
+  for (int side = 0; side < 2 && !bounded; ++side) {
+    const bool up = ((rg.res > 0.0) == (side == 0));
+    ta = temp;
+    ya = rg.res;
+    for (std::size_t mag = 0; mag < tmag.size(); ++mag) {
+      tb = (up) ? temp * tmag[mag] : temp / tmag[mag];
+      const RootResidual rb = residual(tb);
+      yb = rb.res;
+      if (mag == 0 && converged(temp, rg, secant(temp, rg.res, tb, yb))) return true;
+      if (converged(tb, rb, secant(ta, ya, tb, yb))) return accept(tb);
+      if ((ya > 0.0) != (yb > 0.0)) {
+        bounded = true;
+        break;
+      }
+      ta = tb;
+      ya = yb;
     }
-    ta = temp / tmag[mag];
-    tb = temp * tmag[mag];
-    ya = PolyRoot(ta, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-    yb = PolyRoot(tb, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
-    mag++;
+  }
+  if (!bounded) {
+    if (verbose) PARTHENON_WARN("Cannot bound temperature root!");
+    return false;
   }
 
   // Regula falsi
-  int iter_count = 0;
-  int b1 = 0;
-  int b2 = 0;
   const Real sign = (ya < 0.0 ? 1.0 : -1.0);
   ya *= sign;
   yb *= sign;
-  // NOTE: ta, tb > 0 (temperatures), so the relative-tolerance test
-  // |tb - ta| / (0.5 (ta + tb)) > tol is rearranged into a multiply.
-  while ((std::abs(tb - ta) > ru.tol * 0.5 * (ta + tb)) &&   // \Delta T is below tol
-         (std::abs(ya) > ru.tol || std::abs(yb) > ru.tol) && // ya and yb below tol
-         (iter_count < ru.titer)) {
-    // Evaluate tc
+  Real tp = tb, yp = yb;
+  int last = 0;
+  for (int iter = 0; iter < ru.titer; ++iter) {
     Real tc = (ta * yb - tb * ya) / (yb - ya);
-
-    // Guard against roundoff
-    if (tc == ta) {
-      tb = ta;
-      iter_count++;
-      continue;
-    } else if (tc == tb) {
-      ta = tb;
-      iter_count++;
-      continue;
-    }
-
-    // Compute internal energy at temp tc
-    Real yc = sign;
-    yc *= PolyRoot(tc, ubase, uu, cdt, ngroups, fbnd, vr, nm1, eos, map, vu, b, k, j, i);
+    if (!(tc > std::min(ta, tb) && tc < std::max(ta, tb))) tc = 0.5 * (ta + tb);
+    const RootResidual rc = residual(tc);
+    const Real yc = sign * rc.res;
+    if (converged(tc, rc, secant(tp, yp, tc, yc))) return accept(tc);
+    tp = tc;
+    yp = yc;
     if (yc > 0.0) {
       tb = tc;
       yb = yc;
-      b1++;
-      ya *= (b1 > 1 ? 0.5 : 1.0);
-      b2 = 0;
-    } else if (yc < 0.0) {
+      if (last == 1) ya *= 0.5;
+      last = 1;
+    } else {
       ta = tc;
       ya = yc;
-      b2++;
-      yb *= (b2 > 1 ? 0.5 : 1.0);
-      b1 = 0;
-    } else {
-      ta = tc;
-      tb = tc;
+      if (last == -1) yb *= 0.5;
+      last = -1;
     }
-    iter_count++;
+    if (std::abs(tb - ta) <= ru.tol * 0.5 * (ta + tb)) return accept(0.5 * (ta + tb));
   }
-
-  // Return root or fail
-  if (iter_count >= ru.titer) {
-    if (verbose) PARTHENON_WARN("Radiation temperature root find cannot converge!");
-    return false;
-  } else {
-    ta = 0.5 * (ta + tb);
-    if (ta > tflr) {
-      temp = ta;
-      return true;
-    } else {
-      if (verbose) PARTHENON_WARN("Radiation temperature root unphysical!");
-      return false;
-    }
-  }
+  if (verbose) PARTHENON_WARN("Radiation temperature root find cannot converge!");
+  return false;
 }
 
 //----------------------------------------------------------------------------------------
@@ -695,10 +768,10 @@ GetBoundaryPackDescriptorMap(std::shared_ptr<MeshBlockData<Real>> &rc) {
 //----------------------------------------------------------------------------------------
 //! \fn  void SetMomentsMesh
 //! \brief
-inline void SetMomentsMesh(MeshData<Real> *md) {
+inline void SetMomentsMesh(Mesh *pm, ParameterInput *pin, SimTime &tm) {
   namespace ccrad = cell_variables::cell_averaged::rad;
 
-  auto pm = md->GetParentPointer();
+  auto md = pm->mesh_data.Get().get();
   auto &resolved_pkgs = pm->resolved_packages;
   static auto desc =
       MakePackDescriptor<ccrad::intensity, ccrad::moments>(resolved_pkgs.get());
@@ -712,7 +785,7 @@ inline void SetMomentsMesh(MeshData<Real> *md) {
   const int nangles = rad_pkg->Param<int>("nangles");
 
   // Compute moments (currently only the radiation energy density)
-  auto idx_space = RiotFlatLoop::GetIndexSpace(IndexDomain::entire, v.GetNBlocks(), md);
+  auto idx_space = RiotFlatLoop::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
   RiotFlatLoop::four_d(
       "SetMoments", idx_space,
       KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {

@@ -64,7 +64,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int nangles = shared.nangles;
   const int ngroups = shared.ngroups;
 
-  // Algorithm-shared Boundary Conditions (default, drive)
+  // Algorithm-shared Boundary Conditions (default, drive, reflecting)
   RadiationBC::EnrollRadiationBC(explicit_pkg.get(), pin, params);
 
   // Algorithm-shared Initializations (none, zero, thermal)
@@ -133,7 +133,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   explicit_pkg->EstimateTimestepMesh = EstimateTimestepMesh;
 
   // Set Moments
-  explicit_pkg->FillDerivedMesh = SetMomentsMesh;
+  explicit_pkg->UserWorkBeforeOutputMesh = SetMomentsMesh;
 
   return explicit_pkg;
 }
@@ -196,7 +196,7 @@ Real EstimateTimestep(MeshData<Real> *md, const Real dt_ratio_hyperbolic) {
     // Extraction of angular grid quantities
     const auto agrid = GetAngularGridArrays(explicit_pkg);
     const auto &gflx = agrid.gflux;
-    const auto &cp = agrid.cart_pos;
+    const auto &cp = agrid.cart_pos_unit;
     const auto &numn = agrid.num_neighbors;
     const auto &indn = agrid.ind_neighbors;
 
@@ -225,7 +225,8 @@ Real EstimateTimestep(MeshData<Real> *md, const Real dt_ratio_hyperbolic) {
             const Real &dn2 = cp(indn(aa, nb), NDIR[X2DIR - 1]);
             const Real &dn3 = cp(indn(aa, nb), NDIR[X3DIR - 1]);
             const Real absna = std::abs(mcw_ix1 * gflx(aa, nb));
-            ldt = std::min(ldt, std::acos(n1 * dn1 + n2 * dn2 + n3 * dn3) / absna);
+            const Real dang = std::acos(n1 * dn1 + n2 * dn2 + n3 * dn3);
+            ldt = (absna > 0.0) ? std::min(ldt, dang / absna) : ldt;
           }
         });
   }
@@ -332,7 +333,6 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
                                            integrator.get(), base, r0, r1, nsteps, dt);
 
     // Update fluid state if radiation affects fluid
-    TaskID aux = none;
     if (affect_fluid) {
       auto pte = tl.AddTask(
           cycler_id,
@@ -349,17 +349,8 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
           },
           a0.get());
       auto u_bc = parthenon::AddBoundaryExchangeTasks(pte, tl, a0, pmesh->multilevel);
-      aux = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, a0.get());
+      auto derive = tl.AddTask(u_bc, FillDerived<MeshData<Real>>, a0.get());
     }
-
-    // Update moments
-    auto moments = tl.AddTask(
-        cycler_id | aux,
-        [](MeshData<Real> *md) {
-          SetMomentsMesh(md);
-          return TaskStatus::complete;
-        },
-        r0.get());
   }
 
   return tc;
@@ -424,6 +415,11 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   // Resolved packages and indexing
   auto &resolved_pkgs = pm->resolved_packages;
   const int ngroups = explicit_pkg->Param<int>("ngroups");
+  const Real mix_frac = explicit_pkg->Param<Real>("mix_frac");
+  const Real opac_rho_min = explicit_pkg->Param<Real>("opac_rho_min");
+  const Real opac_temp_min = explicit_pkg->Param<Real>("opac_temp_min");
+  const Real opac_rho_max = explicit_pkg->Param<Real>("opac_rho_max");
+  const Real opac_temp_max = explicit_pkg->Param<Real>("opac_temp_max");
 
   // Opacity parameters
   auto &mat_pkg = pm->packages.Get("materials");
@@ -437,8 +433,8 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
   namespace cm = cell_variables::material_averaged;
   namespace ccrad = cell_variables::cell_averaged::rad;
   static auto desc =
-      MakePackDescriptor<ccrad::aa, ccrad::ss, cm::rho, ccmat::volume_fraction,
-                         ccbulk::temperature>(resolved_pkgs.get());
+      MakePackDescriptor<cm::rho, ccmat::rho, ccmat::volume_fraction, ccbulk::temperature,
+                         ccrad::aa, ccrad::ss>(resolved_pkgs.get());
   auto pack = desc.GetPack(md);
 
   // Set bulk opacities
@@ -450,19 +446,23 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
                     const int &i) {
         Real &aa = pack(b, ccrad::aa(gg), k, j, i) = 0.0;
         Real &ss = pack(b, ccrad::ss(gg), k, j, i) = 0.0;
-        const Real &temp = pack(b, ccbulk::temperature(), k, j, i);
+        const Real temp = std::clamp(pack(b, ccbulk::temperature(), k, j, i),
+                                     opac_temp_min, opac_temp_max);
         for (int m = 0; m < pack.GetSize(b, cm::rho()); ++m) {
           const Real &rhom = pack(b, cm::rho(m), k, j, i);
+          const Real &rhobarm = pack(b, ccmat::rho(m), k, j, i);
           const Real &vfracm = pack(b, ccmat::volume_fraction(m), k, j, i);
-          const int &mat_id = pack(b, cm::rho(m)).sparse_id;
-          const int &phase_id = pack(b, cm::rho(m)).v;
+          const int &mat_id = pack(b, ccmat::rho(m)).sparse_id;
+          const int &phase_id = pack(b, ccmat::rho(m)).v;
           const int opac_id = opac_from_matid(mat_id) + phase_id;
-          const Real aam =
-              (rhom > 0) ? opac_a(opac_id).AbsorptionCoefficient(rhom, temp, gg) : 0.0;
-          const Real ssm =
-              (rhom > 0) ? opac_s(opac_id).ScatteringCoefficient(rhom, temp, gg) : 0.0;
-          aa += vfracm * aam;
-          ss += vfracm * ssm;
+          const auto &oam = opac_a(opac_id);
+          const auto &osm = opac_s(opac_id);
+          const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
+          const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
+          aa += (rhobarm > 0.0) ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
+                                : 0.0;
+          ss += (rhobarm > 0.0) ? MMOpacity(osm, rm, rbarm, vfracm, temp, gg, mix_frac)
+                                : 0.0;
         }
       });
 
@@ -560,7 +560,7 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
           ii.flux(b, X3DIR, n, k, j, i) =
               SpatialFlux<X3DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
           if (k == kb.e) {
-            const Real &dx3p = coords.CellWidth<X3DIR>(k + 1, j, i);
+            dx = coords.CellWidth<X3DIR>(k + 1, j, i);
             ii.flux(b, X3DIR, n, k + 1, j, i) =
                 SpatialFlux<X3DIR>(ii, cn, b, n, k + 1, j, i, op, gg, beta, dx, tmax);
           }
@@ -755,6 +755,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
         // Update the specific intensity
         if (success) {
           Real delta_er = 0.0;
+          EmissivitySweep emissivity(tadv, fbnd, ngroups, unit_utils);
           for (int gg = 0; gg < ngroups; ++gg) {
             // Set opacity weighted timesteps
             const Real cdtsiga = cdt * pack(b, ccrad::aa(gg), k, j, i);
@@ -769,7 +770,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
             // Set advanced stage specific intensity
             Real er_old = 0.0;
             Real er_new = 0.0;
-            const Real ee = Emissivity(gg, tadv, fbnd, ngroups, unit_utils);
+            const Real ee = emissivity.Next();
             const Real jj = (aa1 * ee + aa2) * aa3;
             for (int aa = 0; aa < nangles; ++aa) {
               const int n = GAI(nangles, gg, aa);

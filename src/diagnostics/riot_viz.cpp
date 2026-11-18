@@ -518,7 +518,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   PARTHENON_REQUIRE(initial_pool_size > 0,
                   "riot_viz/initial_swarm_pool_size must be positive");
 
-  Metadata mswarm({Metadata::Provides, Metadata::None, Metadata::Analysis});
+  Metadata mswarm({Metadata::Provides, Metadata::None});
   mswarm.SetInitialSwarmPoolReservation(initial_pool_size);
   pkg->AddSwarm(pvr::particles::name(), mswarm);
   Metadata m_real({Metadata::Real});
@@ -533,7 +533,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   pkg->AddSwarmValue<pvr::camera_id, pvr::particles>(m_int);
   pkg->AddSwarmValue<pvr::pixel_id, pvr::particles>(m_int);
 
-  Metadata m({Metadata::OneCopy, Metadata::Node, Metadata::Analysis});//, Metadata::FillGhost});//, Metadata::CommunicateOne});
+  Metadata m({Metadata::OneCopy, Metadata::Node});//, Metadata::FillGhost});//, Metadata::CommunicateOne});
   std::vector<std::string> orig_fields = scene.field;
   std::string suffix = "_nodal_";
   for (auto &f : scene.field) {

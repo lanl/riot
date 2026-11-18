@@ -57,6 +57,7 @@ block-adaptive, performance portable multi-material radiation hydrodynamics
    src/packages/visualization
    src/programmer_guide
    src/contributing
+   src/rshow
 
 Indices and tables
 ==================

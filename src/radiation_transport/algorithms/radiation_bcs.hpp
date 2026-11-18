@@ -23,16 +23,18 @@
 // Parthenon headers
 #include <bvals/boundary_conditions_generic.hpp>
 #include <parthenon/package.hpp>
+#include <utils/string_utils.hpp>
 
 // Riot headers
 #include "radiation_transport/angular_grids/geodesic_grid.hpp"
 #include "radiation_transport/angular_grids/latlon_grid.hpp"
 #include "radiation_transport/transport_utils/transport_utils.hpp"
+#include "riot_utils/riot_utils.hpp"
+#include "riot_utils/table_utils.hpp"
 
 using namespace parthenon::package::prelude;
 
-namespace Drive {
-using Side = parthenon::BoundaryFunction::BCSide;
+namespace RadiationBC {
 
 //----------------------------------------------------------------------------------------
 //! \fn constexpr IndexDomain BndryDomain
@@ -75,6 +77,11 @@ inline const IndexRange InteriorBounds(const parthenon::IndexShape &bounds) {
   }
 }
 
+} // namespace RadiationBC
+
+namespace Drive {
+using Side = parthenon::BoundaryFunction::BCSide;
+
 //----------------------------------------------------------------------------------------
 //! \fn template <CoordinateDirection DIR, BCSide SIDE> void DriveBCImpl
 //! \brief Unified drive boundary condition for all six faces
@@ -88,9 +95,9 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
   // Indexing for outflow: reference the first (inner) or last (outer) interior cell
   constexpr bool inner = (SIDE == parthenon::BoundaryFunction::BCSide::Inner);
   const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
-  const auto range = InteriorBounds<DIR>(bounds);
+  const auto range = RadiationBC::InteriorBounds<DIR>(bounds);
   const int ref = inner ? range.s : range.e;
-  constexpr IndexDomain domain = BndryDomain<DIR, SIDE>();
+  constexpr IndexDomain domain = RadiationBC::BndryDomain<DIR, SIDE>();
 
   // Radiation package
   const auto rad_pkg = GetRadPackage(pmb->packages);
@@ -101,17 +108,33 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
   static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
   auto vr = descr[coarse].GetPack(mbd.get());
   if (vr.GetMaxNumberOfVars() > 0) {
-    const Real trad = rad_pkg->Param<Real>("drive_trad");
-    const auto unit_utils = rad_pkg->Param<UnitUtils>("unit_utils");
-    const auto fbnd = *(rad_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
+    using RiotTables::Uniform1D;
+    const bool from_table = rad_pkg->Param<bool>("drive_from_table");
+    auto unit_utils = rad_pkg->Param<UnitUtils>("unit_utils");
+    Real trad = 0.0, time_bc = 0.0;
+    ParArray1D<Real> fbnd, tmin, tmax;
+    ParArray1D<Uniform1D> eg;
+    if (from_table) {
+      eg = rad_pkg->Param<ParArray1D<Uniform1D>>("d.drive_eg");
+      tmin = rad_pkg->Param<ParArray1D<Real>>("d.drive_eg_tmin");
+      tmax = rad_pkg->Param<ParArray1D<Real>>("d.drive_eg_tmax");
+      time_bc = rad_pkg->Param<Real>("time");
+    } else {
+      trad = rad_pkg->Param<Real>("drive_trad");
+      fbnd = *(rad_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
+    }
     pmb->par_for_bndry(
         "DriveBC-intensity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
           int kr, jr, ir;
-          RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
+          RadiationBC::RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
             const Real ee =
-                (trad > 0) ? Emissivity(gg, trad, fbnd, ngroups, unit_utils) : 0.0;
+                from_table ? std::max(eg(gg).interpToReal(std::max(
+                                          tmin(gg), std::min(tmax(gg), time_bc))),
+                                      0.0)
+                           : ((trad > 0) ? Emissivity(gg, trad, fbnd, ngroups, unit_utils)
+                                         : 0.0);
             for (int aa = 0; aa < nangles; ++aa) {
               vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) =
                   std::max(ee, vr(0, ccrad::intensity(GAI(nangles, gg, aa)), kr, jr, ir));
@@ -132,7 +155,7 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
         "DriveBC-opacity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
           int kr, jr, ir;
-          RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
+          RadiationBC::RefIdx<DIR>(k, j, i, ref, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
             vo(0, ccrad::aa(gg), k, j, i) = copy * vo(0, ccrad::aa(gg), kr, jr, ir);
             vo(0, ccrad::ss(gg), k, j, i) = copy * vo(0, ccrad::ss(gg), kr, jr, ir);
@@ -152,12 +175,96 @@ inline auto DriveBC() {
 
 } // namespace Drive
 
+namespace Reflect {
+
 //----------------------------------------------------------------------------------------
-// Shared initialization for the radiation transport BCs (default, drive).
+//! \fn template <CoordinateDirection DIR, BCSide SIDE> void ReflectBCImpl
+//! \brief Specular reflecting boundary condition: each ghost cell takes the opacities of
+//! its mirror-image interior cell and the intensities of that cell remapped through the
+//! angular grid's reflection map for the flipped direction component.
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+inline void ReflectBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
+  using parthenon::MakePackDescriptor;
+  namespace ccrad = cell_variables::cell_averaged::rad;
+  auto pmb = mbd->GetBlockPointer();
+  const auto nb = IndexRange{0, 0};
+
+  // Mirror index: ghost g maps to 2s-1-g (inner) or 2e+1-g (outer)
+  constexpr bool inner = (SIDE == parthenon::BoundaryFunction::BCSide::Inner);
+  const auto &bounds = coarse ? pmb->c_cellbounds : pmb->cellbounds;
+  const auto range = RadiationBC::InteriorBounds<DIR>(bounds);
+  const int msum = inner ? 2 * range.s - 1 : 2 * range.e + 1;
+  constexpr IndexDomain domain = RadiationBC::BndryDomain<DIR, SIDE>();
+
+  // Radiation package
+  const auto rad_pkg = GetRadPackage(pmb->packages);
+  const int ngroups = rad_pkg->Param<int>("ngroups");
+  const int nangles = rad_pkg->Param<int>("nangles");
+  const int comp = AngularFluxDirs()[DIR - 1];
+  const auto agrid = GetAngularGridArrays(rad_pkg);
+  const auto &num = agrid.num_reflect;
+  const auto &ind = agrid.ind_reflect;
+  const auto &wgt = agrid.wgt_reflect;
+
+  // Intensity
+  static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
+  auto vr = descr[coarse].GetPack(mbd.get());
+  if (vr.GetMaxNumberOfVars() > 0) {
+    pmb->par_for_bndry(
+        "ReflectBC-intensity", nb, domain, parthenon::TopologicalElement::CC, coarse,
+        false, KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
+          const int g = (DIR == X1DIR) ? i : ((DIR == X2DIR) ? j : k);
+          int kr, jr, ir;
+          RadiationBC::RefIdx<DIR>(k, j, i, msum - g, kr, jr, ir);
+          for (int gg = 0; gg < ngroups; ++gg) {
+            for (int aa = 0; aa < nangles; ++aa) {
+              Real ii = 0.0;
+              for (int kk = 0; kk < num(comp, aa); ++kk) {
+                ii += wgt(comp, aa, kk) *
+                      vr(0, ccrad::intensity(GAI(nangles, gg, ind(comp, aa, kk))), kr, jr,
+                         ir);
+              }
+              vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ii;
+            }
+          }
+        });
+  }
+
+  // Opacity
+  static auto desco = GetBoundaryPackDescriptorMap<ccrad::aa, ccrad::ss>(mbd);
+  auto vo = desco[coarse].GetPack(mbd.get());
+  if (vo.GetMaxNumberOfVars() > 0) {
+    pmb->par_for_bndry(
+        "ReflectBC-opacity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
+        KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
+          const int g = (DIR == X1DIR) ? i : ((DIR == X2DIR) ? j : k);
+          int kr, jr, ir;
+          RadiationBC::RefIdx<DIR>(k, j, i, msum - g, kr, jr, ir);
+          for (int gg = 0; gg < ngroups; ++gg) {
+            vo(0, ccrad::aa(gg), k, j, i) = vo(0, ccrad::aa(gg), kr, jr, ir);
+            vo(0, ccrad::ss(gg), k, j, i) = vo(0, ccrad::ss(gg), kr, jr, ir);
+          }
+        });
+  }
+}
+
+template <parthenon::CoordinateDirection DIR, parthenon::BoundaryFunction::BCSide SIDE>
+inline auto ReflectBC() {
+  return [](std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) -> void {
+    ReflectBCImpl<DIR, SIDE>(mbd, coarse);
+  };
+}
+
+} // namespace Reflect
+
+//----------------------------------------------------------------------------------------
+// Shared initialization for the radiation transport BCs (default, drive, reflecting).
 //----------------------------------------------------------------------------------------
 namespace RadiationBC {
 
-// The input blocks from which the shared radiation BCs are read.
+// The input blocks from which the shared radiation BCs are read: per-face BC types live
+// in bc_block, drive-BC parameters in drive_block.
+constexpr char bc_block[] = "radiation_transport/bc";
 constexpr char drive_block[] = "radiation_transport/drive";
 
 // Individual shared BC options.
@@ -165,13 +272,57 @@ namespace BCOption {
 
 //----------------------------------------------------------------------------------------
 //! \fn void AddDriveParams
-//! \brief
-inline void AddDriveParams(ParameterInput *pin, Params &params) {
-  // Extract custom BC parameters
-  params.Add("drive_trad",
-             pin->GetOrAddReal(drive_block, "trad_bc", 0.0,
-                               "Specifies the uniform radiation temperature (in K) for "
-                               "the drive boundary condition."));
+//! \brief Read the drive-BC parameters.  "constant" mode drives a uniform radiation
+//! temperature trad_bc; "table" mode reads a time series of group radiation energy
+//! densities E_g(t) [erg/cm^3] from drive_filename (col 0 = time [s], cols 1..ngroups =
+//! E_g), one Uniform1D per group evaluated at the solver's current update time.
+inline void AddDriveParams(StateDescriptor *rad_pkg, ParameterInput *pin,
+                           Params &params) {
+  const std::string source =
+      pin->GetOrAddString(drive_block, "drive_source", "constant",
+                          "Drive BC source: \"constant\" (trad_bc) or \"table\" "
+                          "(E_g time series from drive_filename)");
+  const bool from_table = (source == "table");
+  PARTHENON_REQUIRE(from_table || source == "constant",
+                    "radiation_transport/drive/drive_source must be "
+                    "\"constant\" or \"table\".");
+  params.Add("drive_from_table", from_table);
+
+  if (from_table) {
+    const int ngroups = rad_pkg->Param<int>("ngroups");
+    const std::string fname = pin->GetString(
+        drive_block, "drive_filename",
+        "Path to the drive E_g(t) table (col 0 = time [s], cols 1..ngroups = group "
+        "radiation energy density [erg/cm^3]).");
+    const auto table = parthenon::string_utils::ParseAsciiTable<Real>(fname);
+    const int nrows = table.extent(0);
+    const int ncols = table.extent(1);
+    PARTHENON_REQUIRE(ncols == ngroups + 1,
+                      "Drive table must have ngroups+1 columns (time + one per group).");
+
+    std::vector<RiotTables::Uniform1D> eg_d_vec;
+    std::vector<Real> tmin_h, tmax_h;
+    parthenon::HostArray2D<Real> col("drive_eg_col", nrows, 2);
+    for (int g = 0; g < ngroups; ++g) {
+      for (int r = 0; r < nrows; ++r) {
+        col(r, 0) = table(r, 0);
+        col(r, 1) = table(r, g + 1);
+      }
+      auto eg_h = RiotTables::UniformlyResampleTimeSeries(col);
+      eg_d_vec.push_back(eg_h.getOnDevice());
+      tmin_h.push_back(eg_h.range(0).min());
+      tmax_h.push_back(eg_h.range(0).max());
+    }
+    params.Add("d.drive_eg", RiotUtils::VectorToDevice(eg_d_vec, "drive_eg"));
+    params.Add("d.drive_eg_tmin", RiotUtils::VectorToDevice(tmin_h, "drive_eg_tmin"));
+    params.Add("d.drive_eg_tmax", RiotUtils::VectorToDevice(tmax_h, "drive_eg_tmax"));
+  } else {
+    params.Add("drive_trad",
+               pin->GetOrAddReal(drive_block, "trad_bc", 0.0,
+                                 "Uniform radiation temperature (in K) for the drive "
+                                 "boundary condition (constant mode)."));
+  }
+
   params.Add("drive_force_upwind_flux_bc",
              pin->GetOrAddBoolean(
                  drive_block, "force_upwind_flux_bc", true,
@@ -216,18 +367,49 @@ inline void EnrollRadiationBC(StateDescriptor *rad_pkg, ParameterInput *pin,
       Drive::DriveBC<X2DIR, Side::Inner>(), Drive::DriveBC<X2DIR, Side::Outer>(),
       Drive::DriveBC<X3DIR, Side::Inner>(), Drive::DriveBC<X3DIR, Side::Outer>()};
 
-  // Enroll custom BC
+  // Reflect BC
+  std::array<bool, 3> reflect_comps = {false, false, false};
+  const std::array<RadBFunc_t, 6> reflect_bcs = {
+      Reflect::ReflectBC<X1DIR, Side::Inner>(), Reflect::ReflectBC<X1DIR, Side::Outer>(),
+      Reflect::ReflectBC<X2DIR, Side::Inner>(), Reflect::ReflectBC<X2DIR, Side::Outer>(),
+      Reflect::ReflectBC<X3DIR, Side::Inner>(), Reflect::ReflectBC<X3DIR, Side::Outer>()};
+
+  // Enroll custom BC on the faces of active dimensions
+  const int ndim = 1 + (pin->GetInteger("parthenon/mesh", "nx2") > 1) +
+                   (pin->GetInteger("parthenon/mesh", "nx3") > 1);
   for (int i = 0; i < bndry_faces.size(); ++i) {
     const auto &[name, face] = bndry_faces[i];
-    if (pin->GetOrAddString(drive_block, name, "default") == "drive") {
+    PARTHENON_REQUIRE(!pin->DoesParameterExist(drive_block, name) ||
+                          pin->GetString(drive_block, name) == "default",
+                      std::string(drive_block) + "/" + name + " has moved to " +
+                          bc_block + "/" + name + ".");
+    if (i / 2 >= ndim) continue;
+    const std::string bc = pin->GetOrAddString(bc_block, name, "default");
+    PARTHENON_REQUIRE(bc == "default" || bc == "drive" || bc == "reflecting",
+                      std::string(bc_block) + "/" + name +
+                          " must be \"default\", \"drive\", or \"reflecting\".");
+    const bool mesh_reflecting = pin->DoesParameterExist("parthenon/mesh", name) &&
+                                 pin->GetString("parthenon/mesh", name) == "reflecting";
+    PARTHENON_REQUIRE(mesh_reflecting || bc != "reflecting",
+                      std::string(bc_block) + "/" + name +
+                          " = reflecting requires parthenon/mesh/" + name +
+                          " = reflecting.");
+    // A reflecting mesh face reflects the radiation too unless it is driven.
+    if (bc == "drive") {
       rad_pkg->UserBoundaryFunctions[face].push_back(drive_bcs[i]);
       drive_bc_enrolled = true;
+    } else if (mesh_reflecting) {
+      rad_pkg->UserBoundaryFunctions[face].push_back(reflect_bcs[i]);
+      reflect_comps[AngularFluxDirs()[i / 2]] = true;
     }
+  }
+  if (reflect_comps[0] || reflect_comps[1] || reflect_comps[2]) {
+    BuildReflectionMaps(rad_pkg, reflect_comps);
   }
 
   // Enroll custom BC params
   if (drive_bc_enrolled) {
-    BCOption::AddDriveParams(pin, params);
+    BCOption::AddDriveParams(rad_pkg, pin, params);
   }
 }
 

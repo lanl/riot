@@ -71,22 +71,35 @@ where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the ang
 Angular Discretization
 ~~~~~~~~~~~~~~~~~~~~~~
 
-The unit sphere of directions is discretized into :math:`N_{\text{ang}}` ordinates, each carrying a solid-angle weight. Two quadratures are available: a nearly uniform *geodesic* grid built by subdividing an icosahedron, for which :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`, and a *latitude–longitude* product grid with :math:`N_{\text{ang}} = n_\theta\,n_\phi`. The geodesic grid may be rotated to avoid alignment with the spatial mesh. The quadrature and its resolution are set by the angular-grid parameters below.
+The unit sphere of directions is discretized into :math:`N_{\text{ang}}` ordinates, each carrying a solid-angle weight. Two quadratures are available, both refined by a single level :math:`n_{\text{level}}` (``nlevel``): a nearly uniform *geodesic* grid built by subdividing an icosahedron, with :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`, and a *latitude–longitude* product grid with :math:`n_\theta = 2\,n_{\text{level}}` polar and :math:`n_\phi = 4\,n_{\text{level}}` azimuthal bins (:math:`N_{\text{ang}} = 8\,n_{\text{level}}^2`). In curvilinear geometries, where latitude–longitude is the default, symmetry reduces the azimuthal grid: 2D cylindrical spans only :math:`\phi\in[0,\pi)` with :math:`n_\phi = 2\,n_{\text{level}}` (:math:`N_{\text{ang}} = 4\,n_{\text{level}}^2`), and 1D spherical uses :math:`n_\phi = 1` (:math:`N_{\text{ang}} = 2\,n_{\text{level}}`). The geodesic grid may be rotated to avoid alignment with the spatial mesh.
 
 .. _`sec:rad-opacity`:
 
 Multi-Material Opacities
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The cell absorption and scattering coefficients that appear in the equation above are aggregated from the per-material opacities (Section :ref:`sec:mat-opacity`) as volume-fraction-weighted sums,
+For :math:`q\in\{a,s\}`, the Amagat closure evaluates each material's specific opacity at its material density and volume-averages the resulting coefficients,
 
 .. math::
 
-     \sigma_{a,f} = \sum_m f_m\,\rho_m\,\kappa_{a,f,m}
-                  = \sum_m f_m\,\sigma_{a,f,m}, \qquad
-     \sigma_{s,f} = \sum_m f_m\,\sigma_{s,f,m},
+     \sigma^{\mathrm{A}}_{q,f}
+       = \sum_m f_m\rho_m\,\kappa_{q,f,m}(\rho_m,T).
 
-where each material’s coefficient :math:`\sigma_{a,f,m} = \rho_m\,\kappa_{a,f,m}` is evaluated from its own opacity model at the material-averaged density :math:`\rho_m` and the (shared) cell temperature. This follows the volume-fraction aggregation of Section :ref:`sec:permat-bulk`, so a mixed cell presents a single set of group coefficients to the transport solve.
+The homogeneous closure instead evaluates each material's specific opacity at its partial density :math:`f_m\rho_m`,
+
+.. math::
+
+     \sigma^{\mathrm{H}}_{q,f}
+       = \sum_m f_m\rho_m\,\kappa_{q,f,m}(f_m\rho_m,T).
+
+RIOT blends these closures with :math:`\chi=\texttt{mix_frac}`,
+
+.. math::
+
+     \sigma_{q,f} = (1-\chi)\sigma^{\mathrm{A}}_{q,f}
+                    + \chi\sigma^{\mathrm{H}}_{q,f}.
+
+The PTE-consistent Amagat closure (:math:`\chi=0`) is the default; :math:`\chi=1` selects the homogeneous closure.
 
 Matter–Radiation Coupling
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -98,7 +111,7 @@ When coupling is enabled (``coupling``), energy exchanged with the radiation fie
      \frac{\partial E_{\text{mat}}}{\partial t} = -\,\frac{\partial E_{\text{rad}}}{\partial t}, \qquad
      E_{\text{rad}} = \sum_f E_f .
 
-The exchange is treated implicitly: an advanced material temperature :math:`T^{n+1}` is found by a non-linear root solve (tolerance ``troot_tol``, iteration cap ``troot_max_iter``) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with ``affect_fluid`` (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with ``fixed_temp_rhs``.
+The exchange is treated implicitly: an advanced material temperature :math:`T^{n+1}` is found by a non-linear root solve (relative temperature tolerance ``troot_tol``, iteration cap ``troot_max_iter``) balancing the emission, absorption, and the change in material energy over the step. This keeps the strong emission/absorption coupling stable at large optical depth. The feedback onto the fluid energy can be suppressed independently with ``affect_fluid`` (e.g. to advance the radiation field against a fixed matter state), and the advanced-temperature solve itself can be bypassed with ``fixed_temp_rhs``.
 
 Solvers
 -------
@@ -123,7 +136,7 @@ Input Parameters
 
 Radiation transport requires hydrodynamics and is incompatible with the ionization package, with sparse physics (Chapter :ref:`chap:sparse-physics`), and with the P1 radiation diffusion package (Chapter :ref:`chap:raddiffusion`), which provides an alternative radiation model — at most one of the two may be enabled. Because ``sparse_physics`` defaults to ``true``, a radiation run must set it ``false`` explicitly in the ``<physics>`` block.
 
-Parameters are organized into a shared ``<radiation_transport>`` block and three nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
+Parameters are organized into a shared ``<radiation_transport>`` block and several nested blocks. The shared block holds everything common to both solvers (CFL, coupling, angular grid, unit overrides); the chosen solver’s algorithm-specific parameters live in ``<radiation_transport/explicit>`` or ``<radiation_transport/jacobi>``; the radiation initial state is set in ``<radiation_transport/init>``; the per-face boundary conditions are selected in ``<radiation_transport/bc>``; and the drive boundary condition is configured in ``<radiation_transport/drive>``.
 
 .. list-table:: Solver selection and shared parameters in the ``<radiation_transport>`` block.
    :class: wraptable
@@ -160,8 +173,8 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
      - Skip the advanced-temperature solve in the source term.
    * - beta
      - Real
-     - *geom.*
-     - Weight on the local optical depth in the Rusanov flux (:math:`1.0` in Cartesian, :math:`0.0` in curvilinear geometries).
+     - ``3.0``
+     - Weight on the local optical depth in the Rusanov flux.
    * - taumax
      - Real
      - *large*
@@ -169,7 +182,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
    * - troot_tol
      - Real
      - ``1e-8``
-     - Tolerance for the non-linear temperature root find.
+     - Relative temperature tolerance for the non-linear temperature root find.
    * - troot_max_iter
      - int
      - ``25``
@@ -178,6 +191,18 @@ Parameters are organized into a shared ``<radiation_transport>`` block and three
      - bool
      - ``false``
      - Fix opacities to the values set in the problem generator.
+   * - mix_frac
+     - Real
+     - ``0.0``
+     - Mixture interpolation from the PTE-consistent Amagat closure (0) to the homogeneous closure (1).
+   * - opac_rho_min
+     - Real
+     - ``0.0``
+     - Density floor for opacity evaluations.
+   * - opac_temp_min
+     - Real
+     - ``0.0``
+     - Temperature floor for opacity evaluations.
    * - units_override
      - bool
      - ``false``
@@ -200,12 +225,16 @@ The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are r
      - Description
    * - angular_mesh
      - string
-     - ``geodesic``
-     - Angular quadrature: ``geodesic`` or ``latlon``.
+     - *geom.*
+     - Angular quadrature: ``geodesic`` (Cartesian default) or ``latlon`` (curvilinear default).
    * - nlevel
      - int
      - ``1``
-     - Geodesic refinement level; :math:`N_{\text{ang}} = 10\,n_{\text{level}}^2 + 2`.
+     - Angular refinement level for either quadrature (see Angular Discretization).
+   * - fv_fix
+     - bool
+     - ``true``
+     - Use solid-angle-averaged (finite-volume) direction cosines.
    * - rotate_geo
      - int
      - ``1``
@@ -214,14 +243,6 @@ The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are r
      - Real
      - *NaN*
      - Manual geodesic rotation angles (used when ``rotate_geo`` ``= 2``).
-   * - ntheta
-     - int
-     - ``8``
-     - Latitude bins (latlon grid).
-   * - nphi
-     - int
-     - ``16``
-     - Longitude bins (latlon grid).
 
 The explicit solver adds sub-cycling controls:
 
@@ -245,7 +266,7 @@ The explicit solver adds sub-cycling controls:
    * - verbose
      - int
      - ``0``
-     - Diagnostic verbosity (0–2).
+     - Diagnostic verbosity (0–3; 3 adds root-find failures).
 
 The Jacobi solver adds iteration and timestep controls:
 
@@ -262,10 +283,26 @@ The Jacobi solver adds iteration and timestep controls:
      - int
      - ``1000``
      - Maximum Jacobi iterations per step.
+   * - niter_min
+     - int
+     - *geom.*
+     - Minimum iterations per step, even if ``err_thr`` is already met (default 0 in Cartesian, :math:`\sim` the angular-mesh diameter in curvilinear geometries).
    * - err_thr
      - Real
      - ``1e-8``
      - Residual threshold for convergence.
+   * - per_group_residual
+     - bool
+     - ``false``
+     - Additionally require each group's relative residual to meet ``err_thr_group``.
+   * - err_thr_group
+     - Real
+     - ``err_thr``
+     - Per-group residual threshold.
+   * - per_group_residual_floor
+     - Real
+     - ``1e-3``
+     - Floor on a group's residual denominator, as a fraction of the all-group total.
    * - split_g1
      - bool
      - ``true``
@@ -274,10 +311,6 @@ The Jacobi solver adds iteration and timestep controls:
      - Real
      - ``1e4``
      - Limit the global step to a multiple of the hyperbolic step; :math:`-1` disables this controller.
-   * - dt_ratio_lag
-     - Real
-     - ``-1.0``
-     - *Experimental* step limiter accounting for lagged opacities; :math:`-1` disables it.
    * - verbose
      - int
      - ``0``
@@ -290,7 +323,7 @@ Convergence Subcycling
 
 The Jacobi solver performs a single *global* implicit solve over the whole mesh each step, with the opacities lagged from the start of the step. This is a demanding nonlinear problem, and RIOT provides an escape hatch for the rare case in which an individual solve truly goes off the rails — its residual growing or stalling rather than settling. When a solve is judged to be diverging, it is discarded and the operator-split step is retried from the pristine start-of-step state with the timestep divided by ``reduce_factor``, repeating (reducing further as needed) until each subinterval completes and the full step is covered. It is a robustness backstop rather than part of the normal solve, and it is off by default.
 
-Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, or — when the stall detector is enabled — when it fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
+Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors act only while the residual is above the convergence threshold, so a solve that has already converged but is held open by ``niter_min`` is never discarded. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
 .. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
    :class: wraptable
@@ -312,7 +345,15 @@ Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit
    * - ndiverge_limit
      - int
      - ``-1``
-     - Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector, so only a non-finite residual fails a solve.
+     - Consecutive non-improving iterations that count as divergence and trigger a reduction; :math:`-1` disables the stall detector.
+   * - diverge_rise_frac
+     - Real
+     - ``-1``
+     - Fractional rise of the residual above its best so far that counts as divergence and triggers a reduction (e.g. ``0.1`` flags a residual 10% above its best); :math:`-1` disables the rise detector.
+   * - nrelax_steps
+     - int
+     - ``0``
+     - If :math:`>0`, each step starts with the subcycle count the previous step finished with, and that count is divided by ``reduce_factor`` after ``nrelax_steps`` consecutive steps without divergence (the carried count is capped at ``reduce_factor``:math:`^{\,\mathrm{nreduce\_limit}}`); :math:`0` starts every step at the full timestep.
 
 Initialization
 ~~~~~~~~~~~~~~
@@ -338,9 +379,9 @@ The radiation field’s initial state is chosen in the ``<radiation_transport/in
 Boundary Conditions
 ~~~~~~~~~~~~~~~~~~~
 
-By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a fixed incoming radiation temperature — by naming it in the ``<radiation_transport/drive>`` block.
+By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — or a *reflecting* condition by naming it in the ``<radiation_transport/bc>`` block.
 
-.. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+.. list-table:: Parameters in the ``<radiation_transport/bc>`` block.
    :class: wraptable
    :header-rows: 1
    :widths: 25 12 18 45
@@ -352,11 +393,31 @@ By default the radiation intensity inherits the same face boundary conditions as
    * - ix1_bc …ox3_bc
      - string
      - ``default``
-     - Per-face selector; set to ``drive`` to impose the drive condition on that face.
+     - Per-face selector: ``default`` (inherit the mesh BC; on a ``reflecting`` mesh face this is the radiation reflecting condition below), ``drive`` (impose the drive condition configured in ``<radiation_transport/drive>``), or ``reflecting`` (specular mirror).
+
+A ``reflecting`` face fills each ghost cell from its mirror-image interior cell, remapping the intensities through a reflection map of the angular grid for the direction component normal to the face (the same spatial-to-angle component mapping as the angular fluxes: :math:`R \to n_x` and :math:`Z \to n_z` in 2D RZ, :math:`r \to n_z` in 1D spherical). The map preserves isotropic fields and gives zero net radiation flux through the mirror for any interior field. On grids that are symmetric under the mirror (lat-lon, for every spatial face) it is the exact one-to-one angle reflection; on the geodesic grid it is a conservative first-order remap onto the few cells that each mirrored cell overlaps. A ``reflecting`` mesh face (``parthenon/mesh``) is reflecting for the radiation as well unless it is set to ``drive``; ``reflecting`` on any other mesh face is an error.
+
+.. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
+   :class: wraptable
+   :header-rows: 1
+   :widths: 25 12 18 45
+
+   * - Parameter
+     - Type
+     - Default
+     - Description
+   * - drive_source
+     - string
+     - ``constant``
+     - Drive source: ``constant`` (uniform ``trad_bc``) or ``table`` (time series from ``drive_filename``).
    * - trad_bc
      - Real
      - ``0.0``
-     - Uniform radiation temperature (K) injected by driven faces.
+     - Uniform radiation temperature (K) injected by driven faces (``constant`` mode).
+   * - drive_filename
+     - string
+     - —
+     - ASCII table for ``table`` mode: column 0 is time (s), columns 1…ngroups are group energy densities :math:`E_g` (erg/cm\ :sup:`3`).
    * - force_upwind_flux_bc
      - bool
      - ``true``
@@ -403,10 +464,6 @@ The package registers the radiation fields in the table below under the ``ccrad:
      - —
      - :math:`N_\nu N_{\text{ang}}`
      - Cell, Derived, OneCopy, OperatorSplit; angular-flux divergence. Explicit solver only, and only in curvilinear geometries.
-   * - ccrad::tauw
-     - —
-     - :math:`N_\nu`
-     - Cell, Derived, OneCopy, OperatorSplit; optical-depth weight (Jacobi solver only).
    * - ccrad::temperature
      - :math:`T^{n+1}`
      - 1
@@ -440,5 +497,6 @@ A grey, geodesic-grid transport run using the implicit Jacobi solver, coupled to
               dt_ratio_hyperbolic=5.0e4)
 
    # A hot radiating wall driving the inner-x1 face:
-   riot.input("radiation_transport/drive", ix1_bc="drive", trad_bc=1.0)
+   riot.input("radiation_transport/bc", ix1_bc="drive")
+   riot.input("radiation_transport/drive", trad_bc=1.0)
    riot.input("radiation_transport/init", initialization="zero")

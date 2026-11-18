@@ -44,14 +44,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
                          Metadata::FillGhost, Metadata::Advected, Metadata::WithFluxes});
   levelsets->AddField<ls::levelset>(m);
 
-  // add levelset0 field - sloppy for now
+  // add levelset0 field
   m = Metadata(
-      {Metadata::OneCopy, Metadata::Cell, Metadata::Independent, Metadata::Intensive});
+      {Metadata::OneCopy, Metadata::Cell, Metadata::Derived, Metadata::Intensive});
   levelsets->AddField<ls::levelset0>(m);
 
-  // add levelset dudt field - sloppy for now
+  // add levelset dudt field
   m = Metadata(
-      {Metadata::OneCopy, Metadata::Cell, Metadata::Independent, Metadata::Intensive});
+      {Metadata::OneCopy, Metadata::Cell, Metadata::Derived, Metadata::Intensive});
   levelsets->AddField<ls::dudt_reinitialize>(m);
 
   auto sharp_mat = pin->GetOrAddInteger("levelsets", "sharp_mat", 0,
