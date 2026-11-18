@@ -19,6 +19,9 @@
 #define RADIATION_TRANSPORT_ANGULAR_GRIDS_GEODESIC_GRID_HPP_
 // This file was made in part with generative AI.
 
+// C++ headers
+#include <array>
+
 // Parthenon headers
 #include <parthenon/package.hpp>
 
@@ -44,6 +47,11 @@ class GeodesicGrid {
   ParArrayND<Real> cart_pos;           // coord position (cartesian) at face center
   ParArrayND<Real> cart_pos_unit;      // true unit direction cosines at face center
   ParArrayND<Real> gflux;              // flux at face edges for 1D sph and 2D RZ
+  ParArrayND<int> num_reflect;  // (3, nangles) # interior angles feeding a mirrored ghost
+  ParArrayND<int> ind_reflect;  // (3, nangles, nmax) interior angle indices
+  ParArrayND<Real> wgt_reflect; // (3, nangles, nmax) reflection weights
+
+  void BuildReflectionMaps(const std::array<bool, 3> &comps);
 
   // functions
   void GridCartPosition(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm, int n,
@@ -53,6 +61,7 @@ class GeodesicGrid {
                  int neighbors[6]);
   void CircumcenterNormalized(Real x1, Real x2, Real x3, Real y1, Real y2, Real y3,
                               Real z1, Real z2, Real z3, Real &x, Real &y, Real &z);
+  void SharedCircumcenter(int n0, int n1, int n2, Real v[3]);
   void SolidAngleAndArcLengths(ParArrayHost<Real> anorm, ParArrayHost<Real> apnorm,
                                ParArrayHost<int> aind, int n, int nlev, Real &weight,
                                Real length[6]);

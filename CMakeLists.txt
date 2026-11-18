@@ -206,6 +206,12 @@ add_compiler_flag_if_supported(-Wno-unused-function)
 add_compiler_flag_if_supported(-Wno-unknown-pragmas)
 add_compiler_flag_if_supported(-Wno-ps-abi)
 add_compiler_flag_if_supported(-Wno-tautological-constant-compare)
+# riot and its externals (e.g. singularity-opac) rely on IEEE Inf/NaN semantics: the open
+# top group edge is +Inf, Null<Real>() is a quiet NaN.  Fast-math modes (-ffast-math,
+# icpx's default -fp-model=fast) assume neither occurs and silently fold such checks
+# away, so re-enable them while keeping the remaining fast-math optimizations.  Added
+# before the external subprojects so they inherit it; see the guard in src/variables.hpp.
+add_compiler_flag_if_supported(-fno-finite-math-only)
 if (RIOT_ENABLE_WARNINGS)
   add_compiler_flag_if_supported(-Wall)
 else()

@@ -54,7 +54,6 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
                               MeshData<Real> *rout);
 TaskStatus SetOpacities(MeshData<Real> *rbase, MeshData<Real> *ubase);
 TaskStatus ResetIterator(MeshData<Real> *rbase, const Real time, const Real dt);
-TaskStatus PrepareForIterations(MeshData<Real> *rbase);
 TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
                         MeshData<Real> *rout, const Real dt);
 
@@ -74,16 +73,45 @@ KOKKOS_FORCEINLINE_FUNCTION static Real TauWeight(const Real &tau, const Real &t
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  void GCoef
-//! \brief Computes matrix coefficients for Jacobi
-template <int SDIR, typename V1>
-KOKKOS_FORCEINLINE_FUNCTION static void
-GCoef(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
-      const std::array<int, 3> &NDIR, const Real &ivol, const bool &split_g1,
-      const int &gg, const int &aa, const int &b, const int &k, const int &j,
-      const int &i, Real &g1p, Real &g1pp, Real &glra, Real &glrb) {
+//! \fn  std::array<Real, 6> FaceTauWeights
+//! \brief Optical depth weights on the lower and upper faces of each active direction
+template <typename V1>
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 6>
+FaceTauWeights(V1 &pack, const parthenon::Coordinates_t &coords, const int ndim,
+               const FluxUtils &futils, const int &gg, const int &b, const int &k,
+               const int &j, const int &i) {
   namespace ccr = cell_variables::cell_averaged::rad;
 
+  std::array<Real, 6> tw = {0.0};
+  const Real sc = pack(b, ccr::aa(gg), k, j, i) + pack(b, ccr::ss(gg), k, j, i);
+  for (int dir = X1DIR; dir <= ndim; ++dir) {
+    const bool x1d = (dir == X1DIR);
+    const bool x2d = (dir == X2DIR);
+    const bool x3d = (dir == X3DIR);
+
+    // Total opacities
+    const Real bdx = futils.beta * coords.CellWidth(dir, k, j, i);
+    const Real sl = pack(b, ccr::aa(gg), k - x3d, j - x2d, i - x1d) +
+                    pack(b, ccr::ss(gg), k - x3d, j - x2d, i - x1d);
+    const Real sr = pack(b, ccr::aa(gg), k + x3d, j + x2d, i + x1d) +
+                    pack(b, ccr::ss(gg), k + x3d, j + x2d, i + x1d);
+
+    tw[2 * (dir - 1)] = TauWeight(bdx * std::min(sl, sc), futils.taumax);
+    tw[2 * (dir - 1) + 1] = TauWeight(bdx * std::min(sr, sc), futils.taumax);
+  }
+
+  return tw;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  void GCoef
+//! \brief Computes matrix coefficients for Jacobi
+template <int SDIR>
+KOKKOS_FORCEINLINE_FUNCTION static void
+GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+      const std::array<int, 3> &NDIR, const Real &ivol, const bool &split_g1,
+      const std::array<Real, 6> &tw, const int &aa, const int &k, const int &j,
+      const int &i, Real &g1p, Real &g1pp, Real &glra, Real &glrb) {
   // Directions
   const Real &nn = cp(aa, NDIR[SDIR - 1]);
   const bool up = (nn >= 0.0);
@@ -95,18 +123,14 @@ GCoef(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> &
 
   // Compute L and R wave speeds at i face
   Real ww = ivol * nn * coords.FaceArea<SDIR>(k, j, i);
-  Real tauw = std::max(pack(b, ccr::tauw(gg), k - x3d, j - x2d, i - x1d),
-                       pack(b, ccr::tauw(gg), k, j, i));
-  Real ss = sgnn * tauw;
+  Real ss = sgnn * tw[2 * (SDIR - 1)];
   g1p += ww * (ss - (!split_g1 || down));
   g1pp += -split_g1 * up * ww;
   glra = -ww * (1.0 + ss);
 
   // Compute L and R wave speeds at i+1 face
   ww = ivol * nn * coords.FaceArea<SDIR>(k + x3d, j + x2d, i + x1d);
-  tauw = std::max(pack(b, ccr::tauw(gg), k + x3d, j + x2d, i + x1d),
-                  pack(b, ccr::tauw(gg), k, j, i));
-  ss = sgnn * tauw;
+  ss = sgnn * tw[2 * (SDIR - 1) + 1];
   g1p += ww * (ss + (!split_g1 || up));
   g1pp += split_g1 * down * ww;
   glrb = ww * (1.0 - ss);
@@ -117,16 +141,13 @@ GCoef(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> &
 //----------------------------------------------------------------------------------------
 //! \fn  void GCoef
 //! \brief Computes matrix coefficients for Jacobi
-template <typename V1>
 KOKKOS_FORCEINLINE_FUNCTION static Real
-G1Coef(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
        const std::array<int, 3> &NDIR, const int ndim, const ParArrayND<Real> &wght,
        const ParArrayND<Real> &gflx, const ParArrayND<Real> &arcw,
        const ParArrayND<int> &numn, const Real &ivol, const Real &mcw,
-       const bool &split_g1, const int &gg, const int &aa, const int &b, const int &k,
+       const bool &split_g1, const std::array<Real, 6> &tw, const int &aa, const int &k,
        const int &j, const int &i) {
-  namespace ccr = cell_variables::cell_averaged::rad;
-
   // Contributions from each spatial flux direction
   Real g1p = 1.0;
   for (int dir = X1DIR; dir <= ndim; ++dir) {
@@ -141,16 +162,12 @@ G1Coef(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> 
 
     // Compute L and R wave speeds at i face
     Real ww = ivol * nn * coords.FaceArea(dir, k, j, i);
-    Real tauw = std::max(pack(b, ccr::tauw(gg), k - x3d, j - x2d, i - x1d),
-                         pack(b, ccr::tauw(gg), k, j, i));
-    Real ss = sgnn * tauw;
+    Real ss = sgnn * tw[2 * (dir - 1)];
     g1p += ww * (ss - (!split_g1 || down));
 
     // Compute L and R wave speeds at i+1 face
     ww = ivol * nn * coords.FaceArea(dir, k + x3d, j + x2d, i + x1d);
-    tauw = std::max(pack(b, ccr::tauw(gg), k + x3d, j + x2d, i + x1d),
-                    pack(b, ccr::tauw(gg), k, j, i));
-    ss = sgnn * tauw;
+    ss = sgnn * tw[2 * (dir - 1) + 1];
     g1p += ww * (ss + (!split_g1 || up));
   }
 
