@@ -137,6 +137,7 @@ VARIABLE_SCALAR(c.c.mat, iso, true);
 VARIABLE_SCALAR(c.c.mat, rho_sh, true);
 VARIABLE_SCALAR(c.c.mat, tn_reaction_density, true);
 VARIABLE_VECTOR(c.c.mat, deviatoric_stress, true, 5);
+VARIABLE_VECTOR(c.c.mat, thinc_states, true, 6);
 VARIABLE_SCALAR(c.c.mat, equivalent_plastic_strain, true);
 VARIABLE_SCALAR(c.c.mat, ionization_zbar, true);
 VARIABLE_SCALAR(c.c.mat, electron_internal_energy, true);
@@ -297,6 +298,7 @@ DNAME(u1);
 
 namespace metadata {
 constexpr char OperatorSplit[] = "OperatorSplit";
+constexpr char KinematicAdvected[] = "KinematicAdvected";
 
 // Some variables need to be tagged with the package they are relevant
 // for for the purpose of anonymous advection.
