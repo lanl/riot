@@ -22,6 +22,7 @@
 // This file was made in part with generative AI.
 
 // C++ includes
+#include <array>
 #include <limits>
 #include <memory>
 #include <set>
@@ -454,6 +455,22 @@ static Real Li4(Real x) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  Real PlanckEdge
+//! \brief Band-edge term of the group-integrated Planck emissivity.  With x = h nu / kT,
+//! F(x) = x^3 ln(1 - e^-x) - 3 x^2 Li2(e^-x) - 6 x Li3(e^-x) - 6 Li4(e^-x), so that
+//! eps_g = a_r T^4 (15 / pi^4) [F(x_{g+1}) - F(x_g)], with F(0) = -pi^4 / 15 and
+//! F(infty) = 0
+KOKKOS_FORCEINLINE_FUNCTION static Real PlanckEdge(const Real hikt, const Real nu) {
+  if (nu == 0.0) return -SQR(SQR(M_PI)) / 15.0;
+  if (nu == std::numeric_limits<Real>::infinity()) return 0.0;
+  const Real ln = hikt * nu;
+  const Real lnsq = SQR(ln);
+  const Real xx = std::exp(-ln);
+  return lnsq * ln * std::log1p(-xx) - 3.0 * lnsq * Li2(xx) - 6.0 * ln * Li3(xx) -
+         6.0 * Li4(xx);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  Real Emissivity
 //! \brief Computes the group-integrated Planck emissivity (gray when ngroups == 1)
 KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp,
@@ -467,33 +484,44 @@ KOKKOS_FORCEINLINE_FUNCTION static Real Emissivity(const int gg, const Real temp
   const Real hikt = uu.planck / (uu.boltzmann * temp);
   const Real fac = 15.0 / SQR(SQR(M_PI));
   const Real prefac = gray * fac;
-  if (fbnd(gg) == 0.0) { // 0-->vf bin
-    const Real lnp = hikt * fbnd(gg + 1);
-    const Real lnpsq = SQR(lnp);
-    const Real xp = std::exp(-lnp);
-    const Real ee = 1.0 / fac + lnpsq * lnp * std::log(1.0 - xp) - 3.0 * lnpsq * Li2(xp) -
-                    6.0 * lnp * Li3(xp) - 6.0 * Li4(xp);
-    return std::max(prefac * ee, 0.0);
-  } else if (fbnd(gg + 1) == std::numeric_limits<Real>::infinity()) { // vf-->infty bin
-    const Real lnm = hikt * fbnd(gg);
-    const Real lnmsq = SQR(lnm);
-    const Real xm = std::exp(-lnm);
-    const Real ee = -lnmsq * lnm * std::log(1.0 - xm) + 3.0 * lnmsq * Li2(xm) +
-                    6.0 * lnm * Li3(xm) + 6.0 * Li4(xm);
-    return std::max(prefac * ee, 0.0);
-  } else { // vfm-->vfp bin
-    const Real lnm = hikt * fbnd(gg);
-    const Real lnp = hikt * fbnd(gg + 1);
-    const Real lnmsq = SQR(lnm);
-    const Real lnpsq = SQR(lnp);
-    const Real xm = std::exp(-lnm);
-    const Real xp = std::exp(-lnp);
-    const Real ee = lnpsq * lnp * std::log(1.0 - xp) - lnmsq * lnm * std::log(1.0 - xm) -
-                    3.0 * (lnpsq * Li2(xp) - lnmsq * Li2(xm)) -
-                    6.0 * (lnp * Li3(xp) - lnm * Li3(xm)) - 6.0 * (Li4(xp) - Li4(xm));
+  const Real ee = PlanckEdge(hikt, fbnd(gg + 1)) - PlanckEdge(hikt, fbnd(gg));
+  return std::max(prefac * ee, 0.0);
+}
+
+//----------------------------------------------------------------------------------------
+//! \struct EmissivitySweep
+//! \brief Emissivity() of groups 0, 1, ..., ngroups - 1 in turn at a fixed temperature.
+//! Adjacent groups share a band edge, so carrying the upper edge term forward evaluates
+//! ngroups + 1 edges rather than 2 ngroups.  Next() must be called once per group, in
+//! ascending group order.
+struct EmissivitySweep {
+  KOKKOS_FORCEINLINE_FUNCTION
+  EmissivitySweep(const Real temp, const parthenon::ParArray1D<Real> fbnd_,
+                  const int ngroups, const UnitUtils uu)
+      : fbnd(fbnd_), gray(ngroups == 1) {
+    prefac = uu.arad * SQR(SQR(temp));
+    if (gray) return;
+    hikt = uu.planck / (uu.boltzmann * temp);
+    const Real fac = 15.0 / SQR(SQR(M_PI));
+    prefac *= fac;
+    flo = PlanckEdge(hikt, fbnd(0));
+  }
+
+  KOKKOS_FORCEINLINE_FUNCTION Real Next() {
+    if (gray) return prefac;
+    const Real fhi = PlanckEdge(hikt, fbnd(++gg));
+    const Real ee = fhi - flo;
+    flo = fhi;
     return std::max(prefac * ee, 0.0);
   }
-}
+
+  parthenon::ParArray1D<Real> fbnd;
+  bool gray;
+  int gg = 0;        // upper edge of the previous group
+  Real prefac = 0.0; // a_r T^4 (15 / pi^4), or a_r T^4 when gray
+  Real hikt = 0.0;   // h / kT
+  Real flo = 0.0;    // F at the lower edge of the next group
+};
 
 //----------------------------------------------------------------------------------------
 //! \fn  Real EmissivityDT
@@ -580,12 +608,13 @@ PolyRoot(const Real tp1, const Real ubulk, const UnitUtils uu, const Real cdt,
 
   Real absr = 0.0;
   Real emis = 0.0;
+  EmissivitySweep emissivity(tp1, fbnd, ngroups, uu);
   for (int gg = 0; gg < ngroups; ++gg) {
     const Real cdtsiga = cdt * vr(b, ccrad::aa(gg), k, j, i);
     const Real &aa1 = vr(b, ccrad::s1(gg), k, j, i);
     const Real &aa2 = vr(b, ccrad::s2(gg), k, j, i);
     const Real &aa3 = vr(b, ccrad::s3(gg), k, j, i);
-    const Real &ee = Emissivity(gg, tp1, fbnd, ngroups, uu);
+    const Real ee = emissivity.Next();
     absr += cdtsiga * aa2 * aa3;
     emis += ee * cdtsiga * (1.0 - aa1 * aa3);
   }
@@ -657,8 +686,8 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
   };
 
   // Attempt to bound the root
-  constexpr int NBND = 6;
-  constexpr Real tmag[NBND] = {1.1, 2.0, 1e1, 1e2, 1e4, 1e8};
+  constexpr std::array<Real, 10> tmag = {1.1, 2.0, 1e1, 1e2, 1e3,
+                                         1e4, 1e5, 1e6, 1e7, 1e8};
   Real ta = temp, tb = temp;
   Real ya = rg.res, yb = rg.res;
   bool bounded = false;
@@ -666,7 +695,7 @@ AdvancedTemperature(Real &temp, const Real &tbase, const bool &verbose, const Re
     const bool up = ((rg.res > 0.0) == (side == 0));
     ta = temp;
     ya = rg.res;
-    for (int mag = 0; mag < NBND; ++mag) {
+    for (std::size_t mag = 0; mag < tmag.size(); ++mag) {
       tb = (up) ? temp * tmag[mag] : temp / tmag[mag];
       const RootResidual rb = residual(tb);
       yb = rb.res;
@@ -756,7 +785,7 @@ inline void SetMomentsMesh(Mesh *pm, ParameterInput *pin, SimTime &tm) {
   const int nangles = rad_pkg->Param<int>("nangles");
 
   // Compute moments (currently only the radiation energy density)
-  auto idx_space = RiotFlatLoop::GetIndexSpace(IndexDomain::entire, v.GetNBlocks(), md);
+  auto idx_space = RiotFlatLoop::GetIndexSpace(IndexDomain::interior, v.GetNBlocks(), md);
   RiotFlatLoop::four_d(
       "SetMoments", idx_space,
       KOKKOS_LAMBDA(const int b, const int k, const int j, const int i) {

@@ -211,17 +211,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   std::string control_field = ccrad::intensity::name();
   using namespace parthenon::refinement_ops;
   Metadata mi = Metadata({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
-                          Metadata::Intensive, Metadata::Conserved, MetadataJacobi,
-                          MetadataOperatorSplit},
+                          Metadata::CommunicateOne, Metadata::Intensive,
+                          Metadata::Conserved, MetadataJacobi, MetadataOperatorSplit},
                          std::vector<int>({ngroups * nangles}));
-  mi.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  mi.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::intensity>(mi);
 
   // Opacity fields
-  Metadata mo = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy,
-                          Metadata::FillGhost, MetadataJacobi, MetadataOperatorSplit},
-                         std::vector<int>({ngroups}));
-  mo.RegisterRefinementOps<ProlongateSharedLinear, RestrictAverage>();
+  Metadata mo =
+      Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, Metadata::FillGhost,
+                Metadata::CommunicateOne, MetadataJacobi, MetadataOperatorSplit},
+               std::vector<int>({ngroups}));
+  mo.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::aa>(mo);
   jacobi_pkg->AddField<ccrad::ss>(mo);
 
@@ -1100,6 +1101,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
 
         // Update the specific intensity
         if (success) {
+          EmissivitySweep emissivity(tadv, fbnd, ngroups, unit_utils);
           for (int gg = 0; gg < ngroups; ++gg) {
             // Set opacity weighted timesteps
             const Real cdtsiga = cdt * vb(b, ccrad::aa(gg), k, j, i);
@@ -1112,7 +1114,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
             const Real &aa3 = vb(b, ccrad::s3(gg), k, j, i);
 
             // Set advanced stage specific intensity
-            const Real ee = Emissivity(gg, tadv, fbnd, ngroups, unit_utils);
+            const Real ee = emissivity.Next();
             const Real jj = (aa1 * ee + aa2) * aa3;
             const auto tw = FaceTauWeights(vb, coords, ndim, futils, gg, b, k, j, i);
             for (int aa = 0; aa < nangles; ++aa) {

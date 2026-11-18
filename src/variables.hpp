@@ -24,6 +24,11 @@
 #include <parthenon/package.hpp>
 #include <utils/type_list.hpp>
 
+// riot relies on IEEE Inf/NaN semantics (see -fno-finite-math-only in CMakeLists.txt)
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "riot requires IEEE Inf/NaN semantics; build with -fno-finite-math-only"
+#endif
+
 using namespace parthenon::package::prelude;
 
 #define CELL_DELTA_SPARSEID 999999

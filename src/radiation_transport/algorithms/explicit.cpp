@@ -755,6 +755,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
         // Update the specific intensity
         if (success) {
           Real delta_er = 0.0;
+          EmissivitySweep emissivity(tadv, fbnd, ngroups, unit_utils);
           for (int gg = 0; gg < ngroups; ++gg) {
             // Set opacity weighted timesteps
             const Real cdtsiga = cdt * pack(b, ccrad::aa(gg), k, j, i);
@@ -769,7 +770,7 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
             // Set advanced stage specific intensity
             Real er_old = 0.0;
             Real er_new = 0.0;
-            const Real ee = Emissivity(gg, tadv, fbnd, ngroups, unit_utils);
+            const Real ee = emissivity.Next();
             const Real jj = (aa1 * ee + aa2) * aa3;
             for (int aa = 0; aa < nangles; ++aa) {
               const int n = GAI(nangles, gg, aa);
