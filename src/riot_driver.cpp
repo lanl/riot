@@ -42,6 +42,7 @@
 #include "riot_utils/sparse_update.hpp"
 #include "scalars/scalars.hpp"
 #include "strength/strength.hpp"
+#include "thinc/thinc.hpp"
 #include "tnburn/tnburn.hpp"
 #include "variables.hpp"
 
@@ -80,6 +81,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
 
   riot_pkg = pm->packages.Get("riot").get();
   do_hydro = riot_pkg->Param<bool>("do_hydro");
+  do_thinc = riot_pkg->Param<bool>("do_thinc");
   do_strength = riot_pkg->Param<bool>("do_strength");
   do_mix = riot_pkg->Param<bool>("do_mix");
   do_tn = riot_pkg->Param<bool>("do_tn");
@@ -214,7 +216,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // compute hydro fluxes
       auto hydro_flx = none;
       if (do_hydro) {
-        hydro_flx = tl.AddTask(none, Hydro::CalculateFluxes, mu0.get());
+        auto thinc_states = none;
+        if (do_thinc) thinc_states = tl.AddTask(none, THINC::CalculateStates, mu0.get());
+        hydro_flx = tl.AddTask(thinc_states, Hydro::CalculateFluxes, mu0.get());
       }
 
       // calculate mix fluxes (before doing flux correction)

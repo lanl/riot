@@ -47,6 +47,7 @@ environment keeps Python packages isolated from the system installation:
    . riot_venv/bin/activate
    python -m pip install --upgrade pip
    python -m pip install numpy
+   python -m pip install "pybind11[global]"
 
 Additional Python packages, such as ``scipy`` and ``h5py``, may be installed
 in this virtual environment when needed by an input deck. Do not install them
@@ -78,6 +79,28 @@ The executable is built at ``build/src/riot``. To run a Cartesian example:
    mpirun -np 4 ./riot -i "$(python triple.py)"
 
 The final command runs the example with four MPI ranks.
+
+.. _plugins-doc:
+
+Optional plugin physics
+-----------------------
+
+The optional CMake parameter ``PLUGINS_DIR`` enables additional plugin physics
+from a downstream source directory. Add it to the configuration command above:
+
+.. code-block:: bash
+
+   cmake -S . -B build -DPLUGINS_DIR=/absolute/path/to/plugins
+   cmake --build build --parallel 6
+
+The directory must contain a ``CMakeLists.txt``.
+
+Plugins are compiled into ``riot``. When ``PLUGINS_DIR`` is empty (the default),
+the build uses the no-op implementations in ``src/plugin_stubs``. Set
+``-DPLUGINS_DIR=`` to restore that behavior in an existing build directory.
+
+See :ref:`implementing-plugins` in the programmer's guide for the required
+interface functions and plugin CMake setup.
 
 Building in WSL
 ---------------
@@ -136,6 +159,11 @@ documentation.
    * - ``CMAKE_BUILD_TYPE``
      - ``RelWithDebInfo``
      - Build configuration. Common alternatives are ``Debug`` and ``Release``.
+   * - ``PLUGINS_DIR``
+     - empty
+     - Optional source directory containing a ``CMakeLists.txt`` to enable
+       additional plugin physics. See :ref:`plugins-doc` for the build setup
+       and a link to the implementation guide.
    * - ``RIOT_ENABLE_UNIT_TESTS``
      - ``OFF``
      - Build ``riot`` unit tests.

@@ -571,18 +571,23 @@ def build_geometry(args):
 # ----------------------------------------------------------------------------------------
 # Mesh helper
 # ----------------------------------------------------------------------------------------
-def _drive_faces(args):
-    """Return the per-face ``radiation_transport/drive`` flags for transport.
+def _radiation_bc_faces(args):
+    """Return the per-face ``radiation_transport/bc`` flags for transport.
 
-    These mark the physical outer faces (left at ``outflow`` in the mesh block) where the
-    constant-temperature radiation drive BC is enrolled; symmetry/axis and periodic faces
-    are omitted so they keep their mesh-level BC.  Mirrors the driven faces in
-    _mesh_params.
+    The physical outer faces (left at ``outflow`` in the mesh block) get the
+    constant-temperature radiation drive BC; the symmetry/axis faces (``reflecting`` in
+    the mesh block) get the radiation reflecting BC; periodic faces are omitted so they keep
+    their mesh-level BC.  Mirrors the faces in _mesh_params.
     """
     if args.dim == 1:
-        return {"ox1_bc": "drive"}
+        return {"ix1_bc": "reflecting", "ox1_bc": "drive"}
     if args.dim == 2:
-        return {"ox1_bc": "drive", "ix2_bc": "drive", "ox2_bc": "drive"}
+        return {
+            "ix1_bc": "reflecting",
+            "ox1_bc": "drive",
+            "ix2_bc": "drive",
+            "ox2_bc": "drive",
+        }
     return {
         "ix1_bc": "drive",
         "ox1_bc": "drive",
@@ -1149,14 +1154,14 @@ def make_input(args):
             integrator="rk2",
             verbose=2,
         )
-        # Radiation drive boundary (src/radiation_transport/algorithms/radiation_bcs.hpp):
-        # the per-face ix?_bc/ox?_bc="drive" flags enroll the drive BC on the physical
-        # outer faces (left as "outflow" in the mesh block), and trad_bc sets the constant
-        # drive temperature in KELVIN.  The interior intensity initialization is left at
-        # its default ("thermal" -- the local Planckian) from radiation_transport/init.
-        riot.input(
-            "radiation_transport/drive", trad_bc=tr_drive_K, **_drive_faces(args)
-        )
+        # Radiation boundaries (src/radiation_transport/algorithms/radiation_bcs.hpp):
+        # the per-face ix?_bc/ox?_bc flags enroll the drive BC on the physical outer faces
+        # (left as "outflow" in the mesh block) and the reflecting BC on the symmetry/axis
+        # faces (left as "reflecting" in the mesh block); trad_bc sets the constant drive
+        # temperature in KELVIN.  The interior intensity initialization is left at its
+        # default ("thermal" -- the local Planckian) from radiation_transport/init.
+        riot.input("radiation_transport/bc", **_radiation_bc_faces(args))
+        riot.input("radiation_transport/drive", trad_bc=tr_drive_K)
 
     # --- thermonuclear burn ------------------------------------------------------------
     if args.do_tn:

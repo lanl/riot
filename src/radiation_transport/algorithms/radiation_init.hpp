@@ -15,6 +15,7 @@
 // This file was made in part with generative AI.
 
 // C++ headers
+#include <algorithm>
 #include <limits>
 #include <memory>
 #include <string>
@@ -56,6 +57,8 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   const Real mix_frac = rad_pkg->Param<Real>("mix_frac");
   const Real opac_rho_min = rad_pkg->Param<Real>("opac_rho_min");
   const Real opac_temp_min = rad_pkg->Param<Real>("opac_temp_min");
+  const Real opac_rho_max = rad_pkg->Param<Real>("opac_rho_max");
+  const Real opac_temp_max = rad_pkg->Param<Real>("opac_temp_max");
 
   // Set opacities
   // NOTE(@pdmullen): We are not required to set opacities in the initialization,
@@ -76,7 +79,8 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
-          const Real temp = std::max(v(b, ccbulk::temperature(), k, j, i), opac_temp_min);
+          const Real temp = std::clamp(v(b, ccbulk::temperature(), k, j, i),
+                                       opac_temp_min, opac_temp_max);
           for (int gg = 0; gg < ngroups; ++gg) {
             // Set opacities
             Real &aa = v(b, ccrad::aa(gg), k, j, i) = 0.0;
@@ -90,8 +94,8 @@ inline void RadiationPostInitialization(Mesh *pm, ParameterInput *pin,
               const int opac_id = opac_from_matid(mat_id) + phase_id;
               const auto &oam = opac_a(opac_id);
               const auto &osm = opac_s(opac_id);
-              const Real rm = std::max(rhom, opac_rho_min);
-              const Real rbarm = std::max(rhobarm, opac_rho_min);
+              const Real rm = std::clamp(rhom, opac_rho_min, opac_rho_max);
+              const Real rbarm = std::clamp(rhobarm, opac_rho_min, opac_rho_max);
               aa += (rhobarm > 0.0)
                         ? MMOpacity(oam, rm, rbarm, vfracm, temp, gg, mix_frac)
                         : 0.0;
