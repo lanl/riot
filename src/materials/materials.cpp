@@ -169,7 +169,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
 
   // Custom Metadata flags
   auto BurnFlag = Metadata::GetOrAddFlag(riot::metadata::TNBurn);
-  auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
+  auto MetadataKinematicAdvected =
+      Metadata::GetUserFlag(riot::metadata::KinematicAdvected);
 
   // Material Density
   // TODO(JCD): how should these thresholds really be set?
@@ -209,6 +210,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   // JMM: Caching for root finds used by some equations of state
   auto cm_lT_cache = SparsePool::Make<cm::lT_cache>(m, control_field);
   auto cm_lr_cache = SparsePool::Make<cm::lr_cache>(m, control_field);
+
+  // THINC interface profile states
+  auto ccmat_thinc_states = SparsePool::Make<ccmat::thinc_states>(m, control_field);
 
   // Deviatoric stress
   m = Metadata({Metadata::Cell, Metadata::Independent, Metadata::Intensive,
@@ -403,6 +407,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
       "Force the full PTE solver, even if an analytic (ideal gas) solver will do.");
   const bool do_ionization = pin->GetBoolean("physics", "ionization");
   const bool do_tn = pin->GetOrAddBoolean("physics", "tn", false);
+  const bool do_thinc = pin->GetBoolean("physics", "thinc");
 
   for (const auto matid : matids) {
     std::string block_name = std::string("material") + std::to_string(matid);
@@ -417,6 +422,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
     AddMatId(matid, phase_size, ccmat_rho, ccmat_volume_fraction, ccmat_internal_energy,
              cm_rho, cm_sie, cm_internal_energy, cm_temperature, cm_pressure,
              cm_bulk_modulus, cm_cv);
+    if (do_thinc) AddMatId(matid, {6, nph}, ccmat_thinc_states);
 
     // Phases
     // TODO(JMM): Should we remove phase_rho_sum? It could be scratch var, but it's kind
@@ -775,7 +781,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
            cm_bulk_modulus, cm_cv, mat_stress, stress, mat_eps, eps, gmod, strength_j2,
            mat_iso, iso, phase_rho_sum, phase_fraction, ccmat_ionization_zbar,
            cm_ionization_zbar, cm_ue, cm_sie_e, cm_electron_internal_energy, cm_lr_cache,
-           cm_lT_cache);
+           cm_lT_cache, ccmat_thinc_states);
 
   // Instantiate device ParArray1D of EOS and Opacity objects, setup PTE list vector
   const int num_eos = eos_host.size();

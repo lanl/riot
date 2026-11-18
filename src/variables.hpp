@@ -137,6 +137,7 @@ VARIABLE_SCALAR(c.c.mat, iso, true);
 VARIABLE_SCALAR(c.c.mat, rho_sh, true);
 VARIABLE_SCALAR(c.c.mat, tn_reaction_density, true);
 VARIABLE_VECTOR(c.c.mat, deviatoric_stress, true, 5);
+VARIABLE_VECTOR(c.c.mat, thinc_states, true, 6);
 VARIABLE_SCALAR(c.c.mat, equivalent_plastic_strain, true);
 VARIABLE_SCALAR(c.c.mat, ionization_zbar, true);
 VARIABLE_SCALAR(c.c.mat, electron_internal_energy, true);

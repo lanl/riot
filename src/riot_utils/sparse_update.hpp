@@ -135,26 +135,26 @@ SumTermsHelper(const IndexRangeType &idx_range, const int b, const PackView_t up
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::UpdateToNextStage
-//! \brief
-template <bool Kinematic>
+//! \brief With kinematic advection, only KinematicAdvected fields are updated and no
+//!        dudt sources are applied, freezing the bulk state.
 inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
                                     const Real gam0, const Real gam1, const Real beta_dt,
                                     const dudt_vec_t &dudt_array) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using parthenon::PDOpt;
   using parthenon::variable_names::any;
-  auto MetadataUpdate = Metadata::WithFluxes;
-  if constexpr (Kinematic) {
-    auto MetadataKinematicAdvected = Metadata::GetUserFlag("KinematicAdvected");
-    MetadataUpdate = MetadataKinematicAdvected;
-  }
-  std::vector<MetadataFlag> flags({MetadataUpdate});
 
   auto pm = umd->GetParentPointer();
   const int ndim = pm->ndim;
   const bool multi_d = (ndim > 1);
   const bool three_d = (ndim > 2);
-  bool sparse_physics = pm->packages.Get("riot")->template Param<bool>("sparse_physics");
+  auto &riot_pkg = pm->packages.Get("riot");
+  bool sparse_physics = riot_pkg->template Param<bool>("sparse_physics");
+  const bool kinematic = riot_pkg->template Param<bool>("kinematic_advection");
+
+  std::vector<MetadataFlag> flags(
+      {kinematic ? Metadata::GetUserFlag(riot::metadata::KinematicAdvected)
+                 : Metadata::WithFluxes});
 
   // make packs for the full state vector
   auto desc = parthenon::MakePackDescriptor<any>(umd, flags, {PDOpt::WithFluxes});
@@ -164,7 +164,7 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
 
   auto delta = riot::MakePack<ccbulk::cell_delta>(umd);
 
-  auto pack_data = impl::MakeDudtPacks(umd, dudt_array);
+  auto pack_data = impl::MakeDudtPacks(umd, kinematic ? dudt_vec_t{} : dudt_array);
   auto upacks = std::get<0>(pack_data);
   auto dudt_packs = std::get<1>(pack_data);
   const int num_dudt = std::get<2>(pack_data);

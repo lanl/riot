@@ -292,7 +292,7 @@ StrengthFluxes(const Pack_t &v, const StrPack_t &vstr, const IdxRange &idx_range
         spv, halo_range, delta, smat_minus, smat_plus, recon_tag, s);
     if constexpr (DoTHINC) {
       halo_range.TeamBarrier();
-      THINC::ReconstructStrength(v, vstr, idx_range, halo_range, delta, b, m, s,
+      THINC::ReconstructStrength(v, vstr, idx_range, halo_range, b, delta, m, s,
                                  smat_minus, smat_plus);
       halo_range.TeamBarrier();
     }
@@ -461,7 +461,7 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
     halo_range.TeamBarrier();
     if constexpr (DoTHINC) {
       if (adv_mat[n] >= 0) {
-        THINC::ReconstructAdvected(v, idx_range, halo_range, delta, b, adv_mat[n], q,
+        THINC::ReconstructAdvected(v, idx_range, halo_range, b, delta, adv_mat[n], q,
                                    adv_minus, adv_plus);
         halo_range.TeamBarrier();
       }
@@ -499,20 +499,22 @@ AdvectionFluxes(const Pack_t &v, const AdvPack_t &adv, const IdxRange &idx_range
 //! \fn  void Hydro::ThincFaceStates
 //! \brief Replace mixed-cell face states with THINC profiles (no-op without DoTHINC).
 template <parthenon::CoordinateDirection DIR, bool DoTHINC, typename Pack_t,
-          typename IdxRange, typename HaloRange, typename Delta, typename MatScratch,
-          typename SumBulk>
+          typename ThPack_t, typename IdxRange, typename HaloRange, typename Delta,
+          typename MatScratch, typename SumBulk>
 KOKKOS_INLINE_FUNCTION void
-ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &halo_range,
-                const int b, const int ndim, Delta delta, Delta delta1, Delta delta2,
-                Delta delta3, const Real thinc_beta, const int nmat,
-                MatScratch &mat_minus, MatScratch &mat_plus, SumBulk &sum_bulk_minus,
-                SumBulk &sum_bulk_plus, const bool do_electrons) {
+ThincFaceStates(const Pack_t &v, const ThPack_t &vth, const IdxRange &idx_range,
+                const HaloRange &halo_range, const int b, const int ndim, Delta delta1,
+                Delta delta2, Delta delta3, const int nmat, MatScratch &mat_minus,
+                MatScratch &mat_plus, SumBulk &sum_bulk_minus, SumBulk &sum_bulk_plus,
+                const bool do_electrons) {
   if constexpr (DoTHINC) {
+    const Delta axes[3] = {delta1, delta2, delta3};
+    const Delta delta = axes[DIR - 1];
     auto fallback_minus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
     auto fallback_plus = GetPerPointScratch<Real, MAX_MATERIALS>(halo_range);
-    THINC::ReconstructFractions<DIR>(v, idx_range, halo_range, b, ndim, delta1, delta2,
-                                     delta3, thinc_beta, mat_minus, mat_plus,
-                                     fallback_minus, fallback_plus);
+    THINC::ReconstructFractions<DIR>(v, vth, idx_range, halo_range, b, ndim, delta1,
+                                     delta2, delta3, mat_minus, mat_plus, fallback_minus,
+                                     fallback_plus);
     halo_range.TeamBarrier();
     THINC::SelectFaceProfiles(idx_range, delta, nmat, mat_minus, mat_plus, fallback_minus,
                               fallback_plus);
@@ -531,13 +533,14 @@ ThincFaceStates(const Pack_t &v, const IdxRange &idx_range, const HaloRange &hal
 //!        accumulates the reconstructed bulk state, then solves the bulk Riemann problem
 //!        and computes the material density and electron energy fluxes.
 template <parthenon::CoordinateDirection DIR, bool DoTHINC, typename Pack_t,
-          typename StrPack_t, typename AdvPack_t, typename StrengthArr>
+          typename StrPack_t, typename ThPack_t, typename AdvPack_t, typename StrengthArr>
 void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &vstr,
-                         const AdvPack_t &adv, const RiotReconstruction::Type recon_tag,
+                         const ThPack_t &vth, const AdvPack_t &adv,
+                         const RiotReconstruction::Type recon_tag,
                          const RiotReconstruction::Type vfrac_recon_tag,
                          const RiemannSolver rsolver_tag, const bool store_vf,
                          const StrengthArr &mat_strength, const bool do_viscosity,
-                         const Real thinc_beta, const bool do_electrons) {
+                         const bool do_electrons) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -605,10 +608,11 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         halo_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
-          // Material density and internal energy use a tighter MC slope limit (1.5);
-          // bulk and vfrac use the default THETA (1.99).
-          ReconCells<cm::rho, cm::internal_energy>(spv, halo_range, delta, mat_minus,
-                                                   mat_plus, recon_tag, m, 1.5);
+          // Material density and internal energy use a tighter MC slope limit;
+          // bulk and vfrac use the default THETA.
+          ReconCells<cm::rho, cm::internal_energy>(
+              spv, halo_range, delta, mat_minus, mat_plus, recon_tag, m,
+              RiotReconstruction::MATERIAL_SLOPE_LIMIT);
           ReconCells<ccmat::volume_fraction>(spv, halo_range, delta, mat_minus, mat_plus,
                                              vfrac_recon_tag, m);
           RiotLoop::inner(halo_range, [&](auto kji) {
@@ -738,9 +742,9 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
             pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
         halo_range.TeamBarrier();
 
-        ThincFaceStates<DIR, DoTHINC>(
-            v, idx_range, halo_range, b, ndim, delta, delta1, delta2, delta3, thinc_beta,
-            nmat, mat_minus, mat_plus, sum_bulk_minus, sum_bulk_plus, do_electrons);
+        ThincFaceStates<DIR, DoTHINC>(v, vth, idx_range, halo_range, b, ndim, delta1,
+                                      delta2, delta3, nmat, mat_minus, mat_plus,
+                                      sum_bulk_minus, sum_bulk_plus, do_electrons);
 
         // Bulk Riemann flux, dispatched on the solver. Each solver's bulk loop is a
         // BulkRiemannFluxes<DIR, FLUX_FN> instantiation. The low-Mach solvers
@@ -893,23 +897,26 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
       riot::MakePack<cm::deviatoric_stress, cm::shear_modulus, ccmat::deviatoric_stress>(
           md, strength_mats, std::set<parthenon::PDOpt>{parthenon::PDOpt::WithFluxes});
 
-  const bool do_viscosity = (do_ionization && do_plasma_viscosity);
+  // THINC profile states from THINC::CalculateStates (empty without THINC)
+  auto vth = riot::MakePack<ccmat::thinc_states>(md);
 
-  const Real thinc_beta = do_thinc ? pm->packages.Get("thinc")->Param<Real>("beta") : 0.0;
-
+  // Advection pack
   auto adv = MakeAdvectionPack(md);
 
-  CalculateFluxesDir<X1DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
-                            rsolver_tag, store_vf, mat_strength, do_viscosity, thinc_beta,
+  // Viscosity flag
+  const bool do_viscosity = (do_ionization && do_plasma_viscosity);
+
+  CalculateFluxesDir<X1DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
+                            rsolver_tag, store_vf, mat_strength, do_viscosity,
                             do_ionization);
   if (ndim > 1)
-    CalculateFluxesDir<X2DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
+    CalculateFluxesDir<X2DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
                               rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              thinc_beta, do_ionization);
+                              do_ionization);
   if (ndim > 2)
-    CalculateFluxesDir<X3DIR>(do_thinc, md, v, vstr, adv, recon_tag, vfrac_recon_tag,
+    CalculateFluxesDir<X3DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
                               rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              thinc_beta, do_ionization);
+                              do_ionization);
 
   return TaskStatus::complete;
 }
