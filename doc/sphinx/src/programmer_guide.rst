@@ -49,6 +49,68 @@ style. Here we briefly discuss a few things one should be aware of.
   specifically need a single or double precision number, in which case
   you should specify the type as built into the language.
 
+.. _implementing-plugins:
+
+Implementing the plugin interface
+--------------------------------
+
+Plugins add downstream physics to ``riot`` through the
+``riot_plugins::Plugins`` interface. Select the plugin source directory
+with ``PLUGINS_DIR`` as described in :ref:`plugins-doc`.
+
+The directory must contain a ``CMakeLists.txt``. CMake adds this directory to the
+build after creating ``riotlib``; the plugin can add its implementation and
+physics sources to that target, for example:
+
+.. code-block:: cmake
+
+   target_sources(riotlib PRIVATE plugins.cpp)
+
+Include ``plugins.hpp`` in the plugin implementation and define all three
+members of ``riot_plugins::Plugins`` declared in ``src/plugins.hpp``. These
+definitions replace the built-in stubs; they are not virtual overrides or
+new overloads. Keep the signatures, including ``static`` and ``const``, as
+declared in the interface:
+
+.. code-block:: cpp
+
+   static void Initialize(ParameterInput *pin, Packages_t &pkgs);
+   void DriverParams(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm);
+   TaskID AddSources(TaskList &tl, TaskID &dep, MeshData<Real> *mu0,
+                     Mesh *pmesh, const int partition_id, const Real dt) const;
+
+``Initialize``
+   Called during package setup, after the built-in physics packages and before
+   the problem package. Read plugin input from ``pin`` and register any plugin
+   packages, fields, and package parameters in ``pkgs``. This is a static member;
+   omit the ``static`` keyword in its out-of-class definition.
+
+``DriverParams``
+   Called from the ``RiotDriver`` constructor with the input, application, and
+   mesh objects. Initialize any plugin state needed by the driver, such as
+   physics flags or package references. The ``Plugins`` object provides a
+   ``parthenon::Params params`` member for storing this state.
+
+``AddSources``
+   Called when constructing source tasks for each mesh partition and integrator
+   stage. Add tasks to ``tl`` using ``dep`` as the incoming dependency. ``mu0`` is
+   the current stage's state, ``pmesh`` is the mesh, ``partition_id`` identifies
+   the partition, and ``dt`` is the timestep. Return a ``TaskID`` that depends on
+   all plugin source tasks, combining independent task IDs with ``|`` if needed.
+   The driver's state update waits on this returned dependency.
+
+   For source terms included in the stage update, register a ``"dudt"`` mesh-data
+   subset on the plugin package and populate it in the source tasks. The driver
+   gathers these subsets from all packages and adds their contributions with
+   the integrator's ``beta * dt`` weighting. See ``src/gravity/gravity.cpp`` for
+   an example of source-subset registration.
+
+All three definitions are required because selecting ``PLUGINS_DIR`` excludes
+the default stubs. Hooks that are not needed can use empty bodies for
+``Initialize`` and ``DriverParams``, and ``return dep;`` for ``AddSources``.
+The implementations in ``src/plugin_stubs/plugin_stubs.cpp`` provide a minimal
+starting point.
+
 Parthenon
 -----------
 

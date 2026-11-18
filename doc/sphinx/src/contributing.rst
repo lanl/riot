@@ -72,7 +72,7 @@ AI-assisted coding
 generation, a disclaimer must be made in a comment in the relevant
 file. For example, you might add a comment like this one:
 
-..code-block:: c++
+.. code-block:: c++
 
   // This file was made in part with generative AI.
 
@@ -250,6 +250,13 @@ pipeline with multiple jobs on various clusters.
 Be aware that the CI on the system runs sequentially and the number of
 concurrent jobs per user is limited. You may wish to cancel an old run
 if you no longer need the results and want your most recent run to finish.
+
+.. note::
+
+   After your PR is merged on github, the MR on the internal gitlab
+   does **not** need to be merged. The mirror will detect the merge
+   upstream and automatically close the MR. It *should* be safe to
+   merge by hand, but it is best practice not to do so.
 
 Setting git to automatically push to our CI system
 ````````````````````````````````````````````````````
