@@ -71,7 +71,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   const int nangles = shared.nangles;
   const int ngroups = shared.ngroups;
 
-  // Algorithm-shared Boundary Conditions (default, drive, reflect)
+  // Algorithm-shared Boundary Conditions (default, drive, reflecting)
   RadiationBC::EnrollRadiationBC(jacobi_pkg.get(), pin, params);
 
   // Algorithm-shared Initializations (none, zero, thermal)

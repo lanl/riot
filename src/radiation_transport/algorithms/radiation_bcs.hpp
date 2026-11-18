@@ -258,7 +258,7 @@ inline auto ReflectBC() {
 } // namespace Reflect
 
 //----------------------------------------------------------------------------------------
-// Shared initialization for the radiation transport BCs (default, drive, reflect).
+// Shared initialization for the radiation transport BCs (default, drive, reflecting).
 //----------------------------------------------------------------------------------------
 namespace RadiationBC {
 
@@ -385,19 +385,20 @@ inline void EnrollRadiationBC(StateDescriptor *rad_pkg, ParameterInput *pin,
                           bc_block + "/" + name + ".");
     if (i / 2 >= ndim) continue;
     const std::string bc = pin->GetOrAddString(bc_block, name, "default");
-    PARTHENON_REQUIRE(bc == "default" || bc == "drive" || bc == "reflect",
+    PARTHENON_REQUIRE(bc == "default" || bc == "drive" || bc == "reflecting",
                       std::string(bc_block) + "/" + name +
-                          " must be \"default\", \"drive\", or \"reflect\".");
+                          " must be \"default\", \"drive\", or \"reflecting\".");
     const bool mesh_reflecting = pin->DoesParameterExist("parthenon/mesh", name) &&
                                  pin->GetString("parthenon/mesh", name) == "reflecting";
-    PARTHENON_REQUIRE(mesh_reflecting == (bc == "reflect"),
+    PARTHENON_REQUIRE(mesh_reflecting || bc != "reflecting",
                       std::string(bc_block) + "/" + name +
-                          " = reflect if and only if parthenon/mesh/" + name +
+                          " = reflecting requires parthenon/mesh/" + name +
                           " = reflecting.");
+    // A reflecting mesh face reflects the radiation too unless it is driven.
     if (bc == "drive") {
       rad_pkg->UserBoundaryFunctions[face].push_back(drive_bcs[i]);
       drive_bc_enrolled = true;
-    } else if (bc == "reflect") {
+    } else if (mesh_reflecting) {
       rad_pkg->UserBoundaryFunctions[face].push_back(reflect_bcs[i]);
       reflect_comps[AngularFluxDirs()[i / 2]] = true;
     }

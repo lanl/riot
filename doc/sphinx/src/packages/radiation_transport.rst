@@ -379,7 +379,7 @@ The radiation field’s initial state is chosen in the ``<radiation_transport/in
 Boundary Conditions
 ~~~~~~~~~~~~~~~~~~~
 
-By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — or a *reflect* condition by naming it in the ``<radiation_transport/bc>`` block.
+By default the radiation intensity inherits the same face boundary conditions as the rest of the mesh (``ix1_bc`` …, Chapter :ref:`chap:parthenon`). Any face may instead be given a *drive* condition — a prescribed incoming radiation field, either a uniform temperature or a tabulated series of prescribed group radiation energy densities — or a *reflecting* condition by naming it in the ``<radiation_transport/bc>`` block.
 
 .. list-table:: Parameters in the ``<radiation_transport/bc>`` block.
    :class: wraptable
@@ -393,9 +393,9 @@ By default the radiation intensity inherits the same face boundary conditions as
    * - ix1_bc …ox3_bc
      - string
      - ``default``
-     - Per-face selector: ``default`` (inherit the mesh BC), ``drive`` (impose the drive condition configured in ``<radiation_transport/drive>``), or ``reflect`` (specular mirror).
+     - Per-face selector: ``default`` (inherit the mesh BC; on a ``reflecting`` mesh face this is the radiation reflecting condition below), ``drive`` (impose the drive condition configured in ``<radiation_transport/drive>``), or ``reflecting`` (specular mirror).
 
-A ``reflect`` face fills each ghost cell from its mirror-image interior cell, remapping the intensities through a reflection map of the angular grid for the direction component normal to the face (the same spatial-to-angle component mapping as the angular fluxes: :math:`R \to n_x` and :math:`Z \to n_z` in 2D RZ, :math:`r \to n_z` in 1D spherical). The map preserves isotropic fields and gives zero net radiation flux through the mirror for any interior field. On grids that are symmetric under the mirror (lat-lon, for every spatial face) it is the exact one-to-one angle reflection; on the geodesic grid it is a conservative first-order remap onto the few cells that each mirrored cell overlaps. A face is ``reflect`` if and only if its mesh BC (``parthenon/mesh``) is ``reflecting``; any other pairing is an error.
+A ``reflecting`` face fills each ghost cell from its mirror-image interior cell, remapping the intensities through a reflection map of the angular grid for the direction component normal to the face (the same spatial-to-angle component mapping as the angular fluxes: :math:`R \to n_x` and :math:`Z \to n_z` in 2D RZ, :math:`r \to n_z` in 1D spherical). The map preserves isotropic fields and gives zero net radiation flux through the mirror for any interior field. On grids that are symmetric under the mirror (lat-lon, for every spatial face) it is the exact one-to-one angle reflection; on the geodesic grid it is a conservative first-order remap onto the few cells that each mirrored cell overlaps. A ``reflecting`` mesh face (``parthenon/mesh``) is reflecting for the radiation as well unless it is set to ``drive``; ``reflecting`` on any other mesh face is an error.
 
 .. list-table:: Parameters in the ``<radiation_transport/drive>`` block.
    :class: wraptable
