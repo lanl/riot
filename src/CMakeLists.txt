@@ -15,8 +15,6 @@
 
 set (SRC_LIST
   # alphabetical
-  analysis_driver.cpp
-  analysis_driver.hpp
 
   diagnostics/diagnostics.cpp
   diagnostics/diagnostics.hpp
@@ -130,7 +128,6 @@ set (SRC_LIST
   reconstruction/reconstruction.hpp
 
   riot.cpp
-  riot.hpp
   riot_driver.cpp
   riot_driver.hpp
   riot_limits.hpp.in

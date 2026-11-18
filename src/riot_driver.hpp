@@ -28,6 +28,7 @@ namespace riot {
 
 using TaskCollectionFnPtr = TaskCollection (*)(Mesh *pm, parthenon::SimTime &tm,
                                                const Real dt);
+
 class RiotDriver : public EvolutionDriver {
  public:
   using Integrator_t = parthenon::LowStorageIntegrator;
@@ -40,7 +41,8 @@ class RiotDriver : public EvolutionDriver {
   void ReportBlockHistogram();
   void OutputDownstreamCycleDiagnostics();
   void ReportMemUsage();
-  std::vector<TaskCollectionFnPtr> OperatorSplitTasks;
+  static Packages_t ProcessPackages(std::unique_ptr<ParameterInput> &pin);
+  static std::vector<TaskCollectionFnPtr> OperatorSplitTasks;
   static void RegisterPgens();
 
  private:
@@ -54,8 +56,7 @@ class RiotDriver : public EvolutionDriver {
   StateDescriptor *riot_pkg, *hydro_pkg, *mix_pkg, *tn_pkg, *mat_pkg, *lset_pkg,
       *gravity_pkg, *strength_pkg, *ion_pkg, *laser_pkg;
   bool do_hydro, do_thinc, do_strength, do_mix, do_tn, do_levelsets, do_gravity,
-      do_multigroup_diffusion, do_radiation_transport, do_ionization, do_lasers,
-      curvilinear;
+      do_multigroup_diffusion, do_ionization, do_lasers, curvilinear;
   bool fixed_fluid, use_general_pte, sparse_dealloc;
   riot_plugins::Plugins plugins;
 

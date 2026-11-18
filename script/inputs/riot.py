@@ -319,7 +319,6 @@ class input:
                 if key == "auto_swarm_sample_fields":
                     continue
                 if type(val) == list or type(val) == nparray_t:
-                    print("Got numpy array")
                     vec = ""
                     for elem in val:
                         vec += f"{elem},"

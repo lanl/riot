@@ -18,7 +18,6 @@
 #include <parthenon_manager.hpp>
 
 #include "diagnostics/diagnostics.hpp"
-#include "riot.hpp"
 #include "riot_pgen/pgen.hpp"
 #ifdef RIOT_ENABLE_PYTHON
 #include "riot_utils/py_init.hpp"
@@ -30,8 +29,20 @@ namespace riot {
 //! \fn  int riot::main
 //! \brief
 template <typename T>
-int main(parthenon::ParthenonManager &pman) {
+int main(int argc, char *argv[]) {
   using namespace riot;
+  parthenon::ParthenonManager pman;
+
+  // Set up kokkos and read pin
+  auto manager_status = pman.ParthenonInitEnv(argc, argv);
+  if (manager_status == ParthenonStatus::complete) {
+    pman.ParthenonFinalize();
+    return 0;
+  }
+  if (manager_status == ParthenonStatus::error) {
+    pman.ParthenonFinalize();
+    return 1;
+  }
 
 #ifdef RIOT_ENABLE_PYTHON
   // startup python
@@ -39,21 +50,18 @@ int main(parthenon::ParthenonManager &pman) {
 #endif
 
   // Register pgens
-  RegisterPgens();
-  if constexpr (std::is_same_v<T, RiotDriver>) {
-    // Handle ProblemGenerator user-defined modifiers
-    ProblemModifier(&pman);
-  }
+  T::RegisterPgens();
+
+  // Handle ProblemGenerator user-defined modifiers
+  ProblemModifier(&pman);
 
   // Tell pman to register reflecting boundaries
   pman.app_input->RegisterDefaultReflectingBoundaryConditions();
 
   // Redefine parthenon defaults
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  pman.app_input->ProcessPackages = ProcessPackages;
-  if constexpr (std::is_same_v<T, RiotDriver>) {
-    pman.app_input->ProblemGenerator = ProblemGenerator;
-  }
+  pman.app_input->ProcessPackages = T::ProcessPackages;
+  pman.app_input->ProblemGenerator = ProblemGenerator;
   pman.app_input->PostStepDiagnosticsInLoop = diagnostics::PostStepDiagnosticsInLoop;
 
   // call ParthenonInit to set up the mesh
@@ -66,10 +74,8 @@ int main(parthenon::ParthenonManager &pman) {
   auto driver_status = driver.Execute();
 
   // print out some diagnostics from the run
-  if constexpr (std::is_same_v<T, RiotDriver>) {
-    driver.ReportBlockHistogram();
-    driver.ReportMemUsage();
-  }
+  driver.ReportBlockHistogram();
+  driver.ReportMemUsage();
 
   // call MPI_Finalize and Kokkos::finalize if necessary
   pman.ParthenonFinalize();
