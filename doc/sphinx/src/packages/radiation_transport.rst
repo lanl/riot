@@ -353,7 +353,7 @@ Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit
    * - nrelax_steps
      - int
      - ``0``
-     - If :math:`>0`, each step starts with the subcycle count the previous step finished with, and that count is divided by ``reduce_factor`` after ``nrelax_steps`` consecutive steps without divergence; :math:`0` starts every step at the full timestep.
+     - If :math:`>0`, each step starts with the subcycle count the previous step finished with, and that count is divided by ``reduce_factor`` after ``nrelax_steps`` consecutive steps without divergence (the carried count is capped at ``reduce_factor``:math:`^{\,\mathrm{nreduce\_limit}}`); :math:`0` starts every step at the full timestep.
 
 Initialization
 ~~~~~~~~~~~~~~

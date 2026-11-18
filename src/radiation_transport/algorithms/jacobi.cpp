@@ -149,7 +149,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
       input_block, "nrelax_steps", 0,
       "If > 0, a step starts with the subcycle count the previous step finished with, "
       "and that count is divided by reduce_factor after nrelax_steps consecutive steps "
-      "without divergence.  Setting to 0 starts every step at the full dt.");
+      "without divergence (the carried count is capped at "
+      "reduce_factor^nreduce_limit).  Setting to 0 starts every step at the full dt.");
   PARTHENON_REQUIRE(nreduce_limit >= 0,
                     "radiation_transport/jacobi/nreduce_limit must be >= 0!");
   PARTHENON_REQUIRE(reduce_factor > 1,
@@ -654,6 +655,20 @@ TaskStatus CheckConvergence(HostArray1D<Real> *presidual, MeshData<Real> *riter,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  bool ResidualMet
+//! \brief Convergence requires the global residual and, if enabled, every group's own
+//! residual (the max over groups) to clear their thresholds
+static bool ResidualMet(const StateDescriptor *jacobi_pkg) {
+  bool residual_met =
+      (jacobi_pkg->Param<Real>("current_residual") <= jacobi_pkg->Param<Real>("err_thr"));
+  if (jacobi_pkg->Param<bool>("per_group_residual")) {
+    residual_met = residual_met && (jacobi_pkg->Param<Real>("current_residual_group") <=
+                                    jacobi_pkg->Param<Real>("err_thr_group"));
+  }
+  return residual_met;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  TaskStatus IncrementCounterAndSetResidual
 //! \brief Increment the iteration counter and stow/reset globally reduced residual
 TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pmesh) {
@@ -666,7 +681,6 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
   auto &v = *presidual;
   const Real current_residual = v(0) / (std::max(v(1), 1.0e-100) + (v(1) <= 1.0e-100));
   jacobi_pkg->UpdateParam("current_residual", current_residual);
-  bool residual_met = (current_residual <= jacobi_pkg->Param<Real>("err_thr"));
 
   // Optional per-group residual
   if (jacobi_pkg->Param<bool>("per_group_residual")) {
@@ -681,11 +695,10 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
           std::max(residual_group, num_g / (denom_g + (denom_g <= 1.0e-100)));
     }
     jacobi_pkg->UpdateParam("current_residual_group", residual_group);
-    residual_met =
-        residual_met && (residual_group <= jacobi_pkg->Param<Real>("err_thr_group"));
   }
 
   // Divergence detection
+  const bool residual_met = ResidualMet(jacobi_pkg.get());
   const Real best_residual = jacobi_pkg->Param<Real>("best_residual");
   const int ndiverge_limit = jacobi_pkg->Param<int>("ndiverge_limit");
   const Real diverge_rise_frac = jacobi_pkg->Param<Real>("diverge_rise_frac");
@@ -726,13 +739,7 @@ TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real
   const int niter_min = jacobi_pkg->Param<int>("niter_min");
   const int verbose = jacobi_pkg->Param<int>("verbose");
 
-  // Convergence requires the global residual and, if enabled, every group's own residual
-  // (the max over groups) to clear their thresholds
-  bool residual_met = (residual <= err_thr);
-  if (jacobi_pkg->Param<bool>("per_group_residual")) {
-    residual_met = residual_met && (jacobi_pkg->Param<Real>("current_residual_group") <=
-                                    jacobi_pkg->Param<Real>("err_thr_group"));
-  }
+  const bool residual_met = ResidualMet(jacobi_pkg.get());
 
   // Iterate or finalize
   const int niter_done = iter_counter - 1;
