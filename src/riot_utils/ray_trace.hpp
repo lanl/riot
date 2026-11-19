@@ -407,8 +407,8 @@ KOKKOS_INLINE_FUNCTION Integrator MakeIntegrator(const Tuple &args,
   return Integrator(std::forward<Lead>(lead)..., std::get<I>(args)...);
 }
 
-template <template <typename> class Integrator_t,
-          typename SwarmPack_t, typename VarPack_t, typename... Args>
+template <template <typename> class Integrator_t, typename SwarmPack_t,
+          typename VarPack_t, typename... Args>
 TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
   using Integrator = Integrator_t<const VarPack_t>;
 

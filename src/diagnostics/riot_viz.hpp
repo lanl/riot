@@ -14,7 +14,6 @@
 #define DIAGNOSTICS_RIOT_VIZ_HPP_
 // This file was made in part with generative AI.
 
-
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
 #include <parthenon/driver.hpp>
@@ -576,11 +575,11 @@ bool LayerMayShow(const RenderingParams &rp, const int cam, const int ilay, cons
 }
 
 // Where, for each camera, any layer could show. The blocks where one may lie within
-// box(cam, 2 * d) <= x_d <= box(cam, 2 * d + 1) in the mesh coordinates x_d, and so within
-// the convex hull of that box in Cartesian space: the box itself on Cartesian meshes, the
-// cylinder R <= box(cam, 1) between the z planes on cylindrical ones, and the ball
-// r <= box(cam, 1) on spherical ones. A ray crosses the hull along one stretch, and before
-// and after it there is nothing to draw.
+// box(cam, 2 * d) <= x_d <= box(cam, 2 * d + 1) in the mesh coordinates x_d, and so
+// within the convex hull of that box in Cartesian space: the box itself on Cartesian
+// meshes, the cylinder R <= box(cam, 1) between the z planes on cylindrical ones, and the
+// ball r <= box(cam, 1) on spherical ones. A ray crosses the hull along one stretch, and
+// before and after it there is nothing to draw.
 struct ShowVolume {
   parthenon::ParArray2D<Real> box;
   // how far the hull is grown, which keeps its faces off those of the blocks
@@ -1133,9 +1132,9 @@ class Composer : public RayTrace::IntegratorBase<VarPack_t> {
     sync_cart_to_coord();
 
     if (slice_id >= 0) {
-      Real lum = lighting(rp.slice_n(cam_id, slice_id, 0),
-                          rp.slice_n(cam_id, slice_id, 1),
-                          rp.slice_n(cam_id, slice_id, 2));
+      Real lum =
+          lighting(rp.slice_n(cam_id, slice_id, 0), rp.slice_n(cam_id, slice_id, 1),
+                   rp.slice_n(cam_id, slice_id, 2));
       auto val = get_value(slice_id);
       auto alpha_val = get_alpha(slice_id);
       auto p = rp.val_to_rgba(cam_id, slice_id, val, alpha_val);
@@ -1328,8 +1327,7 @@ struct TracerInfo {
   }
 
   auto GetPacks(MeshData<Real> *md) const {
-    return std::make_tuple(desc->GetPack(md),
-                           desc_ps.GetPack(md),
+    return std::make_tuple(desc->GetPack(md), desc_ps.GetPack(md),
                            desc_ps_int.GetPack(md));
   }
 
