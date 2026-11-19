@@ -61,8 +61,8 @@ void FillInteriorDerived(MeshData<Real> *md) {
   auto materials = pm->packages.Get("materials");
   const bool do_ionization = riot->Param<bool>("do_ionization");
   const bool use_general_pte = materials->Param<bool>("use_general_pte");
-  const bool do_mhd = riot->Param<bool>("do_hydro") &&
-                      pm->packages.Get("hydro")->Param<bool>("do_mhd");
+  const bool do_mhd =
+      riot->Param<bool>("do_hydro") && pm->packages.Get("hydro")->Param<bool>("do_mhd");
 
   // ccbulk::bcc is only registered with MHD; it is only accessed when do_mhd
   auto v = riot::MakePack<ccmat::rho, ccbulk::rho, ccbulk::momentum, ccbulk::velocity,
@@ -208,7 +208,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
       ccbulk::velocity, ccbulk::internal_energy, ccbulk::pressure, ccbulk::bulk_modulus,
       ccbulk::temperature, ccbulk::electron_internal_energy, ccbulk::electron_temperature,
       ccbulk::electron_pressure, ccbulk::electron_number_density,
-      ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter, ccbulk::bcc>(md);
+      ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter, ccbulk::bcc>(
+      md);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,

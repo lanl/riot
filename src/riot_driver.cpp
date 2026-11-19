@@ -307,9 +307,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // receive and apply flux corrections
       auto recv_flx = tl.AddTask(start_flx_recv, parthenon::ReceiveFluxCorrections, mu0);
       // (must not run before this block's own fluxes/EMFs are written)
-      auto set_flx = tl.AddTask(recv_flx | hydro_flx | plasma_viscosity_flx | mix_flx |
-                                    ct_emf,
-                                parthenon::SetFluxCorrections, mu0);
+      auto set_flx =
+          tl.AddTask(recv_flx | hydro_flx | plasma_viscosity_flx | mix_flx | ct_emf,
+                     parthenon::SetFluxCorrections, mu0);
 
       // one giant update kernel to rule them all
       // JMM: UpdateToNextStage sums every source term in dudt_args into the state
@@ -380,10 +380,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       }
 
       // set required fields before communication
-      auto int_derived =
-          tl.AddTask(update | update_b | radial_return | electron_entropy_to_energy |
-                         set_vfrac,
-                     PreCommFillDerived<MeshData<Real>>, mu0.get());
+      auto int_derived = tl.AddTask(update | update_b | radial_return |
+                                        electron_entropy_to_energy | set_vfrac,
+                                    PreCommFillDerived<MeshData<Real>>, mu0.get());
 
       // communicate boundaries
       auto set_bc = parthenon::AddBoundaryExchangeTasks(int_derived | max_signal, tl, mu0,

@@ -558,14 +558,16 @@ KOKKOS_FORCEINLINE_FUNCTION Real lr_to_flux_hlld(
   if (!bn_zero) {
     const Real invsumd = 1.0 / (sqrtdl + sqrtdr);
     const Real bxsig = (bn > 0.0 ? 1.0 : -1.0);
-    vydst = invsumd *
-            (sqrtdl * (mylst * dlst_inv) + sqrtdr * (myrst * drst_inv) + bxsig * (byrst - bylst));
-    vzdst = invsumd *
-            (sqrtdl * (mzlst * dlst_inv) + sqrtdr * (mzrst * drst_inv) + bxsig * (bzrst - bzlst));
-    bydst = invsumd * (sqrtdl * byrst + sqrtdr * bylst +
-                       bxsig * sqrtdl * sqrtdr * ((myrst * drst_inv) - (mylst * dlst_inv)));
-    bzdst = invsumd * (sqrtdl * bzrst + sqrtdr * bzlst +
-                       bxsig * sqrtdl * sqrtdr * ((mzrst * drst_inv) - (mzlst * dlst_inv)));
+    vydst = invsumd * (sqrtdl * (mylst * dlst_inv) + sqrtdr * (myrst * drst_inv) +
+                       bxsig * (byrst - bylst));
+    vzdst = invsumd * (sqrtdl * (mzlst * dlst_inv) + sqrtdr * (mzrst * drst_inv) +
+                       bxsig * (bzrst - bzlst));
+    bydst =
+        invsumd * (sqrtdl * byrst + sqrtdr * bylst +
+                   bxsig * sqrtdl * sqrtdr * ((myrst * drst_inv) - (mylst * dlst_inv)));
+    bzdst =
+        invsumd * (sqrtdl * bzrst + sqrtdr * bzlst +
+                   bxsig * sqrtdl * sqrtdr * ((mzrst * drst_inv) - (mzlst * dlst_inv)));
     const Real tmp = spd2 * bn + (vydst * bydst + vzdst * bzdst);
     eldst = elst - sqrtdl * bxsig * (vbstl - tmp);
     erdst = erst + sqrtdr * bxsig * (vbstr - tmp);
