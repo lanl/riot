@@ -20,11 +20,9 @@
 
 #include <riot_utils/riot_loops.hpp>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// the stb implementations are compiled as C, in stb_impl.c
 #include <stb_image_write.h>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include "stb_image_resize2.h"
+#include <stb_image_resize2.h>
 
 #include <font8x8.h>
 
@@ -497,12 +495,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         PARTHENON_REQUIRE_THROWS(cam_block_ids.count(id) == 0,
                                  "Two camera input blocks are numbered identically.");
         cam_block_ids.insert(id);
-        AddCamera(pin, nimages, ndim, scene);
+        AddCamera(pin, id, ndim, scene);
         auto &camera = scene.camera.back();
         max_size = std::max(max_size, camera.nwidth * camera.nheight +
-                                          camera.ncolorbar * camera.colorbar_thickness *
-                                              camera.nwidth +
-                                          timebar * 10 * camera.nwidth);
+                                          (camera.ncolorbar + timebar) *
+                                              camera.colorbar_thickness * camera.nwidth);
         nimages++;
       }
     }
@@ -533,7 +530,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   pkg->AddSwarmValue<pvr::camera_id, pvr::particles>(m_int);
   pkg->AddSwarmValue<pvr::pixel_id, pvr::particles>(m_int);
 
-  Metadata m({Metadata::OneCopy, Metadata::Node});//, Metadata::FillGhost});//, Metadata::CommunicateOne});
+  Metadata m({Metadata::OneCopy, Metadata::Node});
   std::vector<std::string> orig_fields = scene.field;
   std::string suffix = "_nodal_";
   for (auto &f : scene.field) {
@@ -546,10 +543,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   //params.Add("rendering_params", rparams);
   params.Add("tracer_info", impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)), true);
 
-  params.Add("max_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("max_alpha_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_alpha_value_view", parthenon::ParArray2D<Real>(), true);
+  params.Add("nodal_bounds", impl::NodalBounds(), true);
+  params.Add("show_volume", ShowVolume(), true);
 
   return pkg;
 }
@@ -574,192 +569,253 @@ bool TimeToRender(Mesh *pm, Real time) {
 TaskStatus InitializeCameras(MeshData<Real> *md) {
   namespace prt = particles::ray_tracer;
   namespace pvr = particles::riot_viz;
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  using ne_t = ccbulk::electron_number_density;
-  using nen_t = node_variables::electron_number_density;
 
-  auto &viz = md->GetMeshPointer()->packages.Get("riot_viz");
+  auto pm = md->GetMeshPointer();
+  auto &viz = pm->packages.Get("riot_viz");
   const auto &si = viz->Param<SceneInfo>("scene_info");
 
-  const int ndim = md->GetMeshPointer()->ndim;
-  int dj = ndim > 1 ? 1 : 0;
-  int dk = ndim > 2 ? 1 : 0;
+  const int ndim = pm->ndim;
 
-  auto v = riot::MakePack<ne_t, nen_t>(md);
-  for (int blk = 0; blk < md->NumBlocks(); blk++) {
-    auto &mbd = md->GetBlockData(blk);
-    auto *pmb = mbd->GetBlockPointer();
-
-    const IndexRange &ib = pmb->cellbounds.GetBoundsI(IndexDomain::interior);
-    const IndexRange &jb = pmb->cellbounds.GetBoundsJ(IndexDomain::interior);
-    const IndexRange &kb = pmb->cellbounds.GetBoundsK(IndexDomain::interior);
-
-    // skip if not a boundary block
-    // note: this is where we would add slicing, cutouts, etc
-    bool is_boundary = false;
-    std::array<bool, 6> bound_flag;
-    for (int i = 0; i < 2 * ndim; i++) {
-      if (pmb->boundary_flag[i] != parthenon::BoundaryFlag::block) {
-        is_boundary = true;
-        bound_flag[i] = true;
-      } else {
-        bound_flag[i] = false;
+  // Every camera point, face by face, with the mesh face it lies on
+  int npts = 0;
+  for (int i = 0; i < 6; i++) {
+    npts += si.face_pts[i][sample::x].size();
+  }
+  if (npts == 0) return TaskStatus::complete;
+  parthenon::ParArray2D<Real> camera_pts("camera points", npts,
+                                         static_cast<int>(sample::nvalues));
+  parthenon::ParArray2D<int> camera_idx("camera indexing", npts, 3);
+  auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_pts);
+  auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_idx);
+  for (int i = 0, p = 0; i < 6; i++) {
+    for (int j = 0; j < si.face_pts[i][sample::x].size(); j++, p++) {
+      for (int n = 0; n < sample::nvalues; n++) {
+        chost(p, n) = si.face_pts[i][n][j];
       }
+      cid_host(p, 0) = si.camera_id[i][j];
+      cid_host(p, 1) = si.pixel_id[i][j];
+      cid_host(p, 2) = i;
     }
-    for (int i = 2 * ndim; i < 6; i++) {
-      bound_flag[i] = true;
-      is_boundary = true;
+  }
+  Kokkos::deep_copy(camera_pts, chost);
+  Kokkos::deep_copy(camera_idx, cid_host);
+
+  // A block face is on the mesh boundary unless it borders another block, and faces along
+  // inactive directions always are
+  const int nblocks = md->NumBlocks();
+  parthenon::ParArray2D<bool> on_boundary("camera boundary faces", nblocks, 6);
+  parthenon::ParArray2D<Real> block_box("camera block boxes", nblocks, 6);
+  auto bhost = Kokkos::create_mirror_view(Kokkos::HostSpace(), on_boundary);
+  auto box_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), block_box);
+  for (int b = 0; b < nblocks; b++) {
+    auto *pmb = md->GetBlockData(b)->GetBlockPointer();
+    for (int f = 0; f < 6; f++) {
+      bhost(b, f) =
+          f >= 2 * ndim || pmb->boundary_flag[f] != parthenon::BoundaryFlag::block;
     }
-    if (!is_boundary) continue;
-
-    auto &coords = pmb->coords;
-    const std::array<Real, 3> block_xmin(
-        {coords.Xf<X1DIR>(ib.s), coords.Xf<X2DIR>(jb.s), coords.Xf<X3DIR>(kb.s)});
-    // assume Dxf is constant
-    const std::array<Real, 3> dx(
-        {coords.Dxf<X1DIR>(0), coords.Dxf<X2DIR>(0), coords.Dxf<X3DIR>(0)});
-    const std::array<int, 3> Ni({ib.e - ib.s + 1, jb.e - jb.s + 1, kb.e - kb.s + 1});
-    std::array<Real, 3> block_xmax;
-    for (int i = 0; i < 3; i++)
-      block_xmax[i] = block_xmin[i] + Ni[i] * dx[i];
-
-    // figure out which points are on this block boundary
-    std::array<std::vector<int>, 6> ind;
-    int total_number = 0;
-    for (int i = 0; i < 6; i++) {
-      if (!bound_flag[i]) continue;
-      for (int j = 0; j < si.face_pts[i][sample::x].size(); j++) {
-        bool on_block = false;
-        if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-          bool inside_x = (si.face_pts[i][sample::x][j] >= block_xmin[0] &&
-                           si.face_pts[i][sample::x][j] <= block_xmax[0]);
-          bool inside_y = (si.face_pts[i][sample::y][j] >= block_xmin[1] &&
-                           si.face_pts[i][sample::y][j] <= block_xmax[1]);
-          bool inside_z = (si.face_pts[i][sample::z][j] >= block_xmin[2] &&
-                           si.face_pts[i][sample::z][j] <= block_xmax[2]);
-          if (i < 2) {
-            // x-boundary, check y and z
-            on_block = inside_y && inside_z;
-          } else if (i < 4) {
-            // y-boundary, check x and z
-            on_block = inside_x && inside_z;
-          } else {
-            on_block = inside_x && inside_y;
-          }
-        } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-          auto x = si.face_pts[i][sample::x][j];
-          auto y = si.face_pts[i][sample::y][j];
-          auto z = si.face_pts[i][sample::z][j];
-          auto r = std::sqrt(x * x + y * y);
-          bool inside_r = (r >= block_xmin[0] && r <= block_xmax[0]);
-          bool inside_z = (si.face_pts[i][sample::z][j] >= block_xmin[1] &&
-                           si.face_pts[i][sample::z][j] <= block_xmax[1]);
-          if (i < 2) {
-            on_block = inside_z;
-          } else if (i < 4) {
-            on_block = inside_r;
-          } else {
-            PARTHENON_FAIL("Cylindrical does not support 3D");
-          }
-        } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-          on_block = true;
-        }
-        if (on_block) {
-          ind[i].push_back(j);
-        }
-      }
-      total_number += ind[i].size();
+    for (int d = 0; d < 3; d++) {
+      const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+      box_host(b, 2 * d) = pmb->block_size.xmin(dir);
+      box_host(b, 2 * d + 1) = pmb->block_size.xmax(dir);
     }
+  }
+  Kokkos::deep_copy(on_boundary, bhost);
+  Kokkos::deep_copy(block_box, box_host);
 
-    // now make a device side array that lists the included points
-    parthenon::ParArray2D<Real> camera_pts("camera points", total_number,
-                                           static_cast<int>(sample::nvalues));
-    parthenon::ParArray2D<int> camera_idx("camera indexing", total_number, 2);
-    auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_pts);
-    auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_idx);
-    int idx = 0;
-    for (int i = 0; i < 6; i++) {
-      if (!bound_flag[i]) continue;
-      for (int j = 0; j < ind[i].size(); j++) {
-        int k = ind[i][j];
-        for (int n = 0; n < sample::nvalues; n++) {
-          chost(idx, n) = si.face_pts[i][n][k];
-        }
-        cid_host(idx, 0) = si.camera_id[i][k];
-        cid_host(idx, 1) = si.pixel_id[i][k];
-        idx++;
-      }
-    }
-    Kokkos::deep_copy(camera_pts, chost);
-    Kokkos::deep_copy(camera_idx, cid_host);
-
-    // make space for the particles
-    auto *swarm = md->GetSwarmData(blk)->Get(pvr::particles::name()).get();
-    parthenon::ParArray1D<parthenon::NewParticlesContext> new_context("New context", 1);
-    auto new_context_h = new_context.GetHostMirror();
-    new_context_h(0) = swarm->AddEmptyParticles(total_number);
-    new_context.DeepCopy(new_context_h);
-    Kokkos::fence();
-
-    auto &x = swarm->Get<Real>(swarm_position::x::name()).Get();
-    auto &y = swarm->Get<Real>(swarm_position::y::name()).Get();
-    auto &z = swarm->Get<Real>(swarm_position::z::name()).Get();
-    auto &vx = swarm->Get<Real>(prt::vx::name()).Get();
-    auto &vy = swarm->Get<Real>(prt::vy::name()).Get();
-    auto &vz = swarm->Get<Real>(prt::vz::name()).Get();
-    auto &r = swarm->Get<Real>(pvr::r::name()).Get();
-    auto &g = swarm->Get<Real>(pvr::g::name()).Get();
-    auto &b = swarm->Get<Real>(pvr::b::name()).Get();
-    auto &a = swarm->Get<Real>(pvr::a::name()).Get();
-    auto &cam_id = swarm->Get<int>(pvr::camera_id::name()).Get();
-    auto &pix_id = swarm->Get<int>(pvr::pixel_id::name()).Get();
-
-    // set the particle properties
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
-        KOKKOS_LAMBDA(const int n) {
-          const int pidx = new_context(0).GetNewParticleIndex(n);
-          if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-            x(pidx) = camera_pts(n, sample::x);
-            y(pidx) = camera_pts(n, sample::y);
-            z(pidx) = camera_pts(n, sample::z);
-          } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-            Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                                  camera_pts(n, sample::y) * camera_pts(n, sample::y));
-            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < kBoundaryBand)
-              rcyl = block_xmax[0] - kGeomTol;
-            const Real zcyl = camera_pts(n, sample::z);
-            Real phi_cyl = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
-            phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
-            x(pidx) = rcyl;
-            y(pidx) = zcyl;
-            z(pidx) = phi_cyl;
+  // Rays start where they meet the volume anything could show in, or at their camera
+  // point if it is in it already. Those that miss it are background.
+  using OnBlock = impl::CameraPointOnBlock;
+  const auto &show_volume = viz->Param<ShowVolume>("show_volume");
+  const bool clip = CullsBlocks(ndim);
+  Kokkos::Array<Real, 3> mesh_lo, mesh_hi;
+  for (int d = 0; d < 3; d++) {
+    const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+    mesh_lo[d] = pm->mesh_size.xmin(dir);
+    mesh_hi[d] = pm->mesh_size.xmax(dir);
+  }
+  auto &images = si.images;
+  parthenon::ParArray1D<int> start_kind("camera start kinds", npts);
+  parthenon::ParArray2D<Real> start("camera starts", npts, 3);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, npts - 1,
+      KOKKOS_LAMBDA(const int p) {
+        start_kind(p) = OnBlock::start_at_point;
+        if (!clip) return;
+        const Real x[3] = {camera_pts(p, sample::x), camera_pts(p, sample::y),
+                           camera_pts(p, sample::z)};
+        const Real n[3] = {camera_pts(p, sample::nx), camera_pts(p, sample::ny),
+                           camera_pts(p, sample::nz)};
+        Real t0, t1;
+        show_volume.Clip(camera_idx(p, 0), x, n, show_volume.margin, t0, t1);
+        const Real nn = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        bool miss = t1 < std::max(t0, 0.0);
+        if (!miss && t0 * nn > show_volume.margin) {
+          Real xs[3];
+          for (int d = 0; d < 3; d++)
+            xs[d] = x[d] + t0 * n[d];
+          // the mesh coordinates of the start, as the tracer has them
+          Real xm[3] = {xs[0], xs[1], xs[2]};
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+            xm[0] = std::sqrt(xs[0] * xs[0] + xs[1] * xs[1]);
+            xm[1] = xs[2];
+            xm[2] = std::atan2(xs[1], xs[0]);
+            xm[2] += (xm[2] < 0.0) * 2.0 * M_PI;
           } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-            const Real rsph =
-                std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                          camera_pts(n, sample::y) * camera_pts(n, sample::y) +
-                          camera_pts(n, sample::z) * camera_pts(n, sample::z));
-            const Real th = std::acos(camera_pts(n, sample::z) / rsph);
-            Real phi_sph = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
-            phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
-            x(pidx) = rsph;
-            y(pidx) = th;
-            z(pidx) = phi_sph;
-          } else {
-            PARTHENON_FAIL("Unsupported coordinate system");
+            xm[0] = std::sqrt(xs[0] * xs[0] + xs[1] * xs[1] + xs[2] * xs[2]);
+            xm[1] = xm[0] > 0.0 ? std::acos(xs[2] / xm[0]) : 0.0;
+            xm[2] = std::atan2(xs[1], xs[0]);
+            xm[2] += (xm[2] < 0.0) * 2.0 * M_PI;
           }
-          vx(pidx) = camera_pts(n, sample::nx);
-          vy(pidx) = camera_pts(n, sample::ny);
-          vz(pidx) = camera_pts(n, sample::nz);
-          r(pidx) = 0.0;
-          g(pidx) = 0.0;
-          b(pidx) = 0.0;
-          a(pidx) = 0.0;
-          cam_id(pidx) = camera_idx(n, 0);
-          pix_id(pidx) = camera_idx(n, 1);
-        });
+          // the hull is grown past the mesh where the blocks that may show reach it, and
+          // a ray that only meets it out there meets nothing that shows
+          const int nd = OnBlock::start_dims;
+          for (int d = 0; d < nd; d++)
+            miss = miss || xm[d] < mesh_lo[d] || xm[d] > mesh_hi[d];
+          for (int d = 0; d < 3; d++)
+            start(p, d) = xm[d];
+          start_kind(p) = OnBlock::start_inside;
+        }
+        if (miss) {
+          // as a ray that meets nothing would leave it
+          start_kind(p) = OnBlock::start_none;
+          const int cam = camera_idx(p, 0);
+          const int pix = camera_idx(p, 1);
+          for (int c = 0; c < 3; c++)
+            images(cam, 4 * pix + c) = real_to_uint8_t(0.0);
+          images(cam, 4 * pix + 3) = real_to_uint8_t(1.0);
+        }
+      });
 
-  } // loop over blocks in MeshData
+  const OnBlock on_block{block_box, camera_pts,  camera_idx,
+                         on_boundary, start_kind, start};
+
+  // Only the points that could start on this MeshData are tried on each of its blocks:
+  // those inside the box of its blocks, or on a mesh face one of them is on
+  Kokkos::Array<Real, 3> md_lo, md_hi;
+  Kokkos::Array<bool, 6> md_face;
+  for (int d = 0; d < 3; d++) {
+    md_lo[d] = std::numeric_limits<Real>::max();
+    md_hi[d] = -std::numeric_limits<Real>::max();
+  }
+  for (int f = 0; f < 6; f++)
+    md_face[f] = false;
+  for (int b = 0; b < nblocks; b++) {
+    for (int d = 0; d < 3; d++) {
+      md_lo[d] = std::min(md_lo[d], box_host(b, 2 * d));
+      md_hi[d] = std::max(md_hi[d], box_host(b, 2 * d + 1));
+    }
+    for (int f = 0; f < 6; f++)
+      md_face[f] = md_face[f] || bhost(b, f);
+  }
+  parthenon::ParArray1D<int> cand("camera candidates", npts);
+  int ncand = 0;
+  Kokkos::parallel_scan(
+      PARTHENON_AUTO_LABEL, Kokkos::RangePolicy<DevExecSpace>(0, npts),
+      KOKKOS_LAMBDA(const int p, int &k, const bool final) {
+        bool c = false;
+        if (start_kind(p) == OnBlock::start_inside) {
+          c = true;
+          for (int d = 0; d < OnBlock::start_dims; d++)
+            c = c && start(p, d) >= md_lo[d] && start(p, d) <= md_hi[d];
+        } else if (start_kind(p) == OnBlock::start_at_point) {
+          c = md_face[camera_idx(p, 2)];
+        }
+        if (final && c) cand(k) = p;
+        k += c;
+      },
+      ncand);
+
+  // Every block creates a ray at each camera point on its part of the mesh boundary, or
+  // in it
+  parthenon::ParArray1D<int> counts("camera counts", nblocks);
+  parthenon::par_for_outer(
+      PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
+        int count = 0;
+        Kokkos::parallel_reduce(
+            Kokkos::TeamThreadRange(member, ncand),
+            [&](const int k, int &c) { c += on_block(b, cand(k)); }, count);
+        Kokkos::single(Kokkos::PerTeam(member), [&]() { counts(b) = count; });
+      });
+  auto counts_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), counts);
+
+  // make space for the particles
+  parthenon::ParArray1D<parthenon::NewParticlesContext> new_context("New context",
+                                                                    nblocks);
+  auto new_context_h = new_context.GetHostMirror();
+  for (int b = 0; b < nblocks; b++) {
+    auto *swarm = md->GetSwarmData(b)->Get(pvr::particles::name()).get();
+    new_context_h(b) = swarm->AddEmptyParticles(counts_h(b));
+  }
+  new_context.DeepCopy(new_context_h);
+
+  // the packs are snapshots, so get them after making space for the rays
+  const auto &tinfo = viz->Param<impl::TracerInfo>("tracer_info");
+  auto pack = tinfo.desc_ps.GetPack(md);
+  auto pack_int = tinfo.desc_ps_int.GetPack(md);
+
+  // set the particle properties
+  parthenon::par_for_outer(
+      PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
+        Kokkos::parallel_scan(
+            Kokkos::TeamThreadRange(member, ncand),
+            [&](const int k, int &offset, const bool final) {
+              const int n = cand(k);
+              const bool on = on_block(b, n);
+              if (final && on) {
+                const int pidx = new_context(b).GetNewParticleIndex(offset);
+                Real &x = pack(b, swarm_position::x(), pidx);
+                Real &y = pack(b, swarm_position::y(), pidx);
+                Real &z = pack(b, swarm_position::z(), pidx);
+                // nvcc does not let a device lambda first capture a variable in an if
+                // constexpr branch, so what the branches use is read before them
+                const Real px = camera_pts(n, sample::x);
+                const Real py = camera_pts(n, sample::y);
+                const Real pz = camera_pts(n, sample::z);
+                const Real block_xmax1 = block_box(b, 1);
+                if (start_kind(n) == OnBlock::start_inside) {
+                  x = start(n, 0);
+                  y = start(n, 1);
+                  z = start(n, 2);
+                } else if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+                  x = px;
+                  y = py;
+                  z = pz;
+                } else if constexpr (parthenon::IsCoord<
+                                         parthenon::UniformCylindrical>()) {
+                  Real rcyl = std::sqrt(px * px + py * py);
+                  if (std::abs(rcyl - block_xmax1) / block_xmax1 < kBoundaryBand)
+                    rcyl = block_xmax1 - kGeomTol;
+                  Real phi_cyl = std::atan2(py, px);
+                  phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
+                  x = rcyl;
+                  y = pz;
+                  z = phi_cyl;
+                } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+                  const Real rsph = std::sqrt(px * px + py * py + pz * pz);
+                  const Real th = std::acos(pz / rsph);
+                  Real phi_sph = std::atan2(py, px);
+                  phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
+                  x = rsph;
+                  y = th;
+                  z = phi_sph;
+                } else {
+                  PARTHENON_FAIL("Unsupported coordinate system");
+                }
+                pack(b, prt::vx(), pidx) = camera_pts(n, sample::nx);
+                pack(b, prt::vy(), pidx) = camera_pts(n, sample::ny);
+                pack(b, prt::vz(), pidx) = camera_pts(n, sample::nz);
+                pack(b, pvr::r(), pidx) = 0.0;
+                pack(b, pvr::g(), pidx) = 0.0;
+                pack(b, pvr::b(), pidx) = 0.0;
+                pack(b, pvr::a(), pidx) = 0.0;
+                pack_int(b, pvr::camera_id(), pidx) = camera_idx(n, 0);
+                pack_int(b, pvr::pixel_id(), pidx) = camera_idx(n, 1);
+              }
+              offset += on;
+            });
+      });
 
   return TaskStatus::complete;
 }
@@ -777,20 +833,17 @@ TaskStatus Tracer(MeshData<Real> *md) {
 
   auto [v, ps, ps_int] = tinfo->GetPacks(md);
 
-  auto max_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
-  auto max_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
+  auto &bounds = viz->Param<impl::NodalBounds>("nodal_bounds");
 
   return RayTrace::Trace<Composer>(ps, v, md->GetParentPointer(), ps_int,
-                                   tinfo->render_params, tinfo->pack_idx_view, max_value,
-                                   min_value, scene_info.images);
+                                   tinfo->render_params, tinfo->pack_idx_view,
+                                   bounds.may_show, viz->Param<ShowVolume>("show_volume"),
+                                   scene_info.images);
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md) {
   using TE = parthenon::TopologicalElement;
 
-  const auto start = std::chrono::steady_clock::now();
   auto pm = md->GetMeshPointer();
   auto viz = pm->packages.Get("riot_viz");
   auto orig_fields =
@@ -833,8 +886,18 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
 
   int dj = pm->ndim > 1 ? 1 : 0;
   int dk = pm->ndim > 2 ? 1 : 0;
+  const int ngc = parthenon::Globals::nghost;
+  const auto ibi = md->GetBoundsI(IndexDomain::interior);
+  const auto jbi = md->GetBoundsJ(IndexDomain::interior);
+  const auto kbi = md->GetBoundsK(IndexDomain::interior);
+  const int ics = ibi.s - ngc;
+  const int jcs = jbi.s - ngc * dj;
+  const int kcs = kbi.s - ngc * dk;
+  const int ice = ibi.e + ngc;
+  const int jce = jbi.e + ngc * dj;
+  const int kce = kbi.e + ngc * dk;
 
-  using lt = RiotUtils::LoopType<>;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space =
       lt::GetIndexSpace(IndexDomain::entire, 0, vorig.GetNBlocks(), md, TE::NN);
   RiotLoop::outer(
@@ -853,10 +916,13 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
               RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
                 Real nodal_val = 0.0;
                 int cnt = 0;
-                for (int kk = -1 * dkl; kk <= 0; kk++) {
-                  for (int jj = -1 * djl; jj <= 0; jj++) {
-                    for (int ii = -1; ii <= 0; ii++) {
-                      nodal_val += cell(k + kk, j + jj, i + ii);
+                const int kl = std::clamp(k - dkl, kcs, kce);
+                const int jl = std::clamp(j - djl, jcs, jce);
+                const int il = std::clamp(i - 1, ics, ice);
+                for (int kc = kl; kc <= std::clamp(k, kl, kce); kc++) {
+                  for (int jc = jl; jc <= std::clamp(j, jl, jce); jc++) {
+                    for (int ic = il; ic <= std::clamp(i, il, ice); ic++) {
+                      nodal_val += cell(kc, jc, ic);
                       cnt++;
                     }
                   }
@@ -883,15 +949,86 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
 
   Kokkos::fence();
 
-  auto max_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("max_value_view");
-  *max_value_view = std::move(max_value);
-  auto min_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("min_value_view");
-  *min_value_view = std::move(min_value);
+  // the layers that could show in each block, so rays need not check that per block
+  const auto &rp = viz->Param<impl::TracerInfo>("tracer_info").render_params;
+  const int ncam = scene_info.camera.size();
+  auto may_show = parthenon::ParArray2D<uint32_t>("may_show", md->NumBlocks(), ncam);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, md->NumBlocks() - 1,
+      0, ncam - 1, KOKKOS_LAMBDA(const int b, const int cam) {
+        uint32_t may = 0;
+        for (int ilay = 0; ilay < rp.nlayers(cam); ilay++) {
+          if (LayerMayShow(rp, cam, ilay, b, max_value, min_value)) may |= 1u << ilay;
+        }
+        may_show(b, cam) = may;
+      });
+  Kokkos::fence();
 
-  const auto stop = std::chrono::steady_clock::now();
-  const double seconds = std::chrono::duration<double>(stop - start).count();
-  if (parthenon::Globals::my_rank == 0)
-    std::cout << "InitializeNodalValues completed in " << seconds << " seconds." << std::endl;
+  // and the box of the blocks where any may, for ReduceShowVolume
+  auto bounds = viz->MutableParam<impl::NodalBounds>("nodal_bounds");
+  auto may_show_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), may_show);
+  constexpr Real big = std::numeric_limits<Real>::max();
+  auto &box = bounds->show_box;
+  box.assign(6 * ncam, 0.0);
+  for (int cam = 0; cam < ncam; cam++) {
+    for (int d = 0; d < 3; d++) {
+      box[6 * cam + 2 * d] = big;
+      box[6 * cam + 2 * d + 1] = -big;
+    }
+    for (int b = 0; b < md->NumBlocks(); b++) {
+      if (may_show_h(b, cam) == 0) continue;
+      const auto &bs = md->GetBlockData(b)->GetBlockPointer()->block_size;
+      for (int d = 0; d < 3; d++) {
+        const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+        box[6 * cam + 2 * d] = std::min(box[6 * cam + 2 * d], bs.xmin(dir));
+        box[6 * cam + 2 * d + 1] = std::max(box[6 * cam + 2 * d + 1], bs.xmax(dir));
+      }
+    }
+  }
+
+  bounds->max_value = std::move(max_value);
+  bounds->min_value = std::move(min_value);
+  bounds->may_show = std::move(may_show);
+
+  return TaskStatus::complete;
+}
+
+// The volume anything could show in, from the boxes of the blocks on every rank
+TaskStatus ReduceShowVolume(Mesh *pm) {
+  auto viz = pm->packages.Get("riot_viz");
+  const auto &bounds = viz->Param<impl::NodalBounds>("nodal_bounds");
+  auto show_volume = viz->MutableParam<ShowVolume>("show_volume");
+  const int ncam = viz->Param<SceneInfo>("scene_info").camera.size();
+
+  // lower bounds are negated, so that one MPI_MAX reduces them along with the upper ones
+  std::vector<Real> box(6 * ncam);
+  for (int i = 0; i < 6 * ncam; i++) {
+    box[i] = i % 2 == 0 ? -bounds.show_box[i] : bounds.show_box[i];
+  }
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(MPI_Allreduce(MPI_IN_PLACE, box.data(), box.size(),
+                                    MPI_PARTHENON_REAL, MPI_MAX, MPI_COMM_WORLD));
+#endif
+
+  if (show_volume->box.extent_int(0) != ncam) {
+    show_volume->box = parthenon::ParArray2D<Real>("show volume", ncam, 6);
+  }
+  auto box_h = show_volume->box.GetHostMirror();
+  for (int cam = 0; cam < ncam; cam++) {
+    for (int i = 0; i < 6; i++) {
+      box_h(cam, i) = i % 2 == 0 ? -box[6 * cam + i] : box[6 * cam + i];
+    }
+  }
+  Kokkos::deep_copy(show_volume->box, box_h);
+
+  // well above roundoff, and well below any cell
+  const auto &mesh_size = pm->mesh_size;
+  Real extent = mesh_size.xmax(X1DIR) - mesh_size.xmin(X1DIR);
+  if (!parthenon::IsCoord<parthenon::UniformSpherical>())
+    extent = std::max(extent, mesh_size.xmax(X2DIR) - mesh_size.xmin(X2DIR));
+  if (parthenon::IsCoord<parthenon::UniformCartesian>())
+    extent = std::max(extent, mesh_size.xmax(X3DIR) - mesh_size.xmin(X3DIR));
+  show_volume->margin = 1.e-6 * extent;
   return TaskStatus::complete;
 }
 
@@ -900,22 +1037,27 @@ TaskCollection Render(Mesh *pm, Real time) {
   using TQ = TaskQualifier;
   TaskCollection tc;
   TaskID none;
-  printf("Starting rendering...\n");
   // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
   constexpr int num_partitions = 1; // pm->DefaultNumPartitions();
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
+    auto md = pm->mesh_data.Get().get();
+    tl.AddTask(none, InitializeNodalValues, md);
+  }
+  // The cameras start rays where they meet the volume anything could show in, which
+  // takes the nodal values of every block
+  auto &show_reg = tc.AddRegion(1);
+  show_reg[0].AddTask(none, ReduceShowVolume, pm);
+  auto &trace_reg = tc.AddRegion(num_partitions);
+  for (int i = 0; i < num_partitions; i++) {
+    auto &tl = trace_reg[i];
     auto md_sp = pm->mesh_data.Get();
     auto md = md_sp.get();
 
-    auto set_nodal_vals = tl.AddTask(none, InitializeNodalValues, md);
     auto init_particles = tl.AddTask(none, InitializeCameras, md);
-    //auto comms = parthenon::AddBoundaryExchangeTasks(set_nodal_vals, tl, md_sp,
-                                                        //pm->multilevel);
-    auto comms = set_nodal_vals;
-    auto [itl, push] = tl.AddSublist(comms | init_particles, {0, 100000});
-    
+    auto [itl, push] = tl.AddSublist(init_particles, {0, 100000});
+
     auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp, pvr::particles::name());
     auto reset_comms = itl.AddTask(none, parthenon::ResetSwarmsCommunicationMesh, md_sp);
     auto send = itl.AddTask(reset_comms | remove, parthenon::SendSwarmsMesh, md_sp);
@@ -1158,10 +1300,6 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
     }
   }
   dump_id++;
-
-  //for (int b = 0; b < md->NumBlocks(); b++) {
-    //md->GetSwarmData(b)->Get(vr::particles::name())->RemoveMarkedParticles();
-  //}
 
   parthenon::par_for(
       DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, images.GetDim(2) - 1,
