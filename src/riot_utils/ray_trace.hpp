@@ -14,7 +14,6 @@
 #define RIOT_UTILS_RAY_TRACE_HPP_
 // This file was made in part with generative AI.
 
-#include <memory>
 #include <tuple>
 #include <utility>
 
@@ -23,13 +22,11 @@ using namespace parthenon::package::prelude;
 #include <parthenon/driver.hpp>
 using namespace parthenon::driver::prelude;
 
-#include <variables.hpp>
+#include "variables.hpp"
 
 using Coordinates_t = parthenon::Coordinates_t;
 
 namespace RayTrace {
-
-namespace rt = particles::ray_tracer;
 
 // Machine-epsilon-scaled tolerances used by snap_to_face to handle finite
 // precision in face/particle position comparisons. kFaceEps is the band within
@@ -79,16 +76,8 @@ struct CellInfo {
   KOKKOS_FORCEINLINE_FUNCTION Real dx() const {
     return xhi<dir>() - xlo<dir>();
   }
-  template <int dir>
-  KOKKOS_FORCEINLINE_FUNCTION Real xmid() const {
-    return 0.5 * (xlo<dir>() + xhi<dir>());
-  }
 
   KOKKOS_FORCEINLINE_FUNCTION Real min_size() const { return min_dx; }
-
-  KOKKOS_FORCEINLINE_FUNCTION Real volume() const {
-    return coords.CellVolume(cell_k, cell_j, cell_i);
-  }
 
   const Coordinates_t &coords;
   const int cell_b, dj, dk, ndim;
@@ -108,28 +97,12 @@ class IntegratorBase : public CellInfo {
       : CellInfo(vp.GetCoordinates(b), b, ndim), vp(vp), pidx(pidx),
         xc{ps(b, swarm_position::x(), pidx), ps(b, swarm_position::y(), pidx),
            ps(b, swarm_position::z(), pidx)},
-        v{ps(b, rt::vx(), pidx), ps(b, rt::vy(), pidx), ps(b, rt::vz(), pidx)},
+        v{ps(b, particles::ray_tracer::vx(), pidx),
+          ps(b, particles::ray_tracer::vy(), pidx),
+          ps(b, particles::ray_tracer::vz(), pidx)},
         context(context) {
     init_cell(xc[0], xc[1], xc[2]);
-    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-      x[0] = xc[0];
-      x[1] = xc[1];
-      x[2] = xc[2];
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      x[0] = xc[0] * std::cos(xc[2]);
-      x[1] = xc[0] * std::sin(xc[2]);
-      x[2] = xc[1];
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      const Real sth = std::sin(xc[1]);
-      const Real cth = std::cos(xc[1]);
-      const Real sph = std::sin(xc[2]);
-      const Real cph = std::cos(xc[2]);
-      x[0] = xc[0] * sth * cph;
-      x[1] = xc[0] * sth * sph;
-      x[2] = xc[0] * cth;
-    } else {
-      PARTHENON_FAIL("Unsupported coordinate system.");
-    }
+    x = coord_to_cart(xc[0], xc[1], xc[2]);
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -139,10 +112,6 @@ class IntegratorBase : public CellInfo {
   KOKKOS_INLINE_FUNCTION void loop_3d(F &&func) const {
     loop_exec<X1DIR, X3DIR>(func);
   }
-  template <typename F>
-  KOKKOS_INLINE_FUNCTION void loop_2d(F &&func) const {
-    loop_exec<X1DIR, X2DIR>(func);
-  }
 
   KOKKOS_INLINE_FUNCTION
   void snap_to_face() {
@@ -150,29 +119,28 @@ class IntegratorBase : public CellInfo {
     // in face/particle position comparisons. The nudge pushes the particle just a
     // bit past the face it is entering so the index calc comes out right in the
     // next cell.
+    // the radial face at rf, along the n Cartesian directions the radius spans. The axis
+    // or origin is not a face, so a ray reaching it passes straight through.
+    auto snap_radius = [&](const Real rf, const Real vr, const int n) {
+      const Real correction = (rf + sign(vr) * kFaceNudge) / xc[0];
+      for (int d = 0; d < n; d++)
+        x[d] *= correction;
+      xc[0] *= correction;
+    };
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       loop_3d([&]<int d>() {
         if (std::abs(xc[d - 1] - xlo<d>()) < kFaceEps)
           xc[d - 1] = xlo<d>() + sign(v[d - 1]) * kFaceNudge;
-        x[d - 1] = xc[d - 1];
         if (std::abs(xc[d - 1] - xhi<d>()) < kFaceEps)
           xc[d - 1] = xhi<d>() + sign(v[d - 1]) * kFaceNudge;
         x[d - 1] = xc[d - 1];
       });
     } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      Real vr = (x[0] * v[0] + x[1] * v[1]) / xc[0];
-      if (std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps) {
-        Real correction = (xlo<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
-        x[0] *= correction;
-        x[1] *= correction;
-        xc[0] *= correction;
-      }
-      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) {
-        Real correction = (xhi<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
-        x[0] *= correction;
-        x[1] *= correction;
-        xc[0] *= correction;
-      }
+      // x . v has the sign of the radial velocity
+      const Real vr = x[0] * v[0] + x[1] * v[1];
+      if (xlo<X1DIR>() > 0.0 && std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps)
+        snap_radius(xlo<X1DIR>(), vr, 2);
+      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) snap_radius(xhi<X1DIR>(), vr, 2);
       if (std::abs(x[2] - xlo<X2DIR>()) < kFaceEps) {
         x[2] = xlo<X2DIR>() + sign(v[2]) * kFaceNudge;
         xc[1] = x[2];
@@ -181,68 +149,47 @@ class IntegratorBase : public CellInfo {
         xc[1] = x[2];
       }
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      Real vr = (x[0] * v[0] + x[1] * v[1] + x[2] * v[2]) / xc[0];
-      if (std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps) {
-        Real correction = (xlo<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
-        x[0] *= correction;
-        x[1] *= correction;
-        x[2] *= correction;
-        xc[0] *= correction;
-      }
-      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) {
-        Real correction = (xhi<X1DIR>() + sign(vr) * kFaceNudge) / xc[0];
-        x[0] *= correction;
-        x[1] *= correction;
-        x[2] *= correction;
-        xc[0] *= correction;
-      }
+      // x . v has the sign of the radial velocity
+      const Real vr = x[0] * v[0] + x[1] * v[1] + x[2] * v[2];
+      if (xlo<X1DIR>() > 0.0 && std::abs(xc[0] - xlo<X1DIR>()) < kFaceEps)
+        snap_radius(xlo<X1DIR>(), vr, 3);
+      if (std::abs(xc[0] - xhi<X1DIR>()) < kFaceEps) snap_radius(xhi<X1DIR>(), vr, 3);
     } else {
       PARTHENON_FAIL("Unsupported coordinate system in IntegratorBase.");
     }
   }
 
+  // Cross the block in one go
   KOKKOS_INLINE_FUNCTION
   void push_to_block_boundary() {
-    if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
-      // Where every face the ray can leave the block through is tracked, as for 2D
-      // cylindrical and 1D spherical blocks, the ray crosses the block in one go.
-      // Otherwise it is left to step through.
-      const Real h = block_exit_distance();
-      if (h < 0.0) return;
-      for (int d = 0; d < 3; d++)
-        x[d] += h * v[d];
-      sync_cart_to_coord();
-      init_cell(xc[0], xc[1], xc[2]);
-      snap_to_face();
-      skipped = true;
-      return;
-    }
-    bool use_x = std::abs(v[0]) > 0.0;
-    bool use_y = std::abs(v[1]) > 0.0;
-    bool use_z = std::abs(v[2]) > 0.0;
-    Real h1 = use_x ? (context.x_min_ + (v[0] > 0) * (context.x_max_ - context.x_min_) - xc[0]) / v[0]
-                    : std::numeric_limits<Real>::max();
-    Real h2 = use_y ? (context.y_min_ + (v[1] > 0) * (context.y_max_ - context.y_min_) - xc[1]) / v[1]
-                    : std::numeric_limits<Real>::max();
-    Real h3 = use_z ? (context.z_min_ + (v[2] > 0) * (context.z_max_ - context.z_min_) - xc[2]) / v[2]
-                    : std::numeric_limits<Real>::max();
-    if (h1 > h2) std::swap(h1, h2);
-    if (h2 > h3) std::swap(h2, h3);
-    if (h1 > h2) std::swap(h1, h2);
-
-    h3 = h1 + kStepOvershoot * min_size();
-    h1 = (h2 == std::numeric_limits<Real>::max() ? h3
-                                                 : std::min(h3, 0.5 * (h1 + h2)));
-    loop_3d([&]<int d>() {
-      xc[d - 1] += h1 * v[d - 1];
-    });
+    const Real h = block_exit_distance();
+    if (h < 0.0) return;
+    for (int d = 0; d < 3; d++)
+      x[d] += h * v[d];
+    sync_cart_to_coord();
     init_cell(xc[0], xc[1], xc[2]);
     snap_to_face();
     skipped = true;
   }
 
-  // The distance along the ray to just past where it leaves the block, where the block
-  // faces it can leave through are all tracked exactly, or a negative value otherwise
+  // Along the ray, the squared distance from the origin or the axis is
+  // r2 + 2 bq h + aq h^2, with aq > 0. The distance to where it falls to rlo^2, or the
+  // largest Real if it never gets that low.
+  KOKKOS_INLINE_FUNCTION
+  static Real radial_in(const Real aq, const Real bq, const Real r2, const Real rlo) {
+    const Real disc = bq * bq - aq * (r2 - rlo * rlo);
+    if (bq < 0.0 && disc >= 0.0) return (r2 - rlo * rlo) / (-bq + std::sqrt(disc));
+    return std::numeric_limits<Real>::max();
+  }
+  // The distance to where it rises to rhi^2
+  KOKKOS_INLINE_FUNCTION
+  static Real radial_out(const Real aq, const Real bq, const Real r2, const Real rhi) {
+    const Real sq = std::sqrt(std::max(bq * bq - aq * (r2 - rhi * rhi), 0.0));
+    return bq > 0.0 ? (rhi * rhi - r2) / (bq + sq) : (sq - bq) / aq;
+  }
+
+  // The distance along the ray to just past where it leaves the block, or a negative
+  // value if it never does
   KOKKOS_INLINE_FUNCTION
   Real block_exit_distance() const {
     constexpr Real big = std::numeric_limits<Real>::max();
@@ -259,13 +206,8 @@ class IntegratorBase : public CellInfo {
     // the distance to the radius rlo, if the ray gets that close, and to rhi
     auto radial = [&](const Real aq, const Real bq, const Real r2, const Real rlo,
                       const Real rhi) {
-      const Real disc_lo = bq * bq - aq * (r2 - rlo * rlo);
-      if (bq < 0.0 && rlo > 0.0 && disc_lo >= 0.0) {
-        add_face((r2 - rlo * rlo) / (-bq + std::sqrt(disc_lo)));
-      } else {
-        const Real sq_hi = std::sqrt(std::max(bq * bq - aq * (r2 - rhi * rhi), 0.0));
-        add_face(bq > 0.0 ? (rhi * rhi - r2) / (bq + sq_hi) : (sq_hi - bq) / aq);
-      }
+      const Real hlo = rlo > 0.0 ? radial_in(aq, bq, r2, rlo) : big;
+      add_face(hlo < big ? hlo : radial_out(aq, bq, r2, rhi));
     };
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       if (v[0] != 0.0)
@@ -275,8 +217,6 @@ class IntegratorBase : public CellInfo {
       if (v[2] != 0.0)
         add_face(((v[2] > 0.0 ? context.z_max_ : context.z_min_) - x[2]) / v[2]);
     } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      // the faces in phi are not tracked
-      if (ndim > 2) return -1.0;
       const Real aq = v[0] * v[0] + v[1] * v[1];
       if (aq > 0.0) {
         radial(aq, x[0] * v[0] + x[1] * v[1], x[0] * x[0] + x[1] * x[1], context.x_min_,
@@ -285,13 +225,9 @@ class IntegratorBase : public CellInfo {
       if (v[2] != 0.0)
         add_face(((v[2] > 0.0 ? context.y_max_ : context.y_min_) - x[2]) / v[2]);
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      // the faces in theta and phi are not tracked
-      if (ndim > 1) return -1.0;
       radial(v[0] * v[0] + v[1] * v[1] + v[2] * v[2],
              x[0] * v[0] + x[1] * v[1] + x[2] * v[2],
              x[0] * x[0] + x[1] * x[1] + x[2] * x[2], context.x_min_, context.x_max_);
-    } else {
-      return -1.0;
     }
     if (h1 == big) return -1.0;
     h1 = std::max(h1, 0.0);
@@ -303,38 +239,20 @@ class IntegratorBase : public CellInfo {
   bool is_active() const { return context.IsActive(pidx); }
 
   KOKKOS_INLINE_FUNCTION
-  bool on_block() const {
-    return on_block(xc);
-  }
+  bool on_block() const { return on_block(xc); }
 
+  // Whether the mesh coordinates xb are in the block, to within tol
   KOKKOS_INLINE_FUNCTION
-  bool on_block(const std::array<Real, 3> &xc) const {
-    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-      if (xc[0] < context.x_min_ || xc[0] > context.x_max_) return false;
-      if (xc[1] < context.y_min_ || xc[1] > context.y_max_) return false;
-      if (xc[2] < context.z_min_ || xc[2] > context.z_max_) return false;
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      if (xc[0] < context.x_min_ || xc[0] > context.x_max_) return false;
-      if (xc[1] < context.y_min_ || xc[1] > context.y_max_) return false;
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      if (xc[0] < context.x_min_ || xc[0] > context.x_max_) return false;
-    }
-    return true;
+  bool on_block(const std::array<Real, 3> &xb, const Real tol = 0.0) const {
+    return in_box(xb, tol, context.x_min_, context.x_max_, context.y_min_, context.y_max_,
+                  context.z_min_, context.z_max_);
   }
 
   KOKKOS_INLINE_FUNCTION
   bool on_mesh() const {
-    if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-      if (xc[0] < context.x_min_global_ || xc[0] > context.x_max_global_) return false;
-      if (xc[1] < context.y_min_global_ || xc[1] > context.y_max_global_) return false;
-      if (xc[2] < context.z_min_global_ || xc[2] > context.z_max_global_) return false;
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-      if (xc[0] < context.x_min_global_ || xc[0] > context.x_max_global_) return false;
-      if (xc[1] < context.y_min_global_ || xc[1] > context.y_max_global_) return false;
-    } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-      if (xc[0] < context.x_min_global_ || xc[0] > context.x_max_global_) return false;
-    }
-    return true;
+    return in_box(xc, 0.0, context.x_min_global_, context.x_max_global_,
+                  context.y_min_global_, context.y_max_global_, context.z_min_global_,
+                  context.z_max_global_);
   }
 
   KOKKOS_INLINE_FUNCTION
@@ -349,15 +267,16 @@ class IntegratorBase : public CellInfo {
   // first, since the swarm hands the ray on by its mesh coordinates.
   template <typename SwarmPack_t>
   KOKKOS_INLINE_FUNCTION void commit(SwarmPack_t &ps, const int b) {
+    namespace prt = particles::ray_tracer;
     commit_angles();
     bool on_current_block;
     context.GetNeighborBlockIndex(pidx, xc[0], xc[1], xc[2], on_current_block);
     ps(b, swarm_position::x(), pidx) = xc[0];
     ps(b, swarm_position::y(), pidx) = xc[1];
     ps(b, swarm_position::z(), pidx) = xc[2];
-    ps(b, rt::vx(), pidx) = v[0];
-    ps(b, rt::vy(), pidx) = v[1];
-    ps(b, rt::vz(), pidx) = v[2];
+    ps(b, prt::vx(), pidx) = v[0];
+    ps(b, prt::vy(), pidx) = v[1];
+    ps(b, prt::vz(), pidx) = v[2];
   }
 
   // Fill in the angles along inactive directions, which sync_cart_to_coord leaves out
@@ -370,9 +289,8 @@ class IntegratorBase : public CellInfo {
     angles_stale = false;
   }
 
-  // The mesh coordinates of the Cartesian point x. The data do not vary along inactive
-  // directions, so unless full is set the angles along them are left at zero rather
-  // than paying for the inverse trig.
+  // The mesh coordinates of the Cartesian point x. The data do not vary along the angles,
+  // so unless full is set they are left at zero rather than paying for the inverse trig.
   KOKKOS_INLINE_FUNCTION
   std::array<Real, 3> cart_to_coord(std::array<Real, 3> &x, const bool full = false) {
     std::array<Real, 3> xout{x[0], x[1], x[2]};
@@ -380,15 +298,15 @@ class IntegratorBase : public CellInfo {
       xout[0] = std::sqrt(x[0] * x[0] + x[1] * x[1]);
       xout[1] = x[2];
       xout[2] = 0.0;
-      if (full || ndim > 2) {
+      if (full) {
         xout[2] = atan2(x[1], x[0]);
         xout[2] += (xout[2] < 0.0) * 2.0 * M_PI;
       }
     } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
       xout[0] = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
-      xout[1] = (full || ndim > 1) ? std::acos(x[2] / xout[0]) : 0.0;
+      xout[1] = full ? std::acos(x[2] / xout[0]) : 0.0;
       xout[2] = 0.0;
-      if (full || ndim > 2) {
+      if (full) {
         xout[2] = atan2(x[1], x[0]);
         xout[2] += (xout[2] < 0.0) * 2.0 * M_PI;
       }
@@ -422,7 +340,7 @@ class IntegratorBase : public CellInfo {
     xc[1] = xcoord[1];
     xc[2] = xcoord[2];
     if constexpr (!parthenon::IsCoord<parthenon::UniformCartesian>()) {
-      angles_stale = ndim < 3;
+      angles_stale = true;
     }
   }
 
@@ -459,12 +377,24 @@ class IntegratorBase : public CellInfo {
   bool angles_stale = false;
 
  private:
+  // Whether the mesh coordinates xb are in the box, to within tol, along the directions
+  // the data vary in
+  KOKKOS_INLINE_FUNCTION
+  static bool in_box(const std::array<Real, 3> &xb, const Real tol, const Real x_min,
+                     const Real x_max, const Real y_min, const Real y_max,
+                     const Real z_min, const Real z_max) {
+    if (xb[0] < x_min - tol || xb[0] > x_max + tol) return false;
+    if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) return true;
+    if (xb[1] < y_min - tol || xb[1] > y_max + tol) return false;
+    if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) return true;
+    if (xb[2] < z_min - tol || xb[2] > z_max + tol) return false;
+    return true;
+  }
+
   template <int current, int max, typename F>
   KOKKOS_INLINE_FUNCTION void loop_exec(F &func) const {
     static_assert(current > 0 && current < 4);
-    if constexpr (current == X1DIR) func.template operator()<current>();
-    if constexpr (current == X2DIR) func.template operator()<current>();
-    if constexpr (current == X3DIR) func.template operator()<current>();
+    func.template operator()<current>();
     if constexpr (current + 1 <= max) loop_exec<current + 1, max>(func);
   }
 };
@@ -480,7 +410,6 @@ KOKKOS_INLINE_FUNCTION Integrator MakeIntegrator(const Tuple &args,
 template <template <typename> class Integrator_t,
           typename SwarmPack_t, typename VarPack_t, typename... Args>
 TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
-  namespace rt = particles::ray_tracer;
   using Integrator = Integrator_t<const VarPack_t>;
 
   const int ndim = pm->ndim;
@@ -498,11 +427,9 @@ TaskStatus Trace(SwarmPack_t &ps, VarPack_t &v, Mesh *pm, Args &&...args) {
         if (context.IsActive(n)) {
           Integrator integrator = MakeIntegrator<Integrator>(
               targs, std::index_sequence_for<Args...>{}, v, ps, b, n, ndim, context);
-          if (integrator.is_active()) {
-            while (!integrator.stop()) {
-              integrator.set_cell();
-              integrator.advance();
-            }
+          while (!integrator.stop()) {
+            integrator.set_cell();
+            integrator.advance();
           }
           integrator.commit(ps, b);
           if (integrator.is_active()) {

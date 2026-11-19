@@ -115,7 +115,6 @@ set (SRC_LIST
   riot_pgen/regions.cpp
   riot_pgen/regions.hpp
   riot_pgen/region_pgen.cpp
-  riot_pgen/region_primitives.cpp
   riot_pgen/region_primitives.hpp
   riot_pgen/region_python.cpp
   riot_pgen/region_python.hpp

@@ -14,12 +14,14 @@
 #define RIOT_PGEN_REGION_PRIMITIVES_HPP_
 // This file was made in part with generative AI.
 
+#include <cassert>
 #include <functional>
+#include <map>
+#include <string>
+#include <vector>
 
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
-
-#include <utils/type_list.hpp>
 
 namespace region_primitives {
 
@@ -415,19 +417,12 @@ inline auto inside_rectangle_lambda(ParameterInput *pin, const std::string &bloc
   REG(inside_ellipsoidal_shell)                                                          \
   REG(inside_rectangle)
 
-#define REG(name) mask_func_t name(ParameterInput *pin, const std::string &block_name);
+// the mask function of each region, from its device-side mask
+#define REG(name)                                                                        \
+  inline mask_func_t name(ParameterInput *pin, const std::string &block_name) {          \
+    return base_region_loop(name##_lambda(pin, block_name));                             \
+  }
 FOREACH_REGION
-#undef REG
-
-#define REG(name) using name##_t = decltype(name##_lambda(nullptr, ""));
-FOREACH_REGION
-#undef REG
-
-#define REG(name) name##_t,
-using mask_types =
-    parthenon::TypeList<FOREACH_REGION bool // leave this bool alone, it's because of the
-                                            // trailing comma and won't hurt anybody
-                        >;
 #undef REG
 
 #ifdef RIOT_ENABLE_CAD
@@ -449,115 +444,8 @@ inline std::map<std::string, mask_generator_t> region_mask_map({FOREACH_REGION
 });
 #undef REG
 
-// build an enum
-#define REG(name) name,
-enum class RegionID { FOREACH_REGION };
-#undef REG
-// and build a map for the enums
-#define REG(name) {#name, RegionID::name},
-inline std::map<std::string, RegionID> region_enum_map({FOREACH_REGION});
-#undef REG
-
-// Runtime -> compile-time dispatch over the mask tuple. Both the invoke path
-// (device) and the build path (host) index the tuple by the RegionID that was
-// resolved at runtime, so adding a region to FOREACH_REGION extends them
-// automatically instead of requiring another hand-written case.
-
-// invoke the mask stored in slot `id` of tuple `t`
-KOKKOS_INLINE_FUNCTION
-bool eval_mask(const mask_types::types &t, const int id, const Real x, const Real y,
-               const Real z) {
-  switch (id) {
-#define REG(name)                                                                        \
-  case static_cast<int>(RegionID::name):                                                 \
-    return std::get<static_cast<std::size_t>(RegionID::name)>(t)(x, y, z);
-    FOREACH_REGION
-#undef REG
-  default:
-    return true;
-  }
-}
-
-// Narrow [tlo, thi], the range of t over which the mask m keeps its value at (x, y, z) on
-// the ray (x, y, z) + t (vx, vy, vz). Masks without a span shrink it to nothing.
-template <typename T>
-KOKKOS_INLINE_FUNCTION void mask_span(const T &m, const Real x, const Real y,
-                                      const Real z, const Real vx, const Real vy,
-                                      const Real vz, Real &tlo, Real &thi) {
-  tlo = 1.0;
-  thi = -1.0;
-}
-KOKKOS_INLINE_FUNCTION
-void mask_span(const background_mask &m, const Real x, const Real y, const Real z,
-               const Real vx, const Real vy, const Real vz, Real &tlo, Real &thi) {}
-KOKKOS_INLINE_FUNCTION
-void mask_span(const plane_mask &m, const Real x, const Real y, const Real z,
-               const Real vx, const Real vy, const Real vz, Real &tlo, Real &thi) {
-  for (int i = 0; i < m.nplanes; i++) {
-    const Real nx = m.pdata[4 * i];
-    const Real ny = m.pdata[4 * i + 1];
-    const Real nz = m.pdata[4 * i + 2];
-    const Real offset = m.pdata[4 * i + 3];
-    const Real dot = nx * x + ny * y + nz * z + offset;
-    const Real ndotv = nx * vx + ny * vy + nz * vz;
-    // stay clear of the plane by more than roundoff in dot, and in the point itself
-    const Real nabs = std::abs(nx) + std::abs(ny) + std::abs(nz);
-    const Real tol = 1.e-10 * (nabs * (std::abs(x) + std::abs(y) + std::abs(z)) +
-                               std::abs(offset)) +
-                     1.e-12 * nabs;
-    if (std::abs(dot) <= tol) {
-      tlo = 1.0;
-      thi = -1.0;
-      return;
-    }
-    if (ndotv == 0.0) continue;
-    const Real tb = ((dot > 0.0 ? tol : -tol) - dot) / ndotv;
-    if (tb > 0.0) {
-      thi = std::min(thi, tb);
-    } else {
-      tlo = std::max(tlo, tb);
-    }
-  }
-}
-
-// evaluate the mask in slot `id` of tuple `t` and narrow [tlo, thi] to the range of t
-// over which it keeps that value along the ray (x, y, z) + t (vx, vy, vz)
-KOKKOS_INLINE_FUNCTION
-bool eval_mask_span(const mask_types::types &t, const int id, const Real x, const Real y,
-                    const Real z, const Real vx, const Real vy, const Real vz,
-                    Real &tlo, Real &thi) {
-  switch (id) {
-#define REG(name)                                                                        \
-  case static_cast<int>(RegionID::name): {                                               \
-    const auto &m = std::get<static_cast<std::size_t>(RegionID::name)>(t);              \
-    mask_span(m, x, y, z, vx, vy, vz, tlo, thi);                                         \
-    return m(x, y, z);                                                                   \
-  }
-    FOREACH_REGION
-#undef REG
-  default:
-    return true;
-  }
-}
-
-// construct the mask for `id` from input and store it in slot `id` of tuple `t`
-inline void set_mask(mask_types::types &t, const int id, ParameterInput *pin,
-                     const std::string &block_name) {
-  switch (id) {
-#define REG(name)                                                                        \
-  case static_cast<int>(RegionID::name):                                                 \
-    std::get<static_cast<std::size_t>(RegionID::name)>(t) =                              \
-        name##_lambda(pin, block_name);                                                  \
-    return;
-    FOREACH_REGION
-#undef REG
-  default:
-    PARTHENON_FAIL("Invalid mask type specified.");
-  }
-}
-
 #undef FOREACH_REGION
 
 } // namespace region_primitives
 
-#endif // REGION_PGEN_REGION_PRIMITIVES_HPP_
+#endif // RIOT_PGEN_REGION_PRIMITIVES_HPP_
