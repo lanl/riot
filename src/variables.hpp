@@ -24,6 +24,11 @@
 #include <parthenon/package.hpp>
 #include <utils/type_list.hpp>
 
+// riot relies on IEEE Inf/NaN semantics (see -fno-finite-math-only in CMakeLists.txt)
+#if defined(__FINITE_MATH_ONLY__) && __FINITE_MATH_ONLY__
+#error "riot requires IEEE Inf/NaN semantics; build with -fno-finite-math-only"
+#endif
+
 using namespace parthenon::package::prelude;
 
 #define CELL_DELTA_SPARSEID 999999
@@ -159,6 +164,7 @@ VARIABLE_SCALAR(c.c.mat, iso, true);
 VARIABLE_SCALAR(c.c.mat, rho_sh, true);
 VARIABLE_SCALAR(c.c.mat, tn_reaction_density, true);
 VARIABLE_VECTOR(c.c.mat, deviatoric_stress, true, 5);
+VARIABLE_VECTOR(c.c.mat, thinc_states, true, 6);
 VARIABLE_SCALAR(c.c.mat, equivalent_plastic_strain, true);
 VARIABLE_SCALAR(c.c.mat, ionization_zbar, true);
 VARIABLE_SCALAR(c.c.mat, electron_internal_energy, true);
@@ -181,7 +187,6 @@ VARIABLE_VECTOR(c.c.rad, s1, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s2, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, s3, false, 1);        // ngroups
 VARIABLE_VECTOR(c.c.rad, divfa, false, 1);     // ngroups
-VARIABLE_VECTOR(c.c.rad, tauw, false, 1);      // ngroups
 VARIABLE_SCALAR(c.c.rad, temperature, false);
 } // namespace rad
 
@@ -191,8 +196,10 @@ namespace material_averaged {
 VARIABLE_SCALAR(c.m, rho, true);
 VARIABLE_SCALAR(c.m, phase_fraction, true);
 VARIABLE_SCALAR(c.m, sie, true);
-VARIABLE_SCALAR(c.m., specific_heat, true); // TODO(JMM): Electrons?
+VARIABLE_SCALAR(c.m, internal_energy, true);
+VARIABLE_SCALAR(c.m, specific_heat, true); // TODO(JMM): Electrons?
 VARIABLE_SCALAR(c.m, electron_sie, true);
+VARIABLE_SCALAR(c.m, electron_internal_energy, true);
 VARIABLE_SCALAR(c.m, temperature, true);
 VARIABLE_SCALAR(c.m, pressure, true);
 VARIABLE_SCALAR(c.m, bulk_modulus, true);
@@ -317,6 +324,7 @@ DNAME(u1);
 
 namespace metadata {
 constexpr char OperatorSplit[] = "OperatorSplit";
+constexpr char KinematicAdvected[] = "KinematicAdvected";
 
 // Some variables need to be tagged with the package they are relevant
 // for for the purpose of anonymous advection.

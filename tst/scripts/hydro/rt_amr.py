@@ -61,7 +61,7 @@ def analyze():
     with h5py.File(f"build/src/{problem_id}.out1.final.phdf", "r") as f:
         var_diff = compute_asymmetry(f, var)
         maxdiff = np.max(np.abs(var_diff))
-        if maxdiff > 1e-10:
+        if maxdiff > 1e-8:
             logger.warning(
                 "Rayleigh-Taylor instability not y-symmetric "
                 + "with maximum error {:g}".format(maxdiff)

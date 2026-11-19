@@ -177,7 +177,7 @@ MultiGroup<temperature>::Initialize(ParameterInput *pin, StateDescriptor *materi
   auto pkg = std::make_shared<StateDescriptor>("multigroup_diffusion_package");
 
   pkg->EstimateTimestepMesh = EstimateTimestepMesh;
-  pkg->PostProblemGeneratorMesh = MeshPostProblemGenerator;
+  pkg->PostInitializationMesh = MeshPostInitialization;
 
   using namespace parthenon;
   using namespace parthenon::BoundaryFunction;
@@ -582,7 +582,8 @@ TaskCollection MultiGroup<temperature>::Step(Mesh *pmesh, parthenon::SimTime &tm
     auto c2p_time = timings->GetOrAddAndRegister("C2P", tl);
     c2p_time->StartCollectingTasks();
     namespace mdname = riot::container_names;
-    auto &md = pmesh->mesh_data.GetOrAdd(mdname::u0, partition);
+    auto &md = pmesh->mesh_data.AddShallow(
+        mdname::u0, md_base, pmesh->mesh_data.GetCreationFields(mdname::u0));
     auto int_derived = tl.AddTask(
         update_fluid, parthenon::Update::PreCommFillDerived<MeshData<Real>>, md.get());
     auto set_bc = AddBoundaryExchangeTasks<parthenon::BoundaryType::any>(int_derived, tl,
@@ -596,9 +597,9 @@ TaskCollection MultiGroup<temperature>::Step(Mesh *pmesh, parthenon::SimTime &tm
 }
 
 template <class temperature>
-void MultiGroup<temperature>::MeshPostProblemGenerator(parthenon::Mesh *mesh,
-                                                       parthenon::ParameterInput *pin,
-                                                       parthenon::MeshData<Real> *md) {
+void MultiGroup<temperature>::MeshPostInitialization(parthenon::Mesh *mesh,
+                                                     parthenon::ParameterInput *pin,
+                                                     parthenon::MeshData<Real> *md) {
   using namespace parthenon;
   using namespace MultiGroupVars;
   namespace ccbulk = cell_variables::cell_averaged::bulk;

@@ -102,11 +102,15 @@ void FillInteriorDerived(MeshData<Real> *md) {
           pv(ccbulk::velocity(0), kji) = pv(ccbulk::momentum(0), kji) * irho;
           pv(ccbulk::velocity(1), kji) = pv(ccbulk::momentum(1), kji) * irho;
           pv(ccbulk::velocity(2), kji) = pv(ccbulk::momentum(2), kji) * irho;
-          pv(ccbulk::internal_energy(), kji) =
-              pv(ccbulk::total_material_energy(), kji) -
-              0.5 * pv(ccbulk::rho(), kji) *
-                  (SQR(pv(ccbulk::velocity(0), kji)) + SQR(pv(ccbulk::velocity(1), kji)) +
-                   SQR(pv(ccbulk::velocity(2), kji)));
+          const Real velocity_sq_x = Kokkos::fma(pv(ccbulk::velocity(0), kji),
+                                                 pv(ccbulk::velocity(0), kji), Real(0.0));
+          const Real velocity_sq_y = Kokkos::fma(pv(ccbulk::velocity(1), kji),
+                                                 pv(ccbulk::velocity(1), kji), Real(0.0));
+          const Real velocity_sq_z = Kokkos::fma(pv(ccbulk::velocity(2), kji),
+                                                 pv(ccbulk::velocity(2), kji), Real(0.0));
+          const Real velocity_sq = velocity_sq_x + velocity_sq_y + velocity_sq_z;
+          pv(ccbulk::internal_energy(), kji) = pv(ccbulk::total_material_energy(), kji) -
+                                               0.5 * pv(ccbulk::rho(), kji) * velocity_sq;
           if (do_mhd) {
             pv(ccbulk::internal_energy(), kji) -=
                 0.5 * (SQR(pv(ccbulk::bcc(0), kji)) + SQR(pv(ccbulk::bcc(1), kji)) +
@@ -195,18 +199,16 @@ void PostCommsFillDerived(MeshData<Real> *md) {
     Hydro::CalculateDivB(md);
   }
 
-  auto v =
-      riot::MakePack<ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
-                     ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho,
-                     cm::sie, cm::temperature, cm::pressure, cm::bulk_modulus,
-                     cm::specific_heat, cm::electron_sie, cm::lT_cache, cm::lr_cache,
-                     ccbulk::rho, ccbulk::momentum, ccbulk::total_material_energy,
-                     ccbulk::velocity, ccbulk::internal_energy, ccbulk::pressure,
-                     ccbulk::bulk_modulus, ccbulk::temperature,
-                     ccbulk::electron_internal_energy, ccbulk::electron_temperature,
-                     ccbulk::electron_pressure, ccbulk::electron_number_density,
-                     ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter,
-                     ccbulk::bcc>(md);
+  auto v = riot::MakePack<
+      ccmat::rho, ccmat::volume_fraction, ccmat::internal_energy,
+      ccmat::electron_internal_energy, cm::ionization_zbar, cm::rho, cm::sie,
+      cm::internal_energy, cm::temperature, cm::pressure, cm::bulk_modulus,
+      cm::specific_heat, cm::electron_sie, cm::electron_internal_energy, cm::lT_cache,
+      cm::lr_cache, ccbulk::rho, ccbulk::momentum, ccbulk::total_material_energy,
+      ccbulk::velocity, ccbulk::internal_energy, ccbulk::pressure, ccbulk::bulk_modulus,
+      ccbulk::temperature, ccbulk::electron_internal_energy, ccbulk::electron_temperature,
+      ccbulk::electron_pressure, ccbulk::electron_number_density,
+      ccbulk::electron_bulk_modulus, ccbulk::electron_gruneisen_parameter, ccbulk::bcc>(md);
 
   using lt = RiotUtils::LoopType<>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md,
@@ -284,9 +286,11 @@ void PostCommsFillDerived(MeshData<Real> *md) {
                   (rho_val > 0.0)
                       ? eosm_c.InternalEnergyFromDensityTemperature(rho_val, T, lambda)
                       : 0.0;
-              // NOTE(@pdmullen): ccmat::rho already contains mask
+              // NOTE(@pdmullen): ccmat::rho and cm::rho already contain mask
               pv_n(ccmat::internal_energy(), kji) =
                   pv_n(ccmat::rho(), kji) * pv_n(cm::sie(), kji);
+              pv_n(cm::internal_energy(), kji) =
+                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           };
           eosm.EvaluateDevice(eosmloop);
@@ -334,6 +338,8 @@ void PostCommsFillDerived(MeshData<Real> *md) {
               pv_n(ccmat::internal_energy(), kji) +=
                   pv_n(ccmat::electron_internal_energy(), kji);
               pv_n(cm::sie(), kji) += pv_n(cm::electron_sie(), kji);
+              pv_n(cm::internal_energy(), kji) =
+                  pv_n(cm::rho(), kji) * pv_n(cm::sie(), kji);
             });
           }
           idx_range.TeamBarrier();
@@ -345,11 +351,15 @@ void PostCommsFillDerived(MeshData<Real> *md) {
           pv(ccbulk::momentum(0), kji) = rho_val * pv(ccbulk::velocity(0), kji);
           pv(ccbulk::momentum(1), kji) = rho_val * pv(ccbulk::velocity(1), kji);
           pv(ccbulk::momentum(2), kji) = rho_val * pv(ccbulk::velocity(2), kji);
-          const Real vsq = SQR(pv(ccbulk::velocity(0), kji)) +
-                           SQR(pv(ccbulk::velocity(1), kji)) +
-                           SQR(pv(ccbulk::velocity(2), kji));
+          const Real velocity_sq_x = Kokkos::fma(pv(ccbulk::velocity(0), kji),
+                                                 pv(ccbulk::velocity(0), kji), Real(0.0));
+          const Real velocity_sq_y = Kokkos::fma(pv(ccbulk::velocity(1), kji),
+                                                 pv(ccbulk::velocity(1), kji), Real(0.0));
+          const Real velocity_sq_z = Kokkos::fma(pv(ccbulk::velocity(2), kji),
+                                                 pv(ccbulk::velocity(2), kji), Real(0.0));
+          const Real velocity_sq = velocity_sq_x + velocity_sq_y + velocity_sq_z;
           pv(ccbulk::total_material_energy(), kji) =
-              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * vsq;
+              pv(ccbulk::internal_energy(), kji) + 0.5 * rho_val * velocity_sq;
           if (do_mhd) {
             pv(ccbulk::total_material_energy(), kji) +=
                 0.5 * (SQR(pv(ccbulk::bcc(0), kji)) + SQR(pv(ccbulk::bcc(1), kji)) +

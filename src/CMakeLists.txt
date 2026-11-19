@@ -88,7 +88,7 @@ set (SRC_LIST
   radiation_transport/angular_grids/geodesic_grid.cpp
   radiation_transport/angular_grids/geodesic_grid.hpp
   radiation_transport/angular_grids/latlon_grid.cpp
-  radiation_transport/angular_grids/latlon_grid.cpp
+  radiation_transport/angular_grids/latlon_grid.hpp
   radiation_transport/transport_utils/transport_utils.hpp
 
   riot_pgen/conduction_analytic.cpp
@@ -155,6 +155,9 @@ set (SRC_LIST
   tracers/tracers.hpp
 
   template_main.hpp
+
+  thinc/thinc.hpp
+  thinc/thinc.cpp
 
   variables.hpp
 )
