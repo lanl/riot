@@ -252,9 +252,12 @@ template <typename F, typename T>
 TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
   Kokkos::Profiling::pushRegion("Task_DeepCopy");
 
+  // Copy on every block, not just the sparse_physics-active ones: a block can become
+  // active between RK stages (cell_delta is allocated on ghost receive), and its
+  // UpdateToNextStage then reads this copy as the start-of-step state.
   auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = riot::GetPack(desc, to);
-  const auto &src = riot::GetPack(desc, from);
+  const auto &dst = desc.GetPack(to);
+  const auto &src = desc.GetPack(from);
 
   const int nblocks = src.GetNBlocks();
   using lt = RiotUtils::LoopType<>;
