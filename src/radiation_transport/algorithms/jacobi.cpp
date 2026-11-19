@@ -472,10 +472,10 @@ TaskCollection JacobiSolve(Mesh *pmesh, const Real time, const Real dt) {
   const int num_partitions = pmesh->DefaultNumPartitions();
   TaskRegion &tr = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
-    auto &rbase = pmesh->mesh_data.GetOrAdd(mdname::rbase, i);
-    auto &riter = pmesh->mesh_data.GetOrAdd(mdname::riter, i);
-    auto &rout = pmesh->mesh_data.GetOrAdd(mdname::rout, i);
-    auto &ubase = pmesh->mesh_data.GetOrAdd(mdname::ubase, i);
+    auto &rbase = RiotUtils::GetOrAddPartition(pmesh, mdname::rbase, i);
+    auto &riter = RiotUtils::GetOrAddPartition(pmesh, mdname::riter, i);
+    auto &rout = RiotUtils::GetOrAddPartition(pmesh, mdname::rout, i);
+    auto &ubase = RiotUtils::GetOrAddPartition(pmesh, mdname::ubase, i);
     auto &tl = tr[i];
 
     // Start receives on MeshData registers
@@ -527,10 +527,10 @@ TaskCollection JacobiCommit(Mesh *pmesh, const Real dt) {
   const int num_partitions = pmesh->DefaultNumPartitions();
   TaskRegion &tr = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
-    auto &rbase = pmesh->mesh_data.GetOrAdd(mdname::rbase, i);
-    auto &riter = pmesh->mesh_data.GetOrAdd(mdname::riter, i);
-    auto &rout = pmesh->mesh_data.GetOrAdd(mdname::rout, i);
-    auto &ubase = pmesh->mesh_data.GetOrAdd(mdname::ubase, i);
+    auto &rbase = RiotUtils::GetOrAddPartition(pmesh, mdname::rbase, i);
+    auto &riter = RiotUtils::GetOrAddPartition(pmesh, mdname::riter, i);
+    auto &rout = RiotUtils::GetOrAddPartition(pmesh, mdname::rout, i);
+    auto &ubase = RiotUtils::GetOrAddPartition(pmesh, mdname::ubase, i);
     auto &tl = tr[i];
 
     // Start receives for the fluid boundary exchange (if radiation affects fluid)
