@@ -1138,13 +1138,12 @@ def make_input(args):
         )
         riot.input(
             "radiation_transport/jacobi",
-            err_thr=1.0e-3,
+            err_thr_global=1.0e-3,
             niter_limit=10000,
             verbose=2,
             ndiverge_limit=20,
             nreduce_limit=8,
             reduce_factor=2,
-            # per_group_residual=True,
             # err_thr_group=1.0e-3,
             # per_group_residual_floor=1.0e-5,
         )

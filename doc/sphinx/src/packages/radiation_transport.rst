@@ -285,20 +285,24 @@ The Jacobi solver adds iteration and timestep controls:
      - Maximum Jacobi iterations per step.
    * - niter_min
      - int
-     - *geom.*
-     - Minimum iterations per step, even if ``err_thr`` is already met (default 0 in Cartesian, :math:`\sim` the angular-mesh diameter in curvilinear geometries).
-   * - err_thr
+     - ``0``
+     - Minimum iterations per step before the solve may exit on convergence.
+   * - err_thr_global
      - Real
      - ``1e-8``
-     - Residual threshold for convergence.
-   * - per_group_residual
-     - bool
-     - ``false``
-     - Additionally require each group's relative residual to meet ``err_thr_group``.
+     - Threshold on the global relative residual; also floors the target of ``err_step_global``.
    * - err_thr_group
      - Real
-     - ``err_thr``
-     - Per-group residual threshold.
+     - *off*
+     - Additionally require each group's relative residual to meet this threshold.
+   * - err_step_global
+     - Real
+     - ``0.5``
+     - If positive, additionally require the estimated remaining error :math:`\rho/(1-\rho)` :math:`\times` residual, with :math:`\rho` the contraction rate of the residuals, to fall below this fraction of the relative intensity change over the step.
+   * - err_step_group
+     - Real
+     - ``0``
+     - Per-group counterpart of ``err_step_global``, from each group's own contraction rate and step change; requires ``err_thr_group``, which floors its target.
    * - per_group_residual_floor
      - Real
      - ``1e-3``
@@ -323,7 +327,7 @@ Convergence Subcycling
 
 The Jacobi solver performs a single *global* implicit solve over the whole mesh each step, with the opacities lagged from the start of the step. This is a demanding nonlinear problem, and RIOT provides an escape hatch for the rare case in which an individual solve truly goes off the rails — its residual growing or stalling rather than settling. When a solve is judged to be diverging, it is discarded and the operator-split step is retried from the pristine start-of-step state with the timestep divided by ``reduce_factor``, repeating (reducing further as needed) until each subinterval completes and the full step is covered. It is a robustness backstop rather than part of the normal solve, and it is off by default.
 
-Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors act only while the residual is above the convergence threshold, so a solve that has already converged but is held open by ``niter_min`` is never discarded. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
+Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors flag divergence only while a residual is above its threshold, so a solve held open by ``niter_min`` or by its error estimate is never discarded. A solve whose residuals meet their thresholds but which stalls before its error estimate is met has reached the floor the iteration can resolve, and the stall detector accepts it as converged instead. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
 .. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
    :class: wraptable
@@ -493,7 +497,7 @@ A grey, geodesic-grid transport run using the implicit Jacobi solver, coupled to
               beta=5.0)
 
    riot.input("radiation_transport/jacobi",
-              err_thr=1.0e-4, niter_limit=200,
+              err_thr_global=1.0e-4, niter_limit=200,
               dt_ratio_hyperbolic=5.0e4)
 
    # A hot radiating wall driving the inner-x1 face:

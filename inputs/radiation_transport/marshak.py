@@ -152,7 +152,7 @@ riot.input(
 
 riot.input(
     "radiation_transport/jacobi",
-    err_thr=1.0e-4,  # implicit residual threshold
+    err_thr_global=1.0e-4,  # implicit residual threshold
     niter_limit=200,  # cap Jacobi iterations per step
     dt_ratio_hyperbolic=1.0e4,  # timestep controller for multiple of hyperbolic dt
 )

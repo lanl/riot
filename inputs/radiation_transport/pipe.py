@@ -222,7 +222,7 @@ riot.input(
 
 riot.input(
     "radiation_transport/jacobi",
-    err_thr=1.0e-4,  # implicit residual threshold
+    err_thr_global=1.0e-4,  # implicit residual threshold
     dt_ratio_hyperbolic=1.0e3,  # Multiple of light-crossing time
     verbose=2,  # Verbosity
 )

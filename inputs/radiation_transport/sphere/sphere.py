@@ -205,7 +205,7 @@ def generate_input():
 
     riot.input(
         "radiation_transport/jacobi",
-        err_thr=1.0e-8,  # error threshhold
+        err_thr_global=1.0e-8,  # error threshhold
         niter_limit=10000,  # iteration limit
         dt_ratio_hyperbolic=1.0e6,  # Multiple of light-crossing time
         verbose=2,  # Verbosity
