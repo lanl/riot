@@ -87,11 +87,12 @@ TaskCollection PushTracers(Mesh *pmesh, parthenon::SimTime &tm, Real dt) {
   const auto &tracers_pkg = pmesh->packages.Get("tracers");
   const auto &swarm_names = tracers_pkg->Param<std::vector<std::string>>("swarm_names");
 
-  const int num_partitions = pmesh->DefaultNumPartitions();
+  // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
+  constexpr int num_partitions = 1;
   auto &tr = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = tr[i];
-    auto &base = pmesh->mesh_data.GetOrAdd("base", i);
+    auto &base = pmesh->mesh_data.Get();
 
     // Transport all swarms
     TaskID transport = none;

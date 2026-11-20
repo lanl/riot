@@ -678,6 +678,15 @@ parthenon::TaskCollection ConductionStep(Mesh *pmesh, parthenon::SimTime &tm,
     // holds solution
     auto &md_rhs = pmesh->mesh_data.Add(conduction_rhs_container, md, {delta::name()});
 
+    // Build the solver base container from base on the multigrid partitions too
+    for (int level = pmesh->GetGMGMinLevel(); level <= pmesh->GetGMGMaxLevel(); ++level) {
+      auto partitions = pmesh->GetMultigridBlockPartitions(level);
+      if (i >= partitions.size()) continue;
+      auto &md_base_mg = pmesh->mesh_data.Add("base", partitions[i]);
+      pmesh->mesh_data.Add(conduction_base_container, md_base_mg,
+                           parthenon::GetNames<all_vars_tl>());
+    }
+
     parthenon::TaskID compute_conductivity;
     if constexpr (Species == TransportSpecies::Electron) {
       compute_conductivity =

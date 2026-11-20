@@ -399,13 +399,14 @@ TaskCollection LaserUpdateTasks(Mesh *pm, const Real t0, const Real dt) {
   auto num_active = laser->MutableParam<AllReduce<int>>("num_active");
   num_active->val = 0;
 
-  const int num_partitions = pm->DefaultNumPartitions();
+  // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
+  constexpr int num_partitions = 1;
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
-    auto md_sp = pm->mesh_data.GetOrAdd("base", i);
+    auto md_sp = pm->mesh_data.Get();
     auto md = md_sp.get();
-    auto md_dudt = laser->GetOrAddMeshDataSubset(pm, "dudt", i).get();
+    auto md_dudt = pm->mesh_data.Get(laser->GetMeshDataSubsetFullname("dudt")).get();
 
     auto ne_gradne = tl.AddTask(none, SetElectrons, md);
     auto init_particles =

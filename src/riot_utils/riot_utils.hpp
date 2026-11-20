@@ -173,6 +173,24 @@ GetPrimitiveAssociatedVars(parthenon::MeshData<parthenon::Real> *md,
 std::vector<std::string> GetUnsplitVarNames(Mesh *pmesh);
 
 //----------------------------------------------------------------------------------------
+//! \fn  std::shared_ptr<MeshData<Real>> &RiotUtils::GetOrAddPartition
+//! \brief GetOrAdd(name, i) that passes the field list name was created with, as
+//! required by parthenon when pack_size != -1
+inline std::shared_ptr<MeshData<Real>> &
+GetOrAddPartition(Mesh *pmesh, const std::string &name, const int i) {
+  return pmesh->mesh_data.Add(name, pmesh->GetDefaultBlockPartitions()[i],
+                              pmesh->mesh_data.GetCreationFields(name));
+}
+
+// As above, for a package's MeshData subset
+template <typename Pkg_t>
+std::shared_ptr<MeshData<Real>> &GetOrAddSubsetPartition(Mesh *pmesh, const Pkg_t &pkg,
+                                                         const std::string &subset,
+                                                         const int i) {
+  return GetOrAddPartition(pmesh, pkg->GetMeshDataSubsetFullname(subset), i);
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  parthenon::MeshDataDescriptor RiotUtils::MakePackageDudtRequirements
 //! \brief Build a source-term (dU/dt) MeshDataDescriptor for a package.
 //!
