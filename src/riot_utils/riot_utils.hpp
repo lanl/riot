@@ -52,7 +52,10 @@ void DeepCopyVectorToDevice(Dst_t &dst, std::vector<T, Extra...> &src) {
 }
 template <typename T, typename... Extra>
 auto VectorToDevice(std::vector<T, Extra...> &v, const std::string &name) {
-  auto device_data = parthenon::ParArray1D<T>(name, v.size());
+  // every entry is overwritten below, and T need not be default constructible
+  using view_t = typename parthenon::ParArray1D<T>::base_t;
+  auto device_data = parthenon::ParArray1D<T>(
+      view_t(Kokkos::view_alloc(Kokkos::WithoutInitializing, name), v.size()));
   DeepCopyVectorToDevice(device_data, v);
   return device_data;
 }

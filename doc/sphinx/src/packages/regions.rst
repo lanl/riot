@@ -15,7 +15,7 @@ Where two regions meet within a single cell, RIOT can adaptively subdivide the c
 Region Shapes
 -------------
 
-The geometric mask is chosen with the ``mask_type`` parameter. The available shapes and their defining parameters are listed in the table below. All center/coordinate parameters default to ``0``; radii default to ``1``.
+The geometric mask is chosen with the ``mask_type`` parameter. The available shapes and their defining parameters are listed in the table below. All center/coordinate parameters default to ``0``; radii default to ``1``. Each shape except ``python`` and ``cad`` also takes ``invert`` (default ``false``), which selects the complement of the shape.
 
 .. list-table::
    :class: wraptable

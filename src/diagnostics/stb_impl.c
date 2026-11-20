@@ -10,26 +10,21 @@
 // license in this material to reproduce, prepare derivative works, distribute copies to
 // the public, perform publicly and display publicly, and to permit others to do so.
 //========================================================================================
+// The stb single-header implementations are compiled here as C, on purpose.
+//
+// In CUDA builds, Kokkos sets CMAKE_CXX_COMPILER to nvcc_wrapper, so every .cpp file
+// is compiled by nvcc, host-only ones included. With a GCC >= 14 host compiler,
+// stb_image_resize2.h emits _Pragma("GCC unroll 0") before its loops. nvcc's front end
+// rewrites those as standalone #pragma lines that land before a case label instead of
+// the loop, and GCC then fails with "for, while or do statement expected". The C
+// compiler is never nvcc, so it avoids the problem. It also keeps nvcc from compiling
+// ~10k lines of stb.
+//
+// The stb headers wrap their declarations in extern "C" when included from C++, so
+// riot_viz.cpp links against these symbols directly.
 
-#include "ray_trace.hpp"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
-namespace RayTrace {
-
-TaskStatus Trace(MeshData<Real> *md, StateDescriptor *pkg) {
-
-  auto pm = md->GetMeshPointer();
-  auto &mesh_xmin = pm->mesh_size.xmin_;
-  auto &mesh_xmax = pm->mesh_size.xmax_;
-  const int ndim = pm->ndim;
-  int dj = ndim > 1 ? 1 : 0;
-  int dk = ndim > 2 ? 1 : 0;
-
-  auto &vars = pkg->Param<std::vector<std::string>>("ray_trace_vars");
-
-  // don't use the riot::MakePack/GetPack because we want *all* blocks
-  auto resolved_pkgs = pm->resolved_packages.get();
-  auto desc =
-      parthenon::MakePackDescriptor<parthenon::variable_names::any>(resolved_pkgs, vars);
-}
-
-} // namespace RayTrace
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include <stb_image_resize2.h>

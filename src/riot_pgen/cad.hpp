@@ -20,6 +20,8 @@
 
 #include "region_primitives.hpp"
 
+using region_primitives::sample_positions_t;
+
 // a cell/tree node in a cell-based amr mesh representing a CAD part
 struct PartCell {
   int64_t index = -1;
