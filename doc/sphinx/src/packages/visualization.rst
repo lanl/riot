@@ -35,7 +35,9 @@ every camera at the point where its ray enters the domain, marches those
 particles cell-by-cell accumulating color and opacity, reduces the finished
 pixels across MPI ranks, and writes each camera's image as
 ``<name>NNNN.png``, where ``NNNN`` is a zero-padded, four-digit dump index.
-The ray march supports Cartesian, cylindrical, and spherical coordinates.
+The ray march supports 3D Cartesian, 2D cylindrical (:math:`r`–:math:`z`), and 1D
+spherical meshes; the curvilinear ones are revolved about their axis or origin to
+form the 3D volume the cameras look at.
 
 Scheduling
 ----------
@@ -69,6 +71,10 @@ an error, and setting neither is an error.
      - list
      - ``1,1,1``
      - RGB color (each in :math:`[0,1]`) of the time bar.
+   * - initial_swarm_pool_size
+     - int
+     - ``256``
+     - Initial per-block size of the pool of ray particles; it grows as needed.
 
 Cameras
 -------
@@ -80,6 +86,12 @@ the focal-plane window (in simulation length units) that is sampled by
 ``nwidth`` × ``nheight`` pixels. A single point light is placed at
 ``light_x,y,z`` and shades slices and contours through the ``light_ambient`` and
 ``light_diffuse`` terms; volume layers are emissive and ignore the light.
+
+.. note::
+
+   The camera must be outside the mesh. Each ray starts where the line through
+   its pixel enters the mesh, which for a camera inside it may be behind the
+   camera.
 
 .. list-table:: Parameters in each ``<riot_viz/camera``\ :math:`N`\ ``>`` block.
    :class: wraptable
@@ -147,6 +159,11 @@ the focal-plane window (in simulation length units) that is sampled by
      - int
      - ``10``
      - Height in pixels of each color bar appended below the image.
+   * - scale_output
+     - Real
+     - ``1``
+     - Factor by which the written image is resized from ``nwidth`` ×
+       ``nheight``.
 
 Layers
 ------
@@ -189,7 +206,10 @@ control points that are spread evenly over the mapped data range. The ``red``,
 ``green``, ``blue`` lists (each value in :math:`[0,1]`) define the color map
 over ``[min_value, max_value]``; the ``alpha`` list defines opacity over
 ``[min_alpha_value, max_alpha_value]``. The three color lists need not have the
-same length as one another or as ``alpha``.
+same length as one another or as ``alpha``. In a ``volume`` layer ``alpha`` is an
+extinction coefficient per unit length, so a stretch :math:`\Delta s` of the ray
+is opaque by :math:`1 - e^{-\alpha \Delta s}`; it is not limited to
+:math:`[0,1]`.
 
 .. list-table:: Common layer parameters.
    :class: wraptable
@@ -274,6 +294,11 @@ same length as one another or as ``alpha``.
      - Real
      - ``1``
      - Opacity of a ``slice`` layer, clamped to :math:`[0,1]`.
+   * - transparent_outside_range
+     - list
+     - ``false,false``
+     - Whether a ``slice`` is transparent where ``field_alpha`` is below
+       ``min_alpha_value`` and above ``max_alpha_value``, respectively.
    * - contours
      - list
      - *empty*
@@ -300,7 +325,10 @@ A layer may be restricted to part of the domain by listing one or more region
 blocks in its ``masks`` parameter. Each named block is a geometric region using
 the same ``mask_type`` shapes and parameters described in Chapter
 :ref:`chap:regions` (spheres, shells, cylinders, boxes, and so on, each with an
-optional ``invert``). The layer is drawn only where **all** listed masks are
+optional ``invert``), except ``python`` and ``cad``, which visualization does not
+support. Viz masks also accept ``mask_type = plane``, the intersection of up to
+5 half-spaces given by lists of points ``x,y,z`` and normals ``nx,ny,nz`` (one
+entry per plane), each keeping the side its normal points to. The layer is drawn only where **all** listed masks are
 satisfied, which makes cutaways and half-domain views straightforward.
 
 Example

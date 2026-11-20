@@ -14,12 +14,14 @@
 #define RIOT_PGEN_REGION_PRIMITIVES_HPP_
 // This file was made in part with generative AI.
 
+#include <cassert>
 #include <functional>
+#include <map>
+#include <string>
+#include <vector>
 
 #include <parthenon/package.hpp>
 using namespace parthenon::package::prelude;
-
-#include <utils/type_list.hpp>
 
 namespace region_primitives {
 
@@ -103,7 +105,7 @@ struct plane_mask {
       const Real dot = nx * x + ny * y + nz * z + offset;
       include &= dot >= 0.0;
     }
-    return include^invert;
+    return include ^ invert;
   }
 };
 inline auto plane_lambda(ParameterInput *pin, const std::string &block_name) {
@@ -115,7 +117,7 @@ inline auto plane_lambda(ParameterInput *pin, const std::string &block_name) {
   auto nz = pin->GetVector<Real>(block_name, "nz");
   bool invert = pin->GetOrAddBoolean(block_name, "invert", false);
   const auto nplanes = xp.size();
-  PARTHENON_REQUIRE(nplanes < plane_mask::max_planes, "Too many planes in plane_mask");
+  PARTHENON_REQUIRE(nplanes <= plane_mask::max_planes, "Too many planes in plane_mask");
   PARTHENON_REQUIRE(yp.size() == nplanes, "size mismatch");
   PARTHENON_REQUIRE(zp.size() == nplanes, "size mismatch");
   PARTHENON_REQUIRE(nx.size() == nplanes, "size mismatch");
@@ -415,19 +417,12 @@ inline auto inside_rectangle_lambda(ParameterInput *pin, const std::string &bloc
   REG(inside_ellipsoidal_shell)                                                          \
   REG(inside_rectangle)
 
-#define REG(name) mask_func_t name(ParameterInput *pin, const std::string &block_name);
+// the mask function of each region, from its device-side mask
+#define REG(name)                                                                        \
+  inline mask_func_t name(ParameterInput *pin, const std::string &block_name) {          \
+    return base_region_loop(name##_lambda(pin, block_name));                             \
+  }
 FOREACH_REGION
-#undef REG
-
-#define REG(name) using name##_t = decltype(name##_lambda(nullptr, ""));
-FOREACH_REGION
-#undef REG
-
-#define REG(name) name##_t,
-using mask_types =
-    parthenon::TypeList<FOREACH_REGION bool // leave this bool alone, it's because of the
-                                            // trailing comma and won't hurt anybody
-                        >;
 #undef REG
 
 #ifdef RIOT_ENABLE_CAD
@@ -449,53 +444,8 @@ inline std::map<std::string, mask_generator_t> region_mask_map({FOREACH_REGION
 });
 #undef REG
 
-// build an enum
-#define REG(name) name,
-enum class RegionID { FOREACH_REGION };
-#undef REG
-// and build a map for the enums
-#define REG(name) {#name, RegionID::name},
-inline std::map<std::string, RegionID> region_enum_map({FOREACH_REGION});
-#undef REG
-
-// Runtime -> compile-time dispatch over the mask tuple. Both the invoke path
-// (device) and the build path (host) index the tuple by the RegionID that was
-// resolved at runtime, so adding a region to FOREACH_REGION extends them
-// automatically instead of requiring another hand-written case.
-
-// invoke the mask stored in slot `id` of tuple `t`
-KOKKOS_INLINE_FUNCTION
-bool eval_mask(const mask_types::types &t, const int id, const Real x, const Real y,
-               const Real z) {
-  switch (id) {
-#define REG(name)                                                                        \
-  case static_cast<int>(RegionID::name):                                                 \
-    return std::get<static_cast<std::size_t>(RegionID::name)>(t)(x, y, z);
-    FOREACH_REGION
-#undef REG
-  default:
-    return true;
-  }
-}
-
-// construct the mask for `id` from input and store it in slot `id` of tuple `t`
-inline void set_mask(mask_types::types &t, const int id, ParameterInput *pin,
-                     const std::string &block_name) {
-  switch (id) {
-#define REG(name)                                                                        \
-  case static_cast<int>(RegionID::name):                                                 \
-    std::get<static_cast<std::size_t>(RegionID::name)>(t) =                              \
-        name##_lambda(pin, block_name);                                                  \
-    return;
-    FOREACH_REGION
-#undef REG
-  default:
-    PARTHENON_FAIL("Invalid mask type specified.");
-  }
-}
-
 #undef FOREACH_REGION
 
 } // namespace region_primitives
 
-#endif // REGION_PGEN_REGION_PRIMITIVES_HPP_
+#endif // RIOT_PGEN_REGION_PRIMITIVES_HPP_

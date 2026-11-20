@@ -12,25 +12,20 @@
 //========================================================================================
 // This file was made in part with generative AI.
 #include <algorithm>
-//#include <format>
 #include <iomanip>
 #include <sstream>
 
 #include "riot_viz.hpp"
 
-#include <riot_utils/riot_loops.hpp>
+#include "riot_utils/riot_loops.hpp"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// the stb implementations are compiled as C, in stb_impl.c
+#include <stb_image_resize2.h>
 #include <stb_image_write.h>
-
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#include "stb_image_resize2.h"
 
 #include <font8x8.h>
 
 namespace riot_viz {
-
-static bool riot_viz_initialized = false;
 
 void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo &scene) {
   const std::string cam_block = "riot_viz/camera" + std::to_string(img_id);
@@ -39,15 +34,23 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   auto &camera = scene.camera.back();
   auto &rp = scene.rendering_params;
 
-  // first build the vector of layers
-  // some info is common to all layers but stored in layers for convenience
-  auto light_x = pin->GetOrAdd<Real>(cam_block, "light_x", 0.0);
-  auto light_y = pin->GetOrAdd<Real>(cam_block, "light_y", 0.0);
-  auto light_z = pin->GetOrAdd<Real>(cam_block, "light_z", 0.0);
-  auto ambient = pin->GetOrAdd<Real>(cam_block, "light_ambient", 1.0);
-  auto diffuse = pin->GetOrAdd<Real>(cam_block, "light_diffuse", 0.0);
-  auto opacity_threshold = pin->GetOrAdd<Real>(cam_block, "opacity_threshold", 1.e-2,
-                                               "Opacity to stop ray trace");
+  // the lighting, and where the rays stop, for all the layers of the camera
+  auto light_x =
+      pin->GetOrAddReal(cam_block, "light_x", 0.0,
+                        "Position of the point light that shades slices and contours");
+  auto light_y =
+      pin->GetOrAddReal(cam_block, "light_y", 0.0,
+                        "Position of the point light that shades slices and contours");
+  auto light_z =
+      pin->GetOrAddReal(cam_block, "light_z", 0.0,
+                        "Position of the point light that shades slices and contours");
+  auto ambient = pin->GetOrAddReal(cam_block, "light_ambient", 1.0,
+                                   "Ambient (unshaded) lighting term");
+  auto diffuse = pin->GetOrAddReal(cam_block, "light_diffuse", 0.0,
+                                   "Diffuse lighting coefficient, falling off as 1/r^2");
+  auto opacity_threshold =
+      pin->GetOrAddReal(cam_block, "opacity_threshold", 1.e-2,
+                        "Remaining transparency below which a ray stops");
 
   rp.xl.push_back(light_x);
   rp.yl.push_back(light_y);
@@ -56,90 +59,91 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
   rp.diffuse.push_back(diffuse);
   rp.alpha_tol.push_back(opacity_threshold);
 
+  // the index of a field among those of the scene, which it is added to if new
+  auto field_index = [&](const std::string &f) -> int {
+    auto it = std::find(scene.field.begin(), scene.field.end(), f);
+    if (it != scene.field.end()) return it - scene.field.begin();
+    scene.field.push_back(f);
+    return scene.field.size() - 1;
+  };
+
   auto layers = pin->GetVector<std::string>(cam_block, "layers");
-  int ncolorbars = 0;
-  std::vector<VizType> layer_type;
-  std::vector<int> layer_pack_idx, layer_alpha_pack_idx;
-  std::vector<ScaleType> layer_field_scale;
-  std::vector<Real> layer_range_min, layer_range_max, layer_alpha_range_min,
-      layer_alpha_range_max;
-  std::vector<GradType> layer_use_grad, layer_alpha_use_grad;
-  std::vector<DataBox> layer_r, layer_g, layer_b, layer_a;
-  std::vector<std::vector<Real>> layer_c, layer_rc, layer_gc, layer_bc, layer_ac;
-  std::vector<std::vector<Real>> layer_slice_x, layer_slice_n;
-  std::vector<std::vector<bool>> layer_slice_transparent_outside;
-  std::vector<std::vector<mask_tuple_t>> layer_masks;
-  std::vector<std::vector<int>> layer_mask_id;
+  rp.NewCamera();
   for (auto &layer : layers) {
-    auto type = pin->Get<std::string>(layer, "type");
-    auto field = pin->Get<std::string>(layer, "field");
-    auto field_use_grad = pin->GetOrAdd<std::string>(layer, "field_use_grad", "none");
-    auto field_scale = pin->GetOrAdd<std::string>(layer, "field_scale", "linear");
-    auto field_alpha = pin->GetOrAdd<std::string>(layer, "field_alpha", field);
-    auto field_alpha_use_grad =
-        pin->GetOrAdd<std::string>(layer, "field_alpha_use_grad", "none");
-    auto label = pin->GetOrAdd<std::string>(layer, "label", field);
+    const auto type = VizTypeMap.at(pin->GetString(layer, "type", MapKeys(VizTypeMap)));
+    auto field = pin->GetString(layer, "field");
+    const auto use_grad = GradTypeMap.at(
+        pin->GetOrAddString(layer, "field_use_grad", "none", MapKeys(GradTypeMap),
+                            "Gradient operator to apply to the field"));
+    const auto scale_type = ScaleTypeMap.at(
+        pin->GetOrAddString(layer, "field_scale", "linear", MapKeys(ScaleTypeMap),
+                            "Scaling of the color axis"));
+    auto field_alpha =
+        pin->GetOrAddString(layer, "field_alpha", field, "Field that drives opacity");
+    const auto alpha_use_grad = GradTypeMap.at(
+        pin->GetOrAddString(layer, "field_alpha_use_grad", "none", MapKeys(GradTypeMap),
+                            "Gradient operator to apply to the opacity field"));
+    auto label =
+        pin->GetOrAddString(layer, "label", field, "Text label of the color bar");
 
     // volume render, slice, and contour_slice params
-    auto colorbar = pin->GetOrAdd<bool>(layer, "colorbar", false);
+    auto colorbar = pin->GetOrAddBoolean(
+        layer, "colorbar", false,
+        "Whether to append a color bar for the layer below the image");
     camera.ncolorbar += colorbar;
-    auto red = pin->GetOrAddVector<Real>(layer, "red", {0.0, 0.0});
-    auto green = pin->GetOrAddVector<Real>(layer, "green", {0.0, 0.0});
-    auto blue = pin->GetOrAddVector<Real>(layer, "blue", {0.0, 0.0});
-    auto alpha = pin->GetOrAddVector<Real>(layer, "alpha", {0.0, 0.0});
-    auto cmin = pin->GetOrAdd<Real>(layer, "min_value", 0.0);
-    auto cmax = pin->GetOrAdd<Real>(layer, "max_value", 1.0);
-    auto amin = pin->GetOrAdd<Real>(layer, "min_alpha_value", cmin);
-    auto amax = pin->GetOrAdd<Real>(layer, "max_alpha_value", cmax);
+    auto red = pin->GetOrAddVector<Real>(layer, "red", {0.0, 0.0},
+                                         "Color-map control points in [0,1]");
+    auto green = pin->GetOrAddVector<Real>(layer, "green", {0.0, 0.0},
+                                           "Color-map control points in [0,1]");
+    auto blue = pin->GetOrAddVector<Real>(layer, "blue", {0.0, 0.0},
+                                          "Color-map control points in [0,1]");
+    auto alpha = pin->GetOrAddVector<Real>(
+        layer, "alpha", {0.0, 0.0},
+        "Opacity control points, as extinction per unit length for volume layers");
+    auto cmin = pin->GetOrAddReal(layer, "min_value", 0.0,
+                                  "Lower end of the data range of the color map");
+    auto cmax = pin->GetOrAddReal(layer, "max_value", 1.0,
+                                  "Upper end of the data range of the color map");
+    auto amin = pin->GetOrAddReal(layer, "min_alpha_value", cmin,
+                                  "Lower end of the data range of the opacity map");
+    auto amax = pin->GetOrAddReal(layer, "max_alpha_value", cmax,
+                                  "Upper end of the data range of the opacity map");
 
     // contour and contour_slice params
-    auto contours = pin->GetOrAddVector<Real>(layer, "contours", {});
-    auto contour_alpha = pin->GetOrAddVector<Real>(layer, "contour_alpha", {});
+    auto contours =
+        pin->GetOrAddVector<Real>(layer, "contours", {}, "Iso-values to draw");
+    auto contour_alpha = pin->GetOrAddVector<Real>(layer, "contour_alpha", {},
+                                                   "Per-contour opacities in [0,1]");
 
     // contour params
-    auto contour_red = pin->GetOrAddVector<Real>(layer, "contour_red", {});
-    auto contour_green = pin->GetOrAddVector<Real>(layer, "contour_green", {});
-    auto contour_blue = pin->GetOrAddVector<Real>(layer, "contour_blue", {});
+    auto contour_red =
+        pin->GetOrAddVector<Real>(layer, "contour_red", {}, "Per-contour colors");
+    auto contour_green =
+        pin->GetOrAddVector<Real>(layer, "contour_green", {}, "Per-contour colors");
+    auto contour_blue =
+        pin->GetOrAddVector<Real>(layer, "contour_blue", {}, "Per-contour colors");
 
     // slice params
-    auto slice_pos = pin->GetOrAddVector<Real>(layer, "slice_location", {});
-    auto slice_normal = pin->GetOrAddVector<Real>(layer, "slice_normal", {});
-    auto slice_alpha = pin->GetOrAdd<Real>(layer, "slice_alpha", 1.0);
-    auto slice_transparent_outside = pin->GetOrAddVector<bool>(layer, "transparent_outside_range", std::vector<bool>(2, false));
-    if (type == "slice") {
-      // stick slice_alpha in contour_alpha
-      slice_alpha = std::clamp(slice_alpha, 0.0, 1.0);
-      if (contour_alpha.size() == 0)
-        contour_alpha.push_back(slice_alpha);
-      else
-        contour_alpha[0] = slice_alpha;
-    }
-
-    // contour_slice params
+    auto slice_pos = pin->GetOrAddVector<Real>(layer, "slice_location", {},
+                                               "A point on the slice plane");
+    auto slice_normal =
+        pin->GetOrAddVector<Real>(layer, "slice_normal", {}, "Normal of the slice plane");
+    auto slice_alpha = pin->GetOrAddReal(layer, "slice_alpha", 1.0,
+                                         "Opacity of the slice, clamped to [0,1]");
+    auto slice_transparent_outside = pin->GetOrAddVector<bool>(
+        layer, "transparent_outside_range", std::vector<bool>(2, false),
+        "Whether the slice is transparent below and above its data range");
 
     if (contours.size() > 0) {
-      PARTHENON_REQUIRE_THROWS(
-          contours.size() == contour_red.size(),
-          "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(
-          contours.size() == contour_green.size(),
-          "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(
-          contours.size() == contour_blue.size(),
-          "size of contour list must match across values and colors");
-      PARTHENON_REQUIRE_THROWS(
-          contours.size() == contour_alpha.size(),
-          "size of contour list must match across values and colors");
+      for (const auto *c :
+           {&contour_red, &contour_green, &contour_blue, &contour_alpha}) {
+        PARTHENON_REQUIRE_THROWS(
+            c->size() == contours.size(),
+            "size of contour list must match across values and colors");
+      }
     }
-
-    for (int i = 0; i < contour_alpha.size(); i++) {
-      contour_alpha[i] = clamp(contour_alpha[i], 0.0, 1.0);
-    }
-    auto cont_dev = RiotUtils::VectorToDevice(contours, "contours");
-    auto cont_red_dev = RiotUtils::VectorToDevice(contour_red, "contour red");
-    auto cont_green_dev = RiotUtils::VectorToDevice(contour_green, "contour green");
-    auto cont_blue_dev = RiotUtils::VectorToDevice(contour_blue, "contour blue");
-    auto cont_alpha_dev = RiotUtils::VectorToDevice(contour_alpha, "contour alpha");
+    for (auto &ca : contour_alpha)
+      ca = std::clamp(ca, 0.0, 1.0);
 
     std::vector<Real> slice_x{std::numeric_limits<Real>::max(),
                               std::numeric_limits<Real>::max(),
@@ -150,28 +154,11 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
       slice_n = {slice_normal[0], slice_normal[1], slice_normal[2]};
     }
 
-    auto it = std::find(scene.field.begin(), scene.field.end(), field);
-    int var_index;
-    if (it != scene.field.end()) {
-      var_index = it - scene.field.begin();
-    } else {
-      var_index = ++scene.max_var_index;
-      scene.field.push_back(field);
-    }
-    auto alpha_var_index = var_index;
-    if (field != field_alpha) {
-      it = std::find(scene.field.begin(), scene.field.end(), field_alpha);
-      if (it != scene.field.end()) {
-        alpha_var_index = it - scene.field.begin();
-      } else {
-        alpha_var_index = ++scene.max_var_index;
-        scene.field.push_back(field_alpha);
-      }
-    }
+    const int var_index = field_index(field);
+    const int alpha_var_index = field_index(field_alpha);
 
-    auto [masks_vec, mask_id] = MakeMasks(pin, layer);
+    auto masks = MakeMasks(pin, layer);
 
-    auto scale_type = GetType(field_scale, ScaleTypeMap);
     auto scale = [&](const Real val) {
       if (scale_type == ScaleType::log) {
         PARTHENON_REQUIRE_THROWS(
@@ -180,75 +167,57 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
       }
       return val;
     };
+    const Real range_min = scale(cmin);
+    const Real range_max = scale(cmax);
+    const auto red_box = MakeNormalizedDataBox(red);
+    const auto green_box = MakeNormalizedDataBox(green);
+    const auto blue_box = MakeNormalizedDataBox(blue);
+    const auto alpha_box = MakeNormalizedDataBox(alpha);
 
-    layer_type.push_back(GetType(type, VizTypeMap));
-    layer_pack_idx.push_back(var_index);
-    layer_alpha_pack_idx.push_back(alpha_var_index);
-    layer_field_scale.push_back(scale_type);
-    layer_range_min.push_back(scale(cmin));
-    layer_range_max.push_back(scale(cmax));
-    layer_alpha_range_min.push_back(amin);
-    layer_alpha_range_max.push_back(amax);
-    layer_use_grad.push_back(GetType(field_use_grad, GradTypeMap));
-    layer_alpha_use_grad.push_back(GetType(field_alpha_use_grad, GradTypeMap));
-    layer_r.push_back(MakeNormalizedDeviceDataBox(red));
-    layer_g.push_back(MakeNormalizedDeviceDataBox(green));
-    layer_b.push_back(MakeNormalizedDeviceDataBox(blue));
-    layer_a.push_back(MakeNormalizedDeviceDataBox(alpha));
-    layer_c.push_back(contours);
-    layer_rc.push_back(contour_red);
-    layer_gc.push_back(contour_green);
-    layer_bc.push_back(contour_blue);
-    layer_ac.push_back(contour_alpha);
-    layer_slice_x.push_back(slice_x);
-    layer_slice_n.push_back(slice_n);
-    layer_slice_transparent_outside.push_back(slice_transparent_outside);
-    layer_masks.push_back(masks_vec);
-    layer_mask_id.push_back(mask_id);
+    rp.type.back().push_back(type);
+    rp.pack_idx.back().push_back(var_index);
+    rp.alpha_pack_idx.back().push_back(alpha_var_index);
+    rp.field_scale.back().push_back(scale_type);
+    rp.range_min.back().push_back(range_min);
+    rp.range_max.back().push_back(range_max);
+    rp.alpha_range_min.back().push_back(amin);
+    rp.alpha_range_max.back().push_back(amax);
+    rp.use_grad.back().push_back(use_grad);
+    rp.alpha_use_grad.back().push_back(alpha_use_grad);
+    rp.r.back().push_back(red_box.getOnDevice());
+    rp.g.back().push_back(green_box.getOnDevice());
+    rp.b.back().push_back(blue_box.getOnDevice());
+    rp.a.back().push_back(alpha_box.getOnDevice());
+    rp.contours.back().push_back(contours);
+    rp.rc.back().push_back(contour_red);
+    rp.gc.back().push_back(contour_green);
+    rp.bc.back().push_back(contour_blue);
+    rp.ac.back().push_back(contour_alpha);
+    rp.slice_x.back().push_back(slice_x);
+    rp.slice_n.back().push_back(slice_n);
+    rp.slice_alpha.back().push_back(std::clamp(slice_alpha, 0.0, 1.0));
+    rp.slice_transparent_outside.back().push_back(slice_transparent_outside);
+    rp.masks.back().push_back(masks);
 
     // add this layer to the camera
-    camera.layer.emplace_back(MakeNormalizedDataBox(red), MakeNormalizedDataBox(green),
-                              MakeNormalizedDataBox(blue), MakeNormalizedDataBox(alpha),
-                              label, colorbar, scale(cmin), scale(cmax),
-                              GetType(type, VizTypeMap), scale_type);
+    camera.layer.emplace_back(red_box, green_box, blue_box, alpha_box, label, colorbar,
+                              range_min, range_max, type, scale_type);
   }
-
-  rp.type.push_back(layer_type);
-  rp.pack_idx.push_back(layer_pack_idx);
-  rp.alpha_pack_idx.push_back(layer_alpha_pack_idx);
-  rp.field_scale.push_back(layer_field_scale);
-  rp.range_min.push_back(layer_range_min);
-  rp.range_max.push_back(layer_range_max);
-  rp.alpha_range_min.push_back(layer_alpha_range_min);
-  rp.alpha_range_max.push_back(layer_alpha_range_max);
-  rp.use_grad.push_back(layer_use_grad);
-  rp.alpha_use_grad.push_back(layer_alpha_use_grad);
-  rp.r.push_back(layer_r);
-  rp.g.push_back(layer_g);
-  rp.b.push_back(layer_b);
-  rp.a.push_back(layer_a);
-  rp.contours.push_back(layer_c);
-  rp.rc.push_back(layer_rc);
-  rp.gc.push_back(layer_gc);
-  rp.bc.push_back(layer_bc);
-  rp.ac.push_back(layer_ac);
-  rp.slice_x.push_back(layer_slice_x);
-  rp.slice_n.push_back(layer_slice_n);
-  rp.slice_transparent_outside.push_back(layer_slice_transparent_outside);
-  rp.masks.push_back(layer_masks);
-  rp.mask_id.push_back(layer_mask_id);
 
   // now set some info at the camera/image level
   camera.filename = pin->GetString(cam_block, "name");
   auto cloc = pin->GetVector<Real>(cam_block, "location");
   auto floc = pin->GetVector<Real>(cam_block, "focus");
-  auto up = pin->GetOrAddVector<Real>(cam_block, "up", {0, 0, 1});
-  auto width = pin->Get<Real>(cam_block, "target_width");
-  auto height = pin->Get<Real>(cam_block, "target_height");
-  camera.nwidth = pin->Get<int>(cam_block, "nwidth");
-  camera.nheight = pin->Get<int>(cam_block, "nheight");
-  camera.scale = pin->GetOrAdd<Real>(cam_block, "scale_output", 1.0);
-  camera.colorbar_thickness = pin->GetOrAdd<int>(cam_block, "colorbar_thickness", 10);
+  auto up =
+      pin->GetOrAddVector<Real>(cam_block, "up", {0, 0, 1}, "Up vector of the camera");
+  auto width = pin->GetReal(cam_block, "target_width");
+  auto height = pin->GetReal(cam_block, "target_height");
+  camera.nwidth = pin->GetInteger(cam_block, "nwidth");
+  camera.nheight = pin->GetInteger(cam_block, "nheight");
+  camera.scale = pin->GetOrAddReal(cam_block, "scale_output", 1.0,
+                                   "Factor to resize the written image by");
+  camera.colorbar_thickness = pin->GetOrAddInteger(cam_block, "colorbar_thickness", 10,
+                                                   "Height in pixels of each color bar");
 
   // now setup the rays this camera's contribution to the scene
   auto normalize = [&](std::vector<Real> &vec) {
@@ -292,7 +261,6 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
       }
 
       // find step size lambda along nray that puts ray at entry point into [xmin, xmax]
-      // note: this is where we would add slicing, cutouts, etc
       int face_dir;
       Real lambda_use = std::numeric_limits<Real>::max();
       if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
@@ -358,8 +326,6 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
               lambda_use = lambda[d];
             }
           }
-        } else {
-          lambda_use = std::numeric_limits<Real>::max();
         }
       } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
         auto r_l_sq = cloc[0] * cloc[0] + cloc[1] * cloc[1] + cloc[2] * cloc[2];
@@ -384,14 +350,12 @@ void AddCamera(ParameterInput *pin, const int img_id, const int ndim, SceneInfo 
           }
           face_dir = 0;
           lambda_use = lambda[0];
-        } else {
-          lambda_use = std::numeric_limits<Real>::max();
         }
       } else {
         PARTHENON_THROW("Unsupported coordinate system in volume renderer.");
       }
       if (lambda_use > 0.5 * std::numeric_limits<Real>::max()) {
-        // PARTHENON_WARN("Camera ray does not intersect domain, skipping.");
+        // the ray misses the mesh
         continue;
       }
 
@@ -445,13 +409,14 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   namespace pvr = particles::riot_viz;
   namespace prt = particles::ray_tracer;
   auto pkg = std::make_shared<StateDescriptor>("riot_viz");
-  riot_viz_initialized = true;
   Params &params = pkg->AllParams();
 
   // figure out when viz should happen
-  auto dt_viz = pin->GetOrAdd<Real>("riot_viz", "dt", -1.0);
-  auto t_viz = pin->GetOrAddVector<Real>("riot_viz", "t", {});
-  auto tlim = pin->Get<Real>("parthenon/time", "tlim");
+  auto dt_viz =
+      pin->GetOrAddReal("riot_viz", "dt", -1.0, "Render every dt in simulation time");
+  auto t_viz =
+      pin->GetOrAddVector<Real>("riot_viz", "t", {}, "Explicit list of render times");
+  auto tlim = pin->GetReal("parthenon/time", "tlim");
 
   if (dt_viz > 0 && t_viz.size() > 0)
     PARTHENON_FAIL("Cannot set both dt and t for riot_viz");
@@ -474,10 +439,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   params.Add("next_dump_time", next_dump_time, parthenon::Params::Mutability::Restart);
   params.Add("first_dump_time", tdump.front());
   params.Add("last_dump_time", tdump.back());
-  bool timebar = pin->GetOrAdd<bool>("riot_viz", "timebar", false);
+  bool timebar = pin->GetOrAddBoolean("riot_viz", "timebar", false,
+                                      "Whether to draw a time bar below each image");
   params.Add("timebar", timebar);
-  auto timebar_rgb =
-      pin->GetOrAddVector<Real>("riot_viz", "timebar_rgb", {1.0, 1.0, 1.0});
+  auto timebar_rgb = pin->GetOrAddVector<Real>("riot_viz", "timebar_rgb", {1.0, 1.0, 1.0},
+                                               "Color of the time bar");
   params.Add("timebar_rgb", timebar_rgb);
 
   int ndim = 1 + (pin->GetInteger("parthenon/mesh", "nx2") > 1) +
@@ -487,7 +453,6 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   auto blocks = pin->GetBlockNamesWithPrefix(block_base);
   std::set<int> cam_block_ids;
   int max_size = 0;
-  int nimages = 0;
   SceneInfo scene;
   for (const auto &block_name : blocks) {
     if (block_name.length() > block_base.size()) {
@@ -497,26 +462,48 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
         PARTHENON_REQUIRE_THROWS(cam_block_ids.count(id) == 0,
                                  "Two camera input blocks are numbered identically.");
         cam_block_ids.insert(id);
-        AddCamera(pin, nimages, ndim, scene);
+        AddCamera(pin, id, ndim, scene);
         auto &camera = scene.camera.back();
         max_size = std::max(max_size, camera.nwidth * camera.nheight +
-                                          camera.ncolorbar * camera.colorbar_thickness *
-                                              camera.nwidth +
-                                          timebar * 10 * camera.nwidth);
-        nimages++;
+                                          (camera.ncolorbar + timebar) *
+                                              camera.colorbar_thickness * camera.nwidth);
       }
     }
   }
 
   // don't forget the 4 because it's 4 channels (RGBA)
-  scene.images =
-      ParArrayND<uint8_t>("Volume Render images", scene.camera.size(), 4 * max_size);
+  scene.images = parthenon::ParArray2D<uint8_t>("Volume Render images",
+                                                scene.camera.size(), 4 * max_size);
+  scene.host_images = Kokkos::create_mirror_view(scene.images);
+
+  // Every camera point, face by face
+  int npts = 0;
+  for (int i = 0; i < 6; i++) {
+    npts += scene.face_pts[i][sample::x].size();
+  }
+  scene.camera_pts = parthenon::ParArray2D<Real>("camera points", npts,
+                                                 static_cast<int>(sample::nvalues));
+  scene.camera_idx = parthenon::ParArray2D<int>("camera indexing", npts, 3);
+  auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), scene.camera_pts);
+  auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), scene.camera_idx);
+  for (int i = 0, p = 0; i < 6; i++) {
+    for (int j = 0; j < scene.face_pts[i][sample::x].size(); j++, p++) {
+      for (int n = 0; n < sample::nvalues; n++) {
+        chost(p, n) = scene.face_pts[i][n][j];
+      }
+      cid_host(p, 0) = scene.camera_id[i][j];
+      cid_host(p, 1) = scene.pixel_id[i][j];
+      cid_host(p, 2) = i;
+    }
+  }
+  Kokkos::deep_copy(scene.camera_pts, chost);
+  Kokkos::deep_copy(scene.camera_idx, cid_host);
 
   const int initial_pool_size =
-    pin->GetOrAddInteger("riot_viz", "initial_swarm_pool_size", 256);
+      pin->GetOrAddInteger("riot_viz", "initial_swarm_pool_size", 256);
 
   PARTHENON_REQUIRE(initial_pool_size > 0,
-                  "riot_viz/initial_swarm_pool_size must be positive");
+                    "riot_viz/initial_swarm_pool_size must be positive");
 
   Metadata mswarm({Metadata::Provides, Metadata::None});
   mswarm.SetInitialSwarmPoolReservation(initial_pool_size);
@@ -533,7 +520,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   pkg->AddSwarmValue<pvr::camera_id, pvr::particles>(m_int);
   pkg->AddSwarmValue<pvr::pixel_id, pvr::particles>(m_int);
 
-  Metadata m({Metadata::OneCopy, Metadata::Node});//, Metadata::FillGhost});//, Metadata::CommunicateOne});
+  Metadata m({Metadata::OneCopy, Metadata::Node});
   std::vector<std::string> orig_fields = scene.field;
   std::string suffix = "_nodal_";
   for (auto &f : scene.field) {
@@ -542,20 +529,18 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin) {
   }
   params.Add("scene_info", scene, true);
   params.Add("orig_fields", orig_fields);
-  //RenderingParams rparams(scene.rendering_params);
-  //params.Add("rendering_params", rparams);
-  params.Add("tracer_info", impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)), true);
+  params.Add("tracer_info",
+             impl::TracerInfo(scene.field, RenderingParams(scene.rendering_params)),
+             true);
 
-  params.Add("max_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("max_alpha_value_view", parthenon::ParArray2D<Real>(), true);
-  params.Add("min_alpha_value_view", parthenon::ParArray2D<Real>(), true);
+  params.Add("nodal_bounds", impl::NodalBounds(), true);
+  params.Add("show_volume", ShowVolume(), true);
 
   return pkg;
 }
 
 bool TimeToRender(Mesh *pm, Real time) {
-  if (!riot_viz_initialized) return false;
+  if (pm->packages.AllPackages().count("riot_viz") == 0) return false;
   auto pkg = pm->packages.Get("riot_viz");
   auto dump_times = pkg->MutableParam<std::queue<Real>>("tdump");
   auto &t_next_dump = *(pkg->MutableParam<Real>("next_dump_time"));
@@ -574,267 +559,306 @@ bool TimeToRender(Mesh *pm, Real time) {
 TaskStatus InitializeCameras(MeshData<Real> *md) {
   namespace prt = particles::ray_tracer;
   namespace pvr = particles::riot_viz;
-  namespace ccbulk = cell_variables::cell_averaged::bulk;
-  using ne_t = ccbulk::electron_number_density;
-  using nen_t = node_variables::electron_number_density;
 
-  auto &viz = md->GetMeshPointer()->packages.Get("riot_viz");
+  auto pm = md->GetMeshPointer();
+  auto &viz = pm->packages.Get("riot_viz");
   const auto &si = viz->Param<SceneInfo>("scene_info");
 
-  const int ndim = md->GetMeshPointer()->ndim;
-  int dj = ndim > 1 ? 1 : 0;
-  int dk = ndim > 2 ? 1 : 0;
+  const int ndim = pm->ndim;
 
-  auto v = riot::MakePack<ne_t, nen_t>(md);
-  for (int blk = 0; blk < md->NumBlocks(); blk++) {
-    auto &mbd = md->GetBlockData(blk);
-    auto *pmb = mbd->GetBlockPointer();
+  // Every camera point, with the camera, pixel, and mesh face it is on
+  const auto &camera_pts = si.camera_pts;
+  const auto &camera_idx = si.camera_idx;
+  const int npts = camera_pts.extent_int(0);
+  if (npts == 0) return TaskStatus::complete;
 
-    const IndexRange &ib = pmb->cellbounds.GetBoundsI(IndexDomain::interior);
-    const IndexRange &jb = pmb->cellbounds.GetBoundsJ(IndexDomain::interior);
-    const IndexRange &kb = pmb->cellbounds.GetBoundsK(IndexDomain::interior);
-
-    // skip if not a boundary block
-    // note: this is where we would add slicing, cutouts, etc
-    bool is_boundary = false;
-    std::array<bool, 6> bound_flag;
-    for (int i = 0; i < 2 * ndim; i++) {
-      if (pmb->boundary_flag[i] != parthenon::BoundaryFlag::block) {
-        is_boundary = true;
-        bound_flag[i] = true;
-      } else {
-        bound_flag[i] = false;
-      }
+  // A block face is on the mesh boundary unless it borders another block, and faces along
+  // inactive directions always are
+  const int nblocks = md->NumBlocks();
+  parthenon::ParArray2D<bool> on_boundary("camera boundary faces", nblocks, 6);
+  parthenon::ParArray2D<Real> block_box("camera block boxes", nblocks, 6);
+  auto bhost = Kokkos::create_mirror_view(Kokkos::HostSpace(), on_boundary);
+  auto box_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), block_box);
+  for (int b = 0; b < nblocks; b++) {
+    auto *pmb = md->GetBlockData(b)->GetBlockPointer();
+    for (int f = 0; f < 6; f++) {
+      bhost(b, f) =
+          f >= 2 * ndim || pmb->boundary_flag[f] != parthenon::BoundaryFlag::block;
     }
-    for (int i = 2 * ndim; i < 6; i++) {
-      bound_flag[i] = true;
-      is_boundary = true;
+    for (int d = 0; d < 3; d++) {
+      const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+      box_host(b, 2 * d) = pmb->block_size.xmin(dir);
+      box_host(b, 2 * d + 1) = pmb->block_size.xmax(dir);
     }
-    if (!is_boundary) continue;
+  }
+  Kokkos::deep_copy(on_boundary, bhost);
+  Kokkos::deep_copy(block_box, box_host);
 
-    auto &coords = pmb->coords;
-    const std::array<Real, 3> block_xmin(
-        {coords.Xf<X1DIR>(ib.s), coords.Xf<X2DIR>(jb.s), coords.Xf<X3DIR>(kb.s)});
-    // assume Dxf is constant
-    const std::array<Real, 3> dx(
-        {coords.Dxf<X1DIR>(0), coords.Dxf<X2DIR>(0), coords.Dxf<X3DIR>(0)});
-    const std::array<int, 3> Ni({ib.e - ib.s + 1, jb.e - jb.s + 1, kb.e - kb.s + 1});
-    std::array<Real, 3> block_xmax;
-    for (int i = 0; i < 3; i++)
-      block_xmax[i] = block_xmin[i] + Ni[i] * dx[i];
-
-    // figure out which points are on this block boundary
-    std::array<std::vector<int>, 6> ind;
-    int total_number = 0;
-    for (int i = 0; i < 6; i++) {
-      if (!bound_flag[i]) continue;
-      for (int j = 0; j < si.face_pts[i][sample::x].size(); j++) {
-        bool on_block = false;
-        if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-          bool inside_x = (si.face_pts[i][sample::x][j] >= block_xmin[0] &&
-                           si.face_pts[i][sample::x][j] <= block_xmax[0]);
-          bool inside_y = (si.face_pts[i][sample::y][j] >= block_xmin[1] &&
-                           si.face_pts[i][sample::y][j] <= block_xmax[1]);
-          bool inside_z = (si.face_pts[i][sample::z][j] >= block_xmin[2] &&
-                           si.face_pts[i][sample::z][j] <= block_xmax[2]);
-          if (i < 2) {
-            // x-boundary, check y and z
-            on_block = inside_y && inside_z;
-          } else if (i < 4) {
-            // y-boundary, check x and z
-            on_block = inside_x && inside_z;
-          } else {
-            on_block = inside_x && inside_y;
-          }
-        } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-          auto x = si.face_pts[i][sample::x][j];
-          auto y = si.face_pts[i][sample::y][j];
-          auto z = si.face_pts[i][sample::z][j];
-          auto r = std::sqrt(x * x + y * y);
-          bool inside_r = (r >= block_xmin[0] && r <= block_xmax[0]);
-          bool inside_z = (si.face_pts[i][sample::z][j] >= block_xmin[1] &&
-                           si.face_pts[i][sample::z][j] <= block_xmax[1]);
-          if (i < 2) {
-            on_block = inside_z;
-          } else if (i < 4) {
-            on_block = inside_r;
-          } else {
-            PARTHENON_FAIL("Cylindrical does not support 3D");
-          }
-        } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-          on_block = true;
-        }
-        if (on_block) {
-          ind[i].push_back(j);
-        }
-      }
-      total_number += ind[i].size();
-    }
-
-    // now make a device side array that lists the included points
-    parthenon::ParArray2D<Real> camera_pts("camera points", total_number,
-                                           static_cast<int>(sample::nvalues));
-    parthenon::ParArray2D<int> camera_idx("camera indexing", total_number, 2);
-    auto chost = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_pts);
-    auto cid_host = Kokkos::create_mirror_view(Kokkos::HostSpace(), camera_idx);
-    int idx = 0;
-    for (int i = 0; i < 6; i++) {
-      if (!bound_flag[i]) continue;
-      for (int j = 0; j < ind[i].size(); j++) {
-        int k = ind[i][j];
-        for (int n = 0; n < sample::nvalues; n++) {
-          chost(idx, n) = si.face_pts[i][n][k];
-        }
-        cid_host(idx, 0) = si.camera_id[i][k];
-        cid_host(idx, 1) = si.pixel_id[i][k];
-        idx++;
-      }
-    }
-    Kokkos::deep_copy(camera_pts, chost);
-    Kokkos::deep_copy(camera_idx, cid_host);
-
-    // make space for the particles
-    auto *swarm = md->GetSwarmData(blk)->Get(pvr::particles::name()).get();
-    parthenon::ParArray1D<parthenon::NewParticlesContext> new_context("New context", 1);
-    auto new_context_h = new_context.GetHostMirror();
-    new_context_h(0) = swarm->AddEmptyParticles(total_number);
-    new_context.DeepCopy(new_context_h);
-    Kokkos::fence();
-
-    auto &x = swarm->Get<Real>(swarm_position::x::name()).Get();
-    auto &y = swarm->Get<Real>(swarm_position::y::name()).Get();
-    auto &z = swarm->Get<Real>(swarm_position::z::name()).Get();
-    auto &vx = swarm->Get<Real>(prt::vx::name()).Get();
-    auto &vy = swarm->Get<Real>(prt::vy::name()).Get();
-    auto &vz = swarm->Get<Real>(prt::vz::name()).Get();
-    auto &r = swarm->Get<Real>(pvr::r::name()).Get();
-    auto &g = swarm->Get<Real>(pvr::g::name()).Get();
-    auto &b = swarm->Get<Real>(pvr::b::name()).Get();
-    auto &a = swarm->Get<Real>(pvr::a::name()).Get();
-    auto &cam_id = swarm->Get<int>(pvr::camera_id::name()).Get();
-    auto &pix_id = swarm->Get<int>(pvr::pixel_id::name()).Get();
-
-    // set the particle properties
-    parthenon::par_for(
-        DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, total_number - 1,
-        KOKKOS_LAMBDA(const int n) {
-          const int pidx = new_context(0).GetNewParticleIndex(n);
-          if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
-            x(pidx) = camera_pts(n, sample::x);
-            y(pidx) = camera_pts(n, sample::y);
-            z(pidx) = camera_pts(n, sample::z);
-          } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-            Real rcyl = std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                                  camera_pts(n, sample::y) * camera_pts(n, sample::y));
-            if (std::abs(rcyl - block_xmax[0]) / block_xmax[0] < kBoundaryBand)
-              rcyl = block_xmax[0] - kGeomTol;
-            const Real zcyl = camera_pts(n, sample::z);
-            Real phi_cyl = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
-            phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
-            x(pidx) = rcyl;
-            y(pidx) = zcyl;
-            z(pidx) = phi_cyl;
+  // Rays start where they meet the volume anything could show in, or at their camera
+  // point if it is in it already. Those that miss it are background.
+  using OnBlock = impl::CameraPointOnBlock;
+  const auto &show_volume = viz->Param<ShowVolume>("show_volume");
+  Kokkos::Array<Real, 3> mesh_lo, mesh_hi;
+  for (int d = 0; d < 3; d++) {
+    const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+    mesh_lo[d] = pm->mesh_size.xmin(dir);
+    mesh_hi[d] = pm->mesh_size.xmax(dir);
+  }
+  auto &images = si.images;
+  parthenon::ParArray1D<int> start_kind("camera start kinds", npts);
+  parthenon::ParArray2D<Real> start("camera starts", npts, 3);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, npts - 1,
+      KOKKOS_LAMBDA(const int p) {
+        start_kind(p) = OnBlock::start_at_point;
+        const Real x[3] = {camera_pts(p, sample::x), camera_pts(p, sample::y),
+                           camera_pts(p, sample::z)};
+        const Real n[3] = {camera_pts(p, sample::nx), camera_pts(p, sample::ny),
+                           camera_pts(p, sample::nz)};
+        Real t0, t1;
+        show_volume.Clip(camera_idx(p, 0), x, n, show_volume.margin, t0, t1);
+        const Real nn = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+        bool miss = t1 < std::max(t0, 0.0);
+        if (!miss && t0 * nn > show_volume.margin) {
+          Real xs[3];
+          for (int d = 0; d < 3; d++)
+            xs[d] = x[d] + t0 * n[d];
+          // the mesh coordinates of the start, as the tracer has them
+          Real xm[3] = {xs[0], xs[1], xs[2]};
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+            xm[0] = std::sqrt(xs[0] * xs[0] + xs[1] * xs[1]);
+            xm[1] = xs[2];
+            xm[2] = std::atan2(xs[1], xs[0]);
+            xm[2] += (xm[2] < 0.0) * 2.0 * M_PI;
           } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
-            const Real rsph =
-                std::sqrt(camera_pts(n, sample::x) * camera_pts(n, sample::x) +
-                          camera_pts(n, sample::y) * camera_pts(n, sample::y) +
-                          camera_pts(n, sample::z) * camera_pts(n, sample::z));
-            const Real th = std::acos(camera_pts(n, sample::z) / rsph);
-            Real phi_sph = std::atan2(camera_pts(n, sample::y), camera_pts(n, sample::x));
-            phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
-            x(pidx) = rsph;
-            y(pidx) = th;
-            z(pidx) = phi_sph;
-          } else {
-            PARTHENON_FAIL("Unsupported coordinate system");
+            xm[0] = std::sqrt(xs[0] * xs[0] + xs[1] * xs[1] + xs[2] * xs[2]);
+            xm[1] = xm[0] > 0.0 ? std::acos(xs[2] / xm[0]) : 0.0;
+            xm[2] = std::atan2(xs[1], xs[0]);
+            xm[2] += (xm[2] < 0.0) * 2.0 * M_PI;
           }
-          vx(pidx) = camera_pts(n, sample::nx);
-          vy(pidx) = camera_pts(n, sample::ny);
-          vz(pidx) = camera_pts(n, sample::nz);
-          r(pidx) = 0.0;
-          g(pidx) = 0.0;
-          b(pidx) = 0.0;
-          a(pidx) = 0.0;
-          cam_id(pidx) = camera_idx(n, 0);
-          pix_id(pidx) = camera_idx(n, 1);
-        });
+          // the hull is grown past the mesh where the blocks that may show reach it, and
+          // a ray that only meets it out there meets nothing that shows
+          const int nd = OnBlock::start_dims;
+          for (int d = 0; d < nd; d++)
+            miss = miss || xm[d] < mesh_lo[d] || xm[d] > mesh_hi[d];
+          for (int d = 0; d < 3; d++)
+            start(p, d) = xm[d];
+          start_kind(p) = OnBlock::start_inside;
+        }
+        if (miss) {
+          // as a ray that meets nothing would leave it
+          start_kind(p) = OnBlock::start_none;
+          const int cam = camera_idx(p, 0);
+          const int pix = camera_idx(p, 1);
+          for (int c = 0; c < 3; c++)
+            images(cam, 4 * pix + c) = real_to_uint8_t(0.0);
+          images(cam, 4 * pix + 3) = real_to_uint8_t(1.0);
+        }
+      });
 
-  } // loop over blocks in MeshData
+  const OnBlock on_block{block_box,   camera_pts, camera_idx,
+                         on_boundary, start_kind, start};
+
+  // Only the points that could start on this MeshData are tried on each of its blocks:
+  // those inside the box of its blocks, or on a mesh face one of them is on
+  Kokkos::Array<Real, 3> md_lo, md_hi;
+  Kokkos::Array<bool, 6> md_face;
+  for (int d = 0; d < 3; d++) {
+    md_lo[d] = std::numeric_limits<Real>::max();
+    md_hi[d] = -std::numeric_limits<Real>::max();
+  }
+  for (int f = 0; f < 6; f++)
+    md_face[f] = false;
+  for (int b = 0; b < nblocks; b++) {
+    for (int d = 0; d < 3; d++) {
+      md_lo[d] = std::min(md_lo[d], box_host(b, 2 * d));
+      md_hi[d] = std::max(md_hi[d], box_host(b, 2 * d + 1));
+    }
+    for (int f = 0; f < 6; f++)
+      md_face[f] = md_face[f] || bhost(b, f);
+  }
+  parthenon::ParArray1D<int> cand("camera candidates", npts);
+  int ncand = 0;
+  Kokkos::parallel_scan(
+      PARTHENON_AUTO_LABEL, Kokkos::RangePolicy<DevExecSpace>(0, npts),
+      KOKKOS_LAMBDA(const int p, int &k, const bool final) {
+        bool c = false;
+        if (start_kind(p) == OnBlock::start_inside) {
+          c = true;
+          for (int d = 0; d < OnBlock::start_dims; d++)
+            c = c && start(p, d) >= md_lo[d] && start(p, d) <= md_hi[d];
+        } else if (start_kind(p) == OnBlock::start_at_point) {
+          c = md_face[camera_idx(p, 2)];
+        }
+        if (final && c) cand(k) = p;
+        k += c;
+      },
+      ncand);
+
+  // Every block creates a ray at each camera point on its part of the mesh boundary, or
+  // in it
+  parthenon::ParArray1D<int> counts("camera counts", nblocks);
+  parthenon::par_for_outer(
+      PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
+        int count = 0;
+        Kokkos::parallel_reduce(
+            Kokkos::TeamThreadRange(member, ncand),
+            [&](const int k, int &c) { c += on_block(b, cand(k)); }, count);
+        Kokkos::single(Kokkos::PerTeam(member), [&]() { counts(b) = count; });
+      });
+  auto counts_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), counts);
+
+  // make space for the particles
+  parthenon::ParArray1D<parthenon::NewParticlesContext> new_context("New context",
+                                                                    nblocks);
+  auto new_context_h = new_context.GetHostMirror();
+  for (int b = 0; b < nblocks; b++) {
+    auto *swarm = md->GetSwarmData(b)->Get(pvr::particles::name()).get();
+    new_context_h(b) = swarm->AddEmptyParticles(counts_h(b));
+  }
+  new_context.DeepCopy(new_context_h);
+
+  // the packs are snapshots, so get them after making space for the rays
+  const auto &tinfo = viz->Param<impl::TracerInfo>("tracer_info");
+  auto pack = tinfo.desc_ps.GetPack(md);
+  auto pack_int = tinfo.desc_ps_int.GetPack(md);
+
+  // set the particle properties
+  parthenon::par_for_outer(
+      PARTHENON_AUTO_LABEL, 0, 0, 0, nblocks - 1,
+      KOKKOS_LAMBDA(parthenon::team_mbr_t member, const int b) {
+        Kokkos::parallel_scan(Kokkos::TeamThreadRange(member, ncand), [&](const int k,
+                                                                          int &offset,
+                                                                          const bool
+                                                                              final) {
+          const int n = cand(k);
+          const bool on = on_block(b, n);
+          if (final && on) {
+            const int pidx = new_context(b).GetNewParticleIndex(offset);
+            Real &x = pack(b, swarm_position::x(), pidx);
+            Real &y = pack(b, swarm_position::y(), pidx);
+            Real &z = pack(b, swarm_position::z(), pidx);
+            // nvcc does not let a device lambda first capture a variable in an if
+            // constexpr branch, so what the branches use is read before them
+            const Real px = camera_pts(n, sample::x);
+            const Real py = camera_pts(n, sample::y);
+            const Real pz = camera_pts(n, sample::z);
+            const Real block_xmax1 = block_box(b, 1);
+            if (start_kind(n) == OnBlock::start_inside) {
+              x = start(n, 0);
+              y = start(n, 1);
+              z = start(n, 2);
+            } else if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
+              x = px;
+              y = py;
+              z = pz;
+            } else if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+              Real rcyl = std::sqrt(px * px + py * py);
+              if (std::abs(rcyl - block_xmax1) / block_xmax1 < kBoundaryBand)
+                rcyl = block_xmax1 - kGeomTol;
+              Real phi_cyl = std::atan2(py, px);
+              phi_cyl += (phi_cyl < 0.0) * 2.0 * M_PI;
+              x = rcyl;
+              y = pz;
+              z = phi_cyl;
+            } else if constexpr (parthenon::IsCoord<parthenon::UniformSpherical>()) {
+              const Real rsph = std::sqrt(px * px + py * py + pz * pz);
+              const Real th = std::acos(pz / rsph);
+              Real phi_sph = std::atan2(py, px);
+              phi_sph += (phi_sph < 0.0) * 2.0 * M_PI;
+              x = rsph;
+              y = th;
+              z = phi_sph;
+            } else {
+              PARTHENON_FAIL("Unsupported coordinate system");
+            }
+            pack(b, prt::vx(), pidx) = camera_pts(n, sample::nx);
+            pack(b, prt::vy(), pidx) = camera_pts(n, sample::ny);
+            pack(b, prt::vz(), pidx) = camera_pts(n, sample::nz);
+            pack(b, pvr::r(), pidx) = 0.0;
+            pack(b, pvr::g(), pidx) = 0.0;
+            pack(b, pvr::b(), pidx) = 0.0;
+            pack(b, pvr::a(), pidx) = 0.0;
+            pack_int(b, pvr::camera_id(), pidx) = camera_idx(n, 0);
+            pack_int(b, pvr::pixel_id(), pidx) = camera_idx(n, 1);
+          }
+          offset += on;
+        });
+      });
 
   return TaskStatus::complete;
 }
 
 TaskStatus Tracer(MeshData<Real> *md) {
-  namespace rt = particles::ray_tracer;
-  namespace vr = particles::riot_viz;
-
   auto pm = md->GetParentPointer();
   auto viz = pm->packages.Get("riot_viz");
   auto &scene_info = viz->Param<SceneInfo>("scene_info");
   auto tinfo = viz->MutableParam<impl::TracerInfo>("tracer_info");
 
-  if (!tinfo->initialized) tinfo->initialize(md);
+  if (!tinfo->desc) tinfo->initialize(md);
 
   auto [v, ps, ps_int] = tinfo->GetPacks(md);
 
-  auto max_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
-  auto max_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("max_value_view");
-  auto min_alpha_value = viz->Param<parthenon::ParArray2D<Real>>("min_value_view");
+  auto &bounds = viz->Param<impl::NodalBounds>("nodal_bounds");
 
-  return RayTrace::Trace<Composer>(ps, v, md->GetParentPointer(), ps_int,
-                                   tinfo->render_params, tinfo->pack_idx_view, max_value,
-                                   min_value, scene_info.images);
+  return RayTrace::Trace<Composer>(
+      ps, v, md->GetParentPointer(), ps_int, tinfo->render_params, tinfo->pack_idx_view,
+      bounds.may_show, viz->Param<ShowVolume>("show_volume"), scene_info.images);
 }
 
 TaskStatus InitializeNodalValues(MeshData<Real> *md) {
   using TE = parthenon::TopologicalElement;
 
-  const auto start = std::chrono::steady_clock::now();
   auto pm = md->GetMeshPointer();
   auto viz = pm->packages.Get("riot_viz");
-  auto orig_fields =
-      viz->Param<std::vector<std::string>>("orig_fields");
+  auto orig_fields = viz->Param<std::vector<std::string>>("orig_fields");
   auto &scene_info = viz->Param<SceneInfo>("scene_info");
   auto node_fields = scene_info.field;
   auto desc_orig = parthenon::MakePackDescriptor(md, orig_fields);
   auto vorig = desc_orig.GetPack(md);
 
-  auto pack_idx_map = desc_orig.GetMap();
-  std::vector<parthenon::PackIdx> pack_idx;
-  for (auto &key : orig_fields)
-    pack_idx.emplace_back(pack_idx_map.at(key));
-  auto pack_idx_view = RiotUtils::VectorToDevice(pack_idx, "pack_idx_view");
-  const int nfields = pack_idx.size();
+  auto pack_idx_view = impl::PackIdxView(desc_orig, orig_fields, "pack_idx_view");
+  const int nfields = orig_fields.size();
 
   auto desc_node = parthenon::MakePackDescriptor(md, node_fields);
   auto vnode = desc_node.GetPack(md);
-  auto node_pack_idx_map = desc_node.GetMap();
-  std::vector<parthenon::PackIdx> node_pack_idx;
-  for (auto &key : scene_info.field)
-    node_pack_idx.emplace_back(node_pack_idx_map.at(key));
-  auto node_pack_idx_view = RiotUtils::VectorToDevice(node_pack_idx, "node_pack_idx_view");
+  auto node_pack_idx_view =
+      impl::PackIdxView(desc_node, node_fields, "node_pack_idx_view");
 
-  PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == vnode.GetNBlocks(), "oops");
-  PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == md->NumBlocks(), "oops");
+  PARTHENON_REQUIRE_THROWS(vorig.GetNBlocks() == md->NumBlocks() &&
+                               vnode.GetNBlocks() == md->NumBlocks(),
+                           "The field packs must cover every block of the mesh data.");
 
   PARTHENON_REQUIRE_THROWS(nfields <= 2 * max_layers,
                            "Too many distinct visualization fields.");
-  auto max_value = parthenon::ParArray2D<Real>("max_nodal_value", md->NumBlocks(), 2*max_layers);
-  auto min_value = parthenon::ParArray2D<Real>("min_nodal_value", md->NumBlocks(), 2*max_layers);
-  parthenon::par_for(DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(),
-    0, md->NumBlocks() - 1, 0, 2 * max_layers - 1,
-    KOKKOS_LAMBDA(const int b, const int l) {
-      max_value(b, l) = std::numeric_limits<Real>::lowest();
-      min_value(b, l) = std::numeric_limits<Real>::max();
-    });
+  auto max_value =
+      parthenon::ParArray2D<Real>("max_nodal_value", md->NumBlocks(), 2 * max_layers);
+  auto min_value =
+      parthenon::ParArray2D<Real>("min_nodal_value", md->NumBlocks(), 2 * max_layers);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, md->NumBlocks() - 1,
+      0, 2 * max_layers - 1, KOKKOS_LAMBDA(const int b, const int l) {
+        max_value(b, l) = std::numeric_limits<Real>::lowest();
+        min_value(b, l) = std::numeric_limits<Real>::max();
+      });
 
   Kokkos::fence();
 
   int dj = pm->ndim > 1 ? 1 : 0;
   int dk = pm->ndim > 2 ? 1 : 0;
+  const int ngc = parthenon::Globals::nghost;
+  const auto ibi = md->GetBoundsI(IndexDomain::interior);
+  const auto jbi = md->GetBoundsJ(IndexDomain::interior);
+  const auto kbi = md->GetBoundsK(IndexDomain::interior);
+  const int ics = ibi.s - ngc;
+  const int jcs = jbi.s - ngc * dj;
+  const int kcs = kbi.s - ngc * dk;
+  const int ice = ibi.e + ngc;
+  const int jce = jbi.e + ngc * dj;
+  const int kce = kbi.e + ngc * dk;
 
-  using lt = RiotUtils::LoopType<>;
+  using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space =
       lt::GetIndexSpace(IndexDomain::entire, 0, vorig.GetNBlocks(), md, TE::NN);
   RiotLoop::outer(
@@ -853,10 +877,13 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
               RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
                 Real nodal_val = 0.0;
                 int cnt = 0;
-                for (int kk = -1 * dkl; kk <= 0; kk++) {
-                  for (int jj = -1 * djl; jj <= 0; jj++) {
-                    for (int ii = -1; ii <= 0; ii++) {
-                      nodal_val += cell(k + kk, j + jj, i + ii);
+                const int kl = std::clamp(k - dkl, kcs, kce);
+                const int jl = std::clamp(j - djl, jcs, jce);
+                const int il = std::clamp(i - 1, ics, ice);
+                for (int kc = kl; kc <= std::clamp(k, kl, kce); kc++) {
+                  for (int jc = jl; jc <= std::clamp(j, jl, jce); jc++) {
+                    for (int ic = il; ic <= std::clamp(i, il, ice); ic++) {
+                      nodal_val += cell(kc, jc, ic);
                       cnt++;
                     }
                   }
@@ -872,26 +899,94 @@ TaskStatus InitializeNodalValues(MeshData<Real> *md) {
               RiotLoop::inner(idx_range, [&](const int k, const int j, const int i) {
                 vnode(b, iv, k, j, i) = 0.0;
               });
-              Kokkos::atomic_store(&min_value(b, n), std::numeric_limits<Real>::quiet_NaN());
-              Kokkos::atomic_store(&max_value(b, n), std::numeric_limits<Real>::quiet_NaN());
+              Kokkos::atomic_store(&min_value(b, n),
+                                   std::numeric_limits<Real>::quiet_NaN());
+              Kokkos::atomic_store(&max_value(b, n),
+                                   std::numeric_limits<Real>::quiet_NaN());
             }
           }
         }
       });
-  
-  //parthenon::par_for_outer
-
   Kokkos::fence();
 
-  auto max_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("max_value_view");
-  *max_value_view = std::move(max_value);
-  auto min_value_view = viz->MutableParam<parthenon::ParArray2D<Real>>("min_value_view");
-  *min_value_view = std::move(min_value);
+  // the layers that could show in each block, so rays need not check that per block
+  const auto &rp = viz->Param<impl::TracerInfo>("tracer_info").render_params;
+  const int ncam = scene_info.camera.size();
+  auto may_show = parthenon::ParArray2D<uint32_t>("may_show", md->NumBlocks(), ncam);
+  parthenon::par_for(
+      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, md->NumBlocks() - 1,
+      0, ncam - 1, KOKKOS_LAMBDA(const int b, const int cam) {
+        uint32_t may = 0;
+        for (int ilay = 0; ilay < rp.nlayers(cam); ilay++) {
+          if (LayerMayShow(rp, cam, ilay, b, max_value, min_value)) may |= 1u << ilay;
+        }
+        may_show(b, cam) = may;
+      });
+  Kokkos::fence();
 
-  const auto stop = std::chrono::steady_clock::now();
-  const double seconds = std::chrono::duration<double>(stop - start).count();
-  if (parthenon::Globals::my_rank == 0)
-    std::cout << "InitializeNodalValues completed in " << seconds << " seconds." << std::endl;
+  // and the box of the blocks where any may, for ReduceShowVolume
+  auto bounds = viz->MutableParam<impl::NodalBounds>("nodal_bounds");
+  auto may_show_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), may_show);
+  constexpr Real big = std::numeric_limits<Real>::max();
+  auto &box = bounds->show_box;
+  box.assign(6 * ncam, 0.0);
+  for (int cam = 0; cam < ncam; cam++) {
+    for (int d = 0; d < 3; d++) {
+      box[6 * cam + 2 * d] = big;
+      box[6 * cam + 2 * d + 1] = -big;
+    }
+    for (int b = 0; b < md->NumBlocks(); b++) {
+      if (may_show_h(b, cam) == 0) continue;
+      const auto &bs = md->GetBlockData(b)->GetBlockPointer()->block_size;
+      for (int d = 0; d < 3; d++) {
+        const auto dir = static_cast<parthenon::CoordinateDirection>(d + 1);
+        box[6 * cam + 2 * d] = std::min(box[6 * cam + 2 * d], bs.xmin(dir));
+        box[6 * cam + 2 * d + 1] = std::max(box[6 * cam + 2 * d + 1], bs.xmax(dir));
+      }
+    }
+  }
+
+  bounds->may_show = std::move(may_show);
+
+  return TaskStatus::complete;
+}
+
+// The volume anything could show in, from the boxes of the blocks on every rank
+TaskStatus ReduceShowVolume(Mesh *pm) {
+  auto viz = pm->packages.Get("riot_viz");
+  const auto &bounds = viz->Param<impl::NodalBounds>("nodal_bounds");
+  auto show_volume = viz->MutableParam<ShowVolume>("show_volume");
+  const int ncam = viz->Param<SceneInfo>("scene_info").camera.size();
+
+  // lower bounds are negated, so that one MPI_MAX reduces them along with the upper ones
+  std::vector<Real> box(6 * ncam);
+  for (int i = 0; i < 6 * ncam; i++) {
+    box[i] = i % 2 == 0 ? -bounds.show_box[i] : bounds.show_box[i];
+  }
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(MPI_Allreduce(MPI_IN_PLACE, box.data(), box.size(),
+                                    MPI_PARTHENON_REAL, MPI_MAX, MPI_COMM_WORLD));
+#endif
+
+  if (show_volume->box.extent_int(0) != ncam) {
+    show_volume->box = parthenon::ParArray2D<Real>("show volume", ncam, 6);
+  }
+  auto box_h = show_volume->box.GetHostMirror();
+  for (int cam = 0; cam < ncam; cam++) {
+    for (int i = 0; i < 6; i++) {
+      box_h(cam, i) = i % 2 == 0 ? -box[6 * cam + i] : box[6 * cam + i];
+    }
+  }
+  Kokkos::deep_copy(show_volume->box, box_h);
+
+  // well above roundoff, and well below any cell
+  const auto &mesh_size = pm->mesh_size;
+  Real extent = mesh_size.xmax(X1DIR) - mesh_size.xmin(X1DIR);
+  if (!parthenon::IsCoord<parthenon::UniformSpherical>())
+    extent = std::max(extent, mesh_size.xmax(X2DIR) - mesh_size.xmin(X2DIR));
+  if (parthenon::IsCoord<parthenon::UniformCartesian>())
+    extent = std::max(extent, mesh_size.xmax(X3DIR) - mesh_size.xmin(X3DIR));
+  show_volume->margin = 1.e-6 * extent;
   return TaskStatus::complete;
 }
 
@@ -900,28 +995,37 @@ TaskCollection Render(Mesh *pm, Real time) {
   using TQ = TaskQualifier;
   TaskCollection tc;
   TaskID none;
-  printf("Starting rendering...\n");
   // this must be 1 for now until pack_size != -1 is supported for swarms in parthenon
   constexpr int num_partitions = 1; // pm->DefaultNumPartitions();
   auto &reg = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = reg[i];
+    auto md = pm->mesh_data.Get().get();
+    tl.AddTask(none, InitializeNodalValues, md);
+  }
+  // The cameras start rays where they meet the volume anything could show in, which
+  // takes the nodal values of every block
+  auto &show_reg = tc.AddRegion(1);
+  show_reg[0].AddTask(none, ReduceShowVolume, pm);
+  auto &trace_reg = tc.AddRegion(num_partitions);
+  for (int i = 0; i < num_partitions; i++) {
+    auto &tl = trace_reg[i];
     auto md_sp = pm->mesh_data.Get();
     auto md = md_sp.get();
 
-    auto set_nodal_vals = tl.AddTask(none, InitializeNodalValues, md);
     auto init_particles = tl.AddTask(none, InitializeCameras, md);
-    //auto comms = parthenon::AddBoundaryExchangeTasks(set_nodal_vals, tl, md_sp,
-                                                        //pm->multilevel);
-    auto comms = set_nodal_vals;
-    auto [itl, push] = tl.AddSublist(comms | init_particles, {0, 100000});
-    
-    auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp, pvr::particles::name());
+    auto [itl, push] = tl.AddSublist(init_particles, {0, 100000});
+
+    auto remove = itl.AddTask(none, parthenon::RemoveMarkedParticlesMesh, md_sp,
+                              pvr::particles::name());
     auto reset_comms = itl.AddTask(none, parthenon::ResetSwarmsCommunicationMesh, md_sp);
     auto send = itl.AddTask(reset_comms | remove, parthenon::SendSwarmsMesh, md_sp);
     auto recv = itl.AddTask(send | reset_comms, parthenon::ReceiveSwarmsMesh, md_sp);
     auto defrag = itl.AddTask(recv, parthenon::DefragSwarmsMesh, md_sp, 0.25);
     auto transport = itl.AddTask(TQ::completion | TQ::global_sync, defrag, Tracer, md);
+    // The last pass only marks its rays for removal, and a remesh before the next render
+    // would bring them back as active rays
+    tl.AddTask(push, parthenon::RemoveMarkedParticlesMesh, md_sp, pvr::particles::name());
   }
   auto &dump_reg = tc.AddRegion(1);
   auto &tl = dump_reg[0];
@@ -929,8 +1033,10 @@ TaskCollection Render(Mesh *pm, Real time) {
   return tc;
 }
 
-void draw_char(uint8_t *rgba, int width, int height, int x0, int y0, char c,
-               std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
+namespace {
+// Draw the 8x8 glyph of c with its top left corner at (x0, y0) of an RGBA image
+void DrawChar(uint8_t *rgba, int width, int height, int x0, int y0, char c,
+              std::uint8_t r, std::uint8_t g, std::uint8_t b, std::uint8_t a) {
   const auto *glyph = (font8x8_basic[static_cast<unsigned char>(c)]);
 
   for (int y = 0; y < 8; ++y) {
@@ -953,14 +1059,15 @@ void draw_char(uint8_t *rgba, int width, int height, int x0, int y0, char c,
   }
 }
 
-void draw_text(uint8_t *rgba, int width, int height, int x, int y,
-               const std::string &text, std::uint8_t r = 255, std::uint8_t g = 255,
-               std::uint8_t b = 255, std::uint8_t a = 255, bool centered = true) {
+// Draw text starting, or centered, at (x, y) of an RGBA image
+void DrawText(uint8_t *rgba, int width, int height, int x, int y, const std::string &text,
+              std::uint8_t r = 255, std::uint8_t g = 255, std::uint8_t b = 255,
+              std::uint8_t a = 255, bool centered = true) {
   int num_chars = text.size();
   int pixel_width = 8 * num_chars;
   int offset = centered ? pixel_width / 2 : 0;
   for (char c : text) {
-    draw_char(rgba, width, height, x - offset, y, c, r, g, b, a);
+    DrawChar(rgba, width, height, x - offset, y, c, r, g, b, a);
 
     x += 8;
   }
@@ -983,46 +1090,29 @@ std::string FormatReal(Real value) {
 std::string FormatMinMax(double min_val, double max_val) {
   return FormatReal(min_val) + " / " + FormatReal(max_val);
 }
-std::vector<std::uint8_t>
-resize_rgba(const void *src,
-            int src_w, int src_h,
-            int dst_w, int dst_h)
-{
-    std::vector<std::uint8_t> dst(
-        static_cast<std::size_t>(dst_w) * dst_h * 4);
 
-    auto filter = STBIR_FILTER_CATMULLROM;
-    stbir_resize(
-        src,
-        src_w,
-        src_h,
-        0,                  // tightly packed source stride
-        dst.data(),
-        dst_w,
-        dst_h,
-        0,                  // tightly packed destination stride
-        STBIR_RGBA,
-        STBIR_TYPE_UINT8,
-        STBIR_EDGE_CLAMP,
-        filter
-    );
-
-    return dst;
+// A tightly packed RGBA image resampled to dst_w by dst_h
+std::vector<std::uint8_t> ResizeRGBA(const void *src, int src_w, int src_h, int dst_w,
+                                     int dst_h) {
+  std::vector<std::uint8_t> dst(static_cast<std::size_t>(dst_w) * dst_h * 4);
+  stbir_resize(src, src_w, src_h, 0, dst.data(), dst_w, dst_h, 0, STBIR_RGBA,
+               STBIR_TYPE_UINT8, STBIR_EDGE_CLAMP, STBIR_FILTER_CATMULLROM);
+  return dst;
 }
 
-int write_png(char const *filename, int w, int h, int comp,
-              const void *data, int stride_in_bytes, Real scale) {
+// Write an image as a PNG, resized by scale
+int WritePNG(char const *filename, int w, int h, int comp, const void *data,
+             int stride_in_bytes, Real scale) {
   if (scale == 1.0) return stbi_write_png(filename, w, h, comp, data, stride_in_bytes);
 
   int nw = scale * w;
   int nh = scale * h;
-  auto rescaled = resize_rgba(data, w, h, nw, nh);
+  auto rescaled = ResizeRGBA(data, w, h, nw, nh);
   return stbi_write_png(filename, nw, nh, comp, rescaled.data(), nw * 4);
 }
+} // namespace
 
 TaskStatus DumpImages(Mesh *pm, Real time) {
-  namespace vr = particles::riot_viz;
-
   auto viz = pm->packages.Get("riot_viz");
   auto &dump_id = *(viz->MutableParam<int>("dump_id"));
   bool timebar = viz->Param<bool>("timebar");
@@ -1032,27 +1122,36 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
   auto scene_info = viz->MutableParam<SceneInfo>("scene_info");
 
   auto &images = scene_info->images;
-  auto md = pm->mesh_data.Get("base").get();
 
   Kokkos::fence();
-  auto host_images = images.GetHostMirrorAndCopy();
-  if (parthenon::Globals::my_rank == 0)
-    MPI_Reduce(MPI_IN_PLACE, host_images.data(), host_images.size(), MPI_UINT8_T, MPI_MAX,
-               0, MPI_COMM_WORLD);
-  else
-    MPI_Reduce(host_images.data(), NULL, host_images.size(), MPI_UINT8_T, MPI_MAX, 0,
-               MPI_COMM_WORLD);
+  auto &host_images = scene_info->host_images;
+  Kokkos::deep_copy(host_images, images);
+#ifdef MPI_PARALLEL
+  PARTHENON_MPI_CHECK(
+      MPI_Reduce(parthenon::Globals::my_rank == 0 ? MPI_IN_PLACE : host_images.data(),
+                 host_images.data(), static_cast<int>(host_images.size()), MPI_UINT8_T,
+                 MPI_MAX, 0, MPI_COMM_WORLD));
+#endif // MPI_PARALLEL
   if (parthenon::Globals::my_rank == 0) {
+    auto label_of = [](const LayerInfo &layer) {
+      return layer.scale_type == ScaleType::log ? "log10(" + layer.label + ")"
+                                                : layer.label;
+    };
     auto &camera = scene_info->camera;
     for (int i = 0; i < camera.size(); i++) {
+      // an opaque pixel, at offset j of the image
+      auto set_pixel = [&](const int j, const uint8_t r, const uint8_t g,
+                           const uint8_t b) {
+        host_images(i, j + 0) = r;
+        host_images(i, j + 1) = g;
+        host_images(i, j + 2) = b;
+        host_images(i, j + 3) = 255;
+      };
       size_t max_label_width = 0;
       size_t max_range_width = 0;
       for (auto &layer : camera[i].layer) {
         if (!layer.colorbar) continue;
-        auto layer_label = layer.scale_type == ScaleType::log
-                               ? "log10(" + layer.label + ")"
-                               : layer.label;
-        max_label_width = std::max(max_label_width, layer_label.size());
+        max_label_width = std::max(max_label_width, label_of(layer).size());
         auto range_str = FormatMinMax(layer.min_range, layer.max_range);
         max_range_width = std::max(max_range_width, range_str.size());
       }
@@ -1064,35 +1163,21 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
       // set the colormap pixels
       int t = camera[i].colorbar_thickness;
       int total_h = h + (camera[i].ncolorbar + timebar) * t;
-      uint8_t alpha_max = 0;
-      //for (int j = 3; j < 4 * w * total_h; j+=4) {
-        //if (host_images(i, j) > alpha_max) alpha_max = host_images(i, j);
-      //}
-      //for (int j = 3; j < 4 * w * total_h; j+=4) {
-        //host_images(i, j) *= (255.0 / alpha_max);
-      //}
       int ilabel = 0;
       if (timebar) {
         int jstart = 4 * w * h;
+        Real x = (time - time_start) / (time_stop - time_start);
+        int ixt = x * w;
         for (int j = jstart; j < jstart + 4 * w * t; j += 4) {
           int ix = ((j - jstart) % (4 * w)) / 4;
-          Real x = (time - time_start) / (time_stop - time_start);
-          int ixt = x * w;
-          if (ix <= ixt) {
-            host_images(i, j + 0) = real_to_uint8_t(time_rgb[0]);
-            host_images(i, j + 1) = real_to_uint8_t(time_rgb[1]);
-            host_images(i, j + 2) = real_to_uint8_t(time_rgb[2]);
-            host_images(i, j + 3) = 255;
-          } else {
-            host_images(i, j + 0) = real_to_uint8_t(0.7 * time_rgb[0]);
-            host_images(i, j + 1) = real_to_uint8_t(0.7 * time_rgb[1]);
-            host_images(i, j + 2) = real_to_uint8_t(0.7 * time_rgb[2]);
-            host_images(i, j + 3) = 255;
-          }
+          const Real dim = ix <= ixt ? 1.0 : 0.7;
+          set_pixel(j, real_to_uint8_t(dim * time_rgb[0]),
+                    real_to_uint8_t(dim * time_rgb[1]),
+                    real_to_uint8_t(dim * time_rgb[2]));
         }
-        draw_text(&host_images(i, 0), w, total_h, w / 2, h + 1,
-                  "Time = " + FormatReal(time), real_to_uint8_t(1.0 - time_rgb[0]),
-                  real_to_uint8_t(1.0 - time_rgb[1]), real_to_uint8_t(1.0 - time_rgb[2]));
+        DrawText(&host_images(i, 0), w, total_h, w / 2, h + 1,
+                 "Time = " + FormatReal(time), real_to_uint8_t(1.0 - time_rgb[0]),
+                 real_to_uint8_t(1.0 - time_rgb[1]), real_to_uint8_t(1.0 - time_rgb[2]));
       }
       for (auto &layer : camera[i].layer) {
         if (!layer.colorbar) continue;
@@ -1101,10 +1186,7 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
         for (int j = jstart; j < jstart + 4 * w * t; j += 4) {
           int ix = ((j - jstart) % (4 * w)) / 4;
           if (ix < max_label_width || (w - ix - 1) < max_range_width) {
-            host_images(i, j + 0) = 0;
-            host_images(i, j + 1) = 0;
-            host_images(i, j + 2) = 0;
-            host_images(i, j + 3) = 255;
+            set_pixel(j, 0, 0, 0);
             continue;
           }
           Real x =
@@ -1113,60 +1195,37 @@ TaskStatus DumpImages(Mesh *pm, Real time) {
           Real a = layer.acmap.interpToReal(x) / amax;
           int iyl = a * (t - 2) + 1;
           if (iy == 0) {
-            host_images(i, j + 0) = 0;
-            host_images(i, j + 1) = 0;
-            host_images(i, j + 2) = 0;
-            host_images(i, j + 3) = 255;
+            set_pixel(j, 0, 0, 0);
+          } else if (iy == iyl && layer.type == VizType::volume) {
+            const uint8_t dash = 255 * (ix % 2);
+            set_pixel(j, dash, dash, dash);
           } else {
-            if (iy == iyl && layer.type == VizType::volume) {
-              host_images(i, j + 0) = 255 * (ix % 2);
-              host_images(i, j + 1) = 255 * (ix % 2);
-              host_images(i, j + 2) = 255 * (ix % 2);
-              host_images(i, j + 3) = 255;
-            } else {
-              Real darken = (iy > iyl && layer.type == VizType::volume) ? 0.5 : 1.0;
-              host_images(i, j + 0) = real_to_uint8_t(darken * layer.rcmap.interpToReal(x));
-              host_images(i, j + 1) = real_to_uint8_t(darken * layer.gcmap.interpToReal(x));
-              host_images(i, j + 2) = real_to_uint8_t(darken * layer.bcmap.interpToReal(x));
-              host_images(i, j + 3) = 255;
-            }
+            Real darken = (iy > iyl && layer.type == VizType::volume) ? 0.5 : 1.0;
+            set_pixel(j, real_to_uint8_t(darken * layer.rcmap.interpToReal(x)),
+                      real_to_uint8_t(darken * layer.gcmap.interpToReal(x)),
+                      real_to_uint8_t(darken * layer.bcmap.interpToReal(x)));
           }
         }
-        auto layer_label = layer.scale_type == ScaleType::log
-                               ? "log10(" + layer.label + ")"
-                               : layer.label;
-        draw_text(&host_images(i, 0), w, total_h, max_label_width / 2,
-                  h + (ilabel + 1 + timebar) * t - 9, layer_label, 255, 255, 255);
-        draw_text(&host_images(i, 0), w, total_h, w - max_range_width / 2,
-                  h + (ilabel + 1 + timebar) * t - 9,
-                  FormatMinMax(layer.min_range, layer.max_range), 255, 255, 255);
+        DrawText(&host_images(i, 0), w, total_h, max_label_width / 2,
+                 h + (ilabel + 1 + timebar) * t - 9, label_of(layer), 255, 255, 255);
+        DrawText(&host_images(i, 0), w, total_h, w - max_range_width / 2,
+                 h + (ilabel + 1 + timebar) * t - 9,
+                 FormatMinMax(layer.min_range, layer.max_range), 255, 255, 255);
         ilabel++;
       }
 
-      // Move to this commented out line when we go to C++20 and add include <format>
-      //std::string name = camera[i].filename + std::format("{:04d}", dump_id) + ".png";
       std::ostringstream ss;
       ss << camera[i].filename << std::setfill('0') << std::setw(4) << dump_id << ".png";
       std::string name = ss.str();
-      // stbi_write_png
-      if (!write_png(name.c_str(), w, total_h,
-                     4, // RGBA
-                     &host_images(i, 0), w * 4,
-                     scale)) {
-        throw std::runtime_error("Failed to write PNG");
+      if (!WritePNG(name.c_str(), w, total_h, 4, &host_images(i, 0), w * 4, scale)) {
+        PARTHENON_THROW("Failed to write " + name);
       }
     }
   }
   dump_id++;
 
-  //for (int b = 0; b < md->NumBlocks(); b++) {
-    //md->GetSwarmData(b)->Get(vr::particles::name())->RemoveMarkedParticles();
-  //}
-
-  parthenon::par_for(
-      DEFAULT_LOOP_PATTERN, PARTHENON_AUTO_LABEL, DevExecSpace(), 0, images.GetDim(2) - 1,
-      0, images.GetDim(1) - 1,
-      KOKKOS_LAMBDA(const int j, const int i) { images(j, i) = 0; });
+  // clear the images for the next dump
+  Kokkos::deep_copy(images, 0);
 
   return TaskStatus::complete;
 }

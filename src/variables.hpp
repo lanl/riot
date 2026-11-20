@@ -13,7 +13,6 @@
 // This file was made in part with generative AI.
 #ifndef VARIABLES_HPP_
 #define VARIABLES_HPP_
-// This file was made in part with generative AI.
 
 #include <map>
 #include <set>
