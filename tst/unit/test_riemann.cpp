@@ -283,3 +283,299 @@ TEST_CASE("HLL and HLLC agree on mass flux for a uniform flow",
   // mass flux frho = rho * riemann_vel = 0.6 (golden)
   CHECK(s.rho * RunHLLC<X1DIR>(s, s).riemann_vel == Approx(0.6));
 }
+
+//----------------------------------------------------------------------------------------
+// HLLD (ideal MHD, Heaviside-Lorentz units with magnetic pressure B^2/2).
+//
+// For a state with field B and normal component bn = B_DIR, the exact ideal MHD flux is
+//   f_rho = rho vn
+//   f_vi  = rho vn vi + (P + B^2/2) delta_i,DIR - bn Bi
+//   f_eng = vn (E + P + B^2/2) - bn (v.B),   E = u + 1/2 rho |v|^2 + 1/2 B^2
+// and the face EMFs returned by the solver are components of E = -v x B:
+//   emf0 = E_tb and emf1 = E_ta, with ta = (DIR) % 3 and tb = (DIR + 1) % 3 (0-based).
+// vrho = 2 f_rho / (rhol + rhor) is the mass-flux proxy used for CT upwinding.
+namespace {
+
+struct MHDState {
+  Real rho, v1, v2, v3, u, P, c, b1, b2, b3;
+  State Hydro() const { return State{rho, v1, v2, v3, u, P, c}; }
+  Real V(const int d) const { return (d == 0) ? v1 : (d == 1 ? v2 : v3); }
+  Real B(const int d) const { return (d == 0) ? b1 : (d == 1 ? b2 : b3); }
+  Real B2() const { return b1 * b1 + b2 * b2 + b3 * b3; }
+};
+
+struct MHDFlux {
+  Real f_v1, f_v2, f_v3, f_eng;
+  Real v1face, v2face, v3face, riemann_vel;
+  Real emf0, emf1, vrho;
+  Real smax;
+};
+
+template <class Fill>
+MHDFlux RunOnDeviceMHD(Fill fill) {
+  Kokkos::View<MHDFlux> d_flux("hlld_flux");
+  Kokkos::parallel_for(
+      "run hlld solver", 1, KOKKOS_LAMBDA(const int) {
+        MHDFlux f{};
+        fill(f);
+        d_flux() = f;
+      });
+  auto h_flux = Kokkos::create_mirror_view(d_flux);
+  Kokkos::deep_copy(h_flux, d_flux);
+  return h_flux();
+}
+
+// The normal field bn is passed separately (as in the flux kernel, where it comes from
+// the face-centered field); by default it is taken from the left state.
+template <int DIR>
+MHDFlux RunHLLD(const MHDState &l, const MHDState &r, const Real bn) {
+  return RunOnDeviceMHD(KOKKOS_LAMBDA(MHDFlux & f) {
+    f.smax = Hydro::lr_to_flux_hlld<DIR>(
+        l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
+        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
+        f.v1face, f.v2face, f.v3face, f.riemann_vel, f.emf0, f.emf1, f.vrho);
+  });
+}
+template <int DIR>
+MHDFlux RunHLLD(const MHDState &l, const MHDState &r) {
+  return RunHLLD<DIR>(l, r, l.B(DIR - 1));
+}
+
+template <int DIR>
+MHDFlux PhysicalMHDFlux(const MHDState &s) {
+  constexpr int n = DIR - 1;
+  constexpr int ta = (n + 1) % 3;
+  constexpr int tb = (n + 2) % 3;
+  const Real vn = s.V(n);
+  const Real bn = s.B(n);
+  const Real pb = 0.5 * s.B2();
+  const Real E = s.u + 0.5 * s.rho * (s.v1 * s.v1 + s.v2 * s.v2 + s.v3 * s.v3) + pb;
+  const Real vdotb = s.v1 * s.b1 + s.v2 * s.b2 + s.v3 * s.b3;
+  // E = -v x B
+  auto efield = [&](const int d) {
+    const int p = (d + 1) % 3, q = (d + 2) % 3;
+    return -(s.V(p) * s.B(q) - s.V(q) * s.B(p));
+  };
+  MHDFlux f{};
+  f.f_v1 = s.rho * vn * s.v1 + (n == 0) * (s.P + pb) - bn * s.b1;
+  f.f_v2 = s.rho * vn * s.v2 + (n == 1) * (s.P + pb) - bn * s.b2;
+  f.f_v3 = s.rho * vn * s.v3 + (n == 2) * (s.P + pb) - bn * s.b3;
+  f.f_eng = vn * (E + s.P + pb) - bn * vdotb;
+  f.riemann_vel = vn;
+  f.emf0 = efield(tb);
+  f.emf1 = efield(ta);
+  f.vrho = vn;
+  return f;
+}
+
+// Bulk sound speed c, fast magnetosonic speed in direction n
+Real FastSpeed(const MHDState &s, const int n) {
+  const Real asq = s.c * s.c;
+  const Real bsq = s.B2() / s.rho;
+  const Real bnsq = s.B(n) * s.B(n) / s.rho;
+  return std::sqrt(0.5 * (asq + bsq + std::sqrt((asq + bsq) * (asq + bsq) -
+                                                4.0 * asq * bnsq)));
+}
+
+void CheckMHDFlux(const MHDFlux &got, const MHDFlux &expected, const Real tol = 1e-10) {
+  CHECK(got.f_v1 == Approx(expected.f_v1).margin(tol));
+  CHECK(got.f_v2 == Approx(expected.f_v2).margin(tol));
+  CHECK(got.f_v3 == Approx(expected.f_v3).margin(tol));
+  CHECK(got.f_eng == Approx(expected.f_eng).margin(tol));
+  CHECK(got.riemann_vel == Approx(expected.riemann_vel).margin(tol));
+  CHECK(got.emf0 == Approx(expected.emf0).margin(tol));
+  CHECK(got.emf1 == Approx(expected.emf1).margin(tol));
+  CHECK(got.vrho == Approx(expected.vrho).margin(tol));
+}
+
+// Moving, off-axis magnetized state with every field and velocity component nonzero.
+constexpr MHDState kMHDState{/*rho*/ 2.0, /*v1*/ 0.3,  /*v2*/ -0.4, /*v3*/ 0.1,
+                             /*u*/ 2.5,   /*P*/ 1.5,   /*c*/ 1.2,   /*b1*/ 0.7,
+                             /*b2*/ -0.5, /*b3*/ 0.9};
+
+// Builds a state from components given in the (normal, ta, tb) frame of direction DIR.
+template <int DIR>
+MHDState Rotated(const Real rho, const Real vn, const Real va, const Real vb,
+                 const Real u, const Real P, const Real c, const Real bn, const Real ba,
+                 const Real bb) {
+  constexpr int n = DIR - 1;
+  Real v[3], b[3];
+  v[n] = vn, v[(n + 1) % 3] = va, v[(n + 2) % 3] = vb;
+  b[n] = bn, b[(n + 1) % 3] = ba, b[(n + 2) % 3] = bb;
+  return MHDState{rho, v[0], v[1], v[2], u, P, c, b[0], b[1], b[2]};
+}
+
+} // namespace
+
+template <int DIR>
+void CheckHLLDConsistency() {
+  const MHDState s = kMHDState;
+  CheckMHDFlux(RunHLLD<DIR>(s, s), PhysicalMHDFlux<DIR>(s));
+  // Super-fast flow selects F_L / F_R directly
+  MHDState fast = s;
+  fast.v1 = fast.v2 = fast.v3 = 5.0;
+  CheckMHDFlux(RunHLLD<DIR>(fast, fast), PhysicalMHDFlux<DIR>(fast));
+  fast.v1 = fast.v2 = fast.v3 = -5.0;
+  CheckMHDFlux(RunHLLD<DIR>(fast, fast), PhysicalMHDFlux<DIR>(fast));
+  // Weak normal field (degenerate star states)
+  MHDState weak = s;
+  weak.b1 = weak.b2 = weak.b3 = 1.0e-12;
+  CheckMHDFlux(RunHLLD<DIR>(weak, weak), PhysicalMHDFlux<DIR>(weak));
+}
+
+TEST_CASE("HLLD is consistent for identical L/R states", "[hydro][riemann][hlld]") {
+  SECTION("X1") { CheckHLLDConsistency<X1DIR>(); }
+  SECTION("X2") { CheckHLLDConsistency<X2DIR>(); }
+  SECTION("X3") { CheckHLLDConsistency<X3DIR>(); }
+}
+
+template <int DIR>
+void CheckHLLDSignalSpeed() {
+  const MHDState s = kMHDState;
+  const Real expected = std::abs(s.V(DIR - 1)) + FastSpeed(s, DIR - 1);
+  CHECK(RunHLLD<DIR>(s, s).smax == Approx(expected));
+  // For a jump, the returned speed bounds both states' fast signal speeds
+  MHDState r = s;
+  r.rho = 0.5, r.P = 0.3, r.c = 0.9;
+  // Jump in a transverse field component only (bn is continuous)
+  constexpr int ta = DIR % 3;
+  if (ta == 0) r.b1 = 1.4;
+  if (ta == 1) r.b2 = 1.4;
+  if (ta == 2) r.b3 = 1.4;
+  const Real smax = RunHLLD<DIR>(s, r, s.B(DIR - 1)).smax;
+  CHECK(smax >= std::abs(s.V(DIR - 1)) + FastSpeed(s, DIR - 1) - 1e-12);
+  CHECK(smax >= std::abs(r.V(DIR - 1)) + FastSpeed(r, DIR - 1) - 1e-12);
+}
+
+TEST_CASE("HLLD returns the fast magnetosonic signal speed",
+          "[hydro][riemann][hlld][signal]") {
+  SECTION("X1") { CheckHLLDSignalSpeed<X1DIR>(); }
+  SECTION("X2") { CheckHLLDSignalSpeed<X2DIR>(); }
+  SECTION("X3") { CheckHLLDSignalSpeed<X3DIR>(); }
+}
+
+// With no field HLLD reduces to HLLC (same wave speed estimates and contact speed).
+template <int DIR>
+void CheckHLLDReducesToHLLC() {
+  const MHDState l = Rotated<DIR>(1.0, 0.2, 0.3, -0.1, 2.5, 1.0, 1.3, 0, 0, 0);
+  const MHDState r = Rotated<DIR>(0.125, -0.1, -0.2, 0.4, 0.25, 0.1, 1.1, 0, 0, 0);
+  const MHDFlux d = RunHLLD<DIR>(l, r);
+  const Flux c = RunHLLC<DIR>(l.Hydro(), r.Hydro());
+  CHECK(d.f_v1 == Approx(c.f_v1).margin(1e-12));
+  CHECK(d.f_v2 == Approx(c.f_v2).margin(1e-12));
+  CHECK(d.f_v3 == Approx(c.f_v3).margin(1e-12));
+  CHECK(d.f_eng == Approx(c.f_eng).margin(1e-12));
+  CHECK(d.v1face == Approx(c.v1face).margin(1e-12));
+  CHECK(d.v2face == Approx(c.v2face).margin(1e-12));
+  CHECK(d.v3face == Approx(c.v3face).margin(1e-12));
+  CHECK(d.riemann_vel == Approx(c.riemann_vel).margin(1e-12));
+  CHECK(d.smax == Approx(c.smax).margin(1e-12));
+  CHECK(d.emf0 == Approx(0.0).margin(1e-14));
+  CHECK(d.emf1 == Approx(0.0).margin(1e-14));
+}
+
+TEST_CASE("HLLD reduces to HLLC with zero field", "[hydro][riemann][hlld]") {
+  SECTION("X1") { CheckHLLDReducesToHLLC<X1DIR>(); }
+  SECTION("X2") { CheckHLLDReducesToHLLC<X2DIR>(); }
+  SECTION("X3") { CheckHLLDReducesToHLLC<X3DIR>(); }
+}
+
+// Stationary contact (bn != 0, equal P and B, fluid at rest, density jump) and tangential
+// discontinuity (bn = 0, total pressure balance, jumps in tangential v and B) are both
+// exact stationary solutions that HLLD resolves exactly.
+template <int DIR>
+void CheckHLLDStationaryDiscontinuities() {
+  constexpr int n = DIR - 1;
+  {
+    const MHDState l = Rotated<DIR>(3.0, 0.0, 0.0, 0.0, 2.0, 1.0, 1.0, 0.8, 0.6, -0.3);
+    const MHDState r = Rotated<DIR>(1.0, 0.0, 0.0, 0.0, 0.7, 1.0, 1.4, 0.8, 0.6, -0.3);
+    const MHDFlux f = RunHLLD<DIR>(l, r);
+    const Real fn = (n == 0) ? f.f_v1 : (n == 1 ? f.f_v2 : f.f_v3);
+    CHECK(f.riemann_vel == Approx(0.0).margin(1e-12));
+    CHECK(fn == Approx(l.P + 0.5 * l.B2() - 0.8 * 0.8).margin(1e-12));
+    CHECK(f.f_eng == Approx(0.0).margin(1e-12));
+    CHECK(f.emf0 == Approx(0.0).margin(1e-12));
+    CHECK(f.emf1 == Approx(0.0).margin(1e-12));
+  }
+  {
+    // ptot = 1 + 0.5 = 1.25 + 0.25 = 1.5
+    const MHDState l = Rotated<DIR>(1.0, 0.0, 0.5, 0.0, 2.0, 1.0, 1.2, 0.0, 1.0, 0.0);
+    const MHDState r = Rotated<DIR>(0.4, 0.0, -0.3, 0.7, 1.9, 1.25, 1.5, 0.0, 0.5, 0.5);
+    const MHDFlux f = RunHLLD<DIR>(l, r);
+    const Real fn = (n == 0) ? f.f_v1 : (n == 1 ? f.f_v2 : f.f_v3);
+    const Real fa = (n == 0) ? f.f_v2 : (n == 1 ? f.f_v3 : f.f_v1);
+    const Real fb = (n == 0) ? f.f_v3 : (n == 1 ? f.f_v1 : f.f_v2);
+    CHECK(f.riemann_vel == Approx(0.0).margin(1e-12));
+    CHECK(fn == Approx(1.5).margin(1e-12));
+    CHECK(fa == Approx(0.0).margin(1e-12));
+    CHECK(fb == Approx(0.0).margin(1e-12));
+    CHECK(f.f_eng == Approx(0.0).margin(1e-12));
+    CHECK(f.emf0 == Approx(0.0).margin(1e-12));
+    CHECK(f.emf1 == Approx(0.0).margin(1e-12));
+  }
+}
+
+TEST_CASE("HLLD resolves stationary contact and tangential discontinuities",
+          "[hydro][riemann][hlld][contact]") {
+  SECTION("X1") { CheckHLLDStationaryDiscontinuities<X1DIR>(); }
+  SECTION("X2") { CheckHLLDStationaryDiscontinuities<X2DIR>(); }
+  SECTION("X3") { CheckHLLDStationaryDiscontinuities<X3DIR>(); }
+}
+
+// Brio-Wu-like jump: fluxes are finite and continuous as bn -> 0.
+template <int DIR>
+void CheckHLLDSmallNormalField() {
+  const MHDState l = Rotated<DIR>(1.0, 0.1, 0.0, 0.0, 1.0, 1.0, 1.4, 0.0, 1.0, 0.2);
+  const MHDState r = Rotated<DIR>(0.125, 0.1, 0.0, 0.0, 0.1, 0.1, 1.2, 0.0, -1.0, 0.2);
+  const MHDFlux f0 = RunHLLD<DIR>(l, r, 0.0);
+  for (const Real bn : {1.0e-20, 1.0e-14, 1.0e-10}) {
+    const MHDFlux f = RunHLLD<DIR>(l, r, bn);
+    for (const Real x : {f.f_v1, f.f_v2, f.f_v3, f.f_eng, f.riemann_vel, f.emf0, f.emf1,
+                         f.vrho, f.smax}) {
+      CHECK(std::isfinite(x));
+    }
+    CheckMHDFlux(f, f0, 1e-8);
+  }
+}
+
+TEST_CASE("HLLD is finite and continuous as the normal field vanishes",
+          "[hydro][riemann][hlld]") {
+  SECTION("X1") { CheckHLLDSmallNormalField<X1DIR>(); }
+  SECTION("X2") { CheckHLLDSmallNormalField<X2DIR>(); }
+  SECTION("X3") { CheckHLLDSmallNormalField<X3DIR>(); }
+}
+
+// Mirror symmetry: reflecting x_n -> -x_n swaps L and R and flips the normal components
+// of v and B. The mass, tangential momentum, energy and tangential field fluxes (hence
+// the EMFs) change sign; the normal momentum flux is unchanged.
+template <int DIR>
+void CheckHLLDMirrorSymmetry() {
+  constexpr int n = DIR - 1;
+  const MHDState l = Rotated<DIR>(1.08, 1.2, 0.01, 0.5, 2.38, 0.95, 1.2, 0.56, 1.02, 0.56);
+  const MHDState r = Rotated<DIR>(1.0, 0.0, 0.0, 0.0, 1.5, 1.0, 1.3, 0.56, 1.13, 0.56);
+  auto mirror = [](MHDState s) {
+    if (n == 0) s.v1 = -s.v1, s.b1 = -s.b1;
+    if (n == 1) s.v2 = -s.v2, s.b2 = -s.b2;
+    if (n == 2) s.v3 = -s.v3, s.b3 = -s.b3;
+    return s;
+  };
+  const MHDFlux f = RunHLLD<DIR>(l, r);
+  const MHDFlux m = RunHLLD<DIR>(mirror(r), mirror(l));
+  const Real fv[3] = {f.f_v1, f.f_v2, f.f_v3};
+  const Real mv[3] = {m.f_v1, m.f_v2, m.f_v3};
+  for (int d = 0; d < 3; ++d) {
+    const Real sign = (d == n) ? 1.0 : -1.0;
+    CHECK(mv[d] == Approx(sign * fv[d]).margin(1e-12));
+  }
+  CHECK(m.f_eng == Approx(-f.f_eng).margin(1e-12));
+  CHECK(m.vrho == Approx(-f.vrho).margin(1e-12));
+  CHECK(m.emf0 == Approx(-f.emf0).margin(1e-12));
+  CHECK(m.emf1 == Approx(-f.emf1).margin(1e-12));
+  CHECK(m.smax == Approx(f.smax).margin(1e-12));
+}
+
+TEST_CASE("HLLD is mirror symmetric", "[hydro][riemann][hlld][symmetry]") {
+  SECTION("X1") { CheckHLLDMirrorSymmetry<X1DIR>(); }
+  SECTION("X2") { CheckHLLDMirrorSymmetry<X2DIR>(); }
+  SECTION("X3") { CheckHLLDMirrorSymmetry<X3DIR>(); }
+}

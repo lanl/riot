@@ -77,6 +77,8 @@ A region is made Python-driven by setting ``mask_type`` ``= python`` and giving
 
 - state setters such as ``c_m_rho(self, pos, rho)``, ``c_m_pressure(self, pos, press)``, and ``c_c_bulk_velocity(self, pos, vel)`` — each fills the output array in place from the positions.
 
+- for MHD runs, ``f_b_vector_potential(self, pos, a)`` or ``f_b_bfield(self, pos, b)`` on the class named in the ``<regions>`` block sets the face-centered magnetic field (Section :ref:`sec:hydro-mhd`).
+
 Parameters for the class are passed through a companion block ``<name/params>``; each becomes an attribute of the instance. This is how geometry and state can vary arbitrarily in space, including perturbation seeds for instability studies.
 
 .. note::

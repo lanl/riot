@@ -57,7 +57,7 @@ class RiotDriver : public EvolutionDriver {
       *gravity_pkg, *strength_pkg, *ion_pkg, *laser_pkg;
   bool do_hydro, do_thinc, do_strength, do_mix, do_tn, do_levelsets, do_gravity,
       do_multigroup_diffusion, do_ionization, do_lasers, curvilinear;
-  bool fixed_fluid, use_general_pte, sparse_dealloc;
+  bool fixed_fluid, use_general_pte, sparse_dealloc, do_mhd;
   riot_plugins::Plugins plugins;
 
   uint64_t GetMaxRss();

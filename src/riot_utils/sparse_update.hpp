@@ -14,6 +14,8 @@
 #define RIOT_UTILS_SPARSE_UPDATE_HPP_
 // This file was made in part with generative AI.
 
+#include <algorithm>
+
 #include <kokkos_abstraction.hpp>
 #include <parthenon/package.hpp>
 
@@ -152,9 +154,12 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   bool sparse_physics = riot_pkg->template Param<bool>("sparse_physics");
   const bool kinematic = riot_pkg->template Param<bool>("kinematic_advection");
 
+  // Cell fields only: face fields with fluxes (the CT magnetic field) have node memory
+  // layout and are updated separately (Hydro::UpdateFaceFields).
   std::vector<MetadataFlag> flags(
       {kinematic ? Metadata::GetUserFlag(riot::metadata::KinematicAdvected)
-                 : Metadata::WithFluxes});
+                 : Metadata::WithFluxes,
+       Metadata::Cell});
 
   // make packs for the full state vector
   auto desc = parthenon::MakePackDescriptor<any>(umd, flags, {PDOpt::WithFluxes});
@@ -279,12 +284,58 @@ TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  TaskStatus sparse_update::DeepCopyFaceData
+//! \brief Face-field counterpart of DeepCopyData: deep copy the face fields selected by
+//!        flags over the entire domain. Flat views index node memory, so the selected
+//!        fields must have node layout (no Metadata::CellMemAligned).
+template <typename T>
+TaskStatus DeepCopyFaceData(std::vector<MetadataFlag> flags, T *to, T *from) {
+  Kokkos::Profiling::pushRegion("Task_DeepCopyFace");
+  using TE = parthenon::TopologicalElement;
+  flags.push_back(Metadata::Face);
+  for (const auto &[id, m] : from->GetMeshPointer()->resolved_packages->AllFields()) {
+    const bool selected = std::all_of(flags.begin(), flags.end(),
+                                      [&](const auto &f) { return m.IsSet(f); });
+    PARTHENON_REQUIRE(!(selected && m.IsSet(Metadata::CellMemAligned)),
+                      "DeepCopyFaceData does not support cell-aligned face field " +
+                          id.label());
+  }
+
+  auto desc = riot::MakePackDescriptor(flags, to);
+  const auto &dst = riot::GetPack(desc, to);
+  const auto &src = riot::GetPack(desc, from);
+  const int nblocks = src.GetNBlocks();
+  if (nblocks > 0 && src.GetMaxNumberOfVars() > 0) {
+    using lt = RiotUtils::LoopType<>;
+    auto idx_space =
+        lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, TE::NN, TE::NN);
+    RiotLoop::outer(
+        idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+          for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
+            for (int d = 0; d < 3; d++) {
+              const TE te = (d == 0) ? TE::F1 : ((d == 1) ? TE::F2 : TE::F3);
+              auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
+              auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
+              RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
+            }
+          }
+        });
+  }
+  Kokkos::Profiling::popRegion(); // Task_DeepCopyFace
+  return TaskStatus::complete;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyIndependentData
 //! \brief
 template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
-  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  // DeepCopyData indexes cell memory, so it gets the cell fields; independent face
+  // fields (the CT magnetic field) have node layout.
+  DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent, Metadata::Cell}), to,
+               from);
+  return DeepCopyFaceData({Metadata::Independent}, to, from);
 }
 
 } // namespace sparse_update

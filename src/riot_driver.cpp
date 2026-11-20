@@ -111,6 +111,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
 
   sparse_dealloc = riot_pkg->Param<bool>("sparse_dealloc");
   use_general_pte = (do_hydro) ? mat_pkg->Param<bool>("use_general_pte") : false;
+  do_mhd = (do_hydro) ? hydro_pkg->Param<bool>("do_mhd") : false;
 }
 
 //----------------------------------------------------------------------------------------
@@ -240,8 +241,15 @@ TaskCollection RiotDriver::RiotStepTasks() {
             hydro_flx | mix_flx, Ionization::ComputePlasmaViscousFluxes, mu0.get());
       }
 
+      // integrate the face EMFs from the Riemann solve to cell edges (constrained
+      // transport); these are the edge fluxes of the face magnetic field
+      auto ct_emf = none;
+      if (do_mhd) {
+        ct_emf = tl.AddTask(hydro_flx, Hydro::CalculateCornerEMF, mu0.get(), dt);
+      }
+
       // send flux corrections
-      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx,
+      auto send_flx = tl.AddTask(hydro_flx | plasma_viscosity_flx | mix_flx | ct_emf,
                                  parthenon::LoadAndSendFluxCorrections, mu0);
 
       // geometric sources, if curvilinear
@@ -298,7 +306,10 @@ TaskCollection RiotDriver::RiotStepTasks() {
 
       // receive and apply flux corrections
       auto recv_flx = tl.AddTask(start_flx_recv, parthenon::ReceiveFluxCorrections, mu0);
-      auto set_flx = tl.AddTask(recv_flx, parthenon::SetFluxCorrections, mu0);
+      // (must not run before this block's own fluxes/EMFs are written)
+      auto set_flx =
+          tl.AddTask(recv_flx | hydro_flx | plasma_viscosity_flx | mix_flx | ct_emf,
+                     parthenon::SetFluxCorrections, mu0);
 
       // one giant update kernel to rule them all
       // JMM: UpdateToNextStage sums every source term in dudt_args into the state
@@ -319,6 +330,13 @@ TaskCollection RiotDriver::RiotStepTasks() {
                                    mix_source | tn_shared_source | ionization_source,
                                sparse_update::UpdateToNextStage, mu0.get(), mu1.get(),
                                gam0, gam1, beta * dt, dudt_args);
+
+      // constrained-transport update of the face magnetic field
+      auto update_b = none;
+      if (do_mhd) {
+        update_b = tl.AddTask(ct_emf | set_flx, Hydro::UpdateFaceFields, mu0.get(),
+                              mu1.get(), gam0, gam1, beta * dt);
+      }
 
       // Set maximum signal speeds
       // NOTE(@pdmullen): This task goes away if we permit Metadata::FillGhost for
@@ -362,9 +380,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       }
 
       // set required fields before communication
-      auto int_derived =
-          tl.AddTask(update | radial_return | electron_entropy_to_energy | set_vfrac,
-                     PreCommFillDerived<MeshData<Real>>, mu0.get());
+      auto int_derived = tl.AddTask(update | update_b | radial_return |
+                                        electron_entropy_to_energy | set_vfrac,
+                                    PreCommFillDerived<MeshData<Real>>, mu0.get());
 
       // communicate boundaries
       auto set_bc = parthenon::AddBoundaryExchangeTasks(int_derived | max_signal, tl, mu0,

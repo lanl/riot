@@ -83,6 +83,14 @@ struct python_region_t {
 #endif
   }
 
+  bool HasMethod(const std::string &name) const {
+#ifdef RIOT_ENABLE_PYTHON
+    return IsInitialized() && py_obj.exists(name.c_str());
+#else
+    return false;
+#endif
+  }
+
   field_func_t make_state(const std::string &name) {
 #ifdef RIOT_ENABLE_PYTHON
     PARTHENON_REQUIRE(py_obj.exists(name.c_str()),

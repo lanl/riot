@@ -134,9 +134,10 @@ constexpr RiotLoop::inner_tag GetInnerTag() {
 }
 
 template <LoopConstraint... Cs, class MeshDataOrMeshBlockData>
-inline auto RiotIndexSpace(parthenon::IndexDomain domain, int halo, int nblocks,
-                           const MeshDataOrMeshBlockData *md,
-                           parthenon::TopologicalElement domain_te) {
+inline auto RiotIndexSpace(
+    parthenon::IndexDomain domain, int halo, int nblocks,
+    const MeshDataOrMeshBlockData *md, parthenon::TopologicalElement domain_te,
+    parthenon::TopologicalElement memory_te = parthenon::TopologicalElement::CC) {
   // Chunk one (halo-extended) ij-plane per inner iteration. The loop abstraction
   // resolves this against the extended indexer, so chunks stay plane-aligned in
   // every sweep direction (a bare cell count would misalign once a halo is added).
@@ -150,7 +151,8 @@ inline auto RiotIndexSpace(parthenon::IndexDomain domain, int halo, int nblocks,
 
   // Inner tag selection depends on what the loop allows
   constexpr RiotLoop::inner_tag itag = GetInnerTag<Cs...>();
-  return RiotLoop::IndexSpace<ltag, itag>(ninner, domain, halo, nblocks, md, domain_te);
+  return RiotLoop::IndexSpace<ltag, itag>(ninner, domain, halo, nblocks, md, domain_te,
+                                          memory_te);
 }
 
 template <LoopConstraint... Cs>
@@ -160,10 +162,11 @@ struct LoopType {
   using inner_idx_t = typename idx_space_t::inner_idx_t;
 
   template <class MeshDataOrMeshBlockData>
-  static idx_space_t GetIndexSpace(parthenon::IndexDomain domain, int halo, int nblocks,
-                                   const MeshDataOrMeshBlockData *md,
-                                   parthenon::TopologicalElement domain_te) {
-    return RiotIndexSpace<Cs...>(domain, halo, nblocks, md, domain_te);
+  static idx_space_t GetIndexSpace(
+      parthenon::IndexDomain domain, int halo, int nblocks,
+      const MeshDataOrMeshBlockData *md, parthenon::TopologicalElement domain_te,
+      parthenon::TopologicalElement memory_te = parthenon::TopologicalElement::CC) {
+    return RiotIndexSpace<Cs...>(domain, halo, nblocks, md, domain_te, memory_te);
   }
 };
 
@@ -186,10 +189,11 @@ struct ReductionType {
   // logical domain (halo < 0 insets); the range stays halo-free so inner_reduce accepts
   // it.
   template <class MeshDataOrMeshBlockData>
-  static idx_space_t GetIndexSpace(parthenon::IndexDomain domain, int halo, int nblocks,
-                                   const MeshDataOrMeshBlockData *md,
-                                   parthenon::TopologicalElement domain_te) {
-    return RiotIndexSpace<Cs...>(domain, halo, nblocks, md, domain_te)
+  static idx_space_t GetIndexSpace(
+      parthenon::IndexDomain domain, int halo, int nblocks,
+      const MeshDataOrMeshBlockData *md, parthenon::TopologicalElement domain_te,
+      parthenon::TopologicalElement memory_te = parthenon::TopologicalElement::CC) {
+    return RiotIndexSpace<Cs...>(domain, halo, nblocks, md, domain_te, memory_te)
         .template WithReducer<Reducer>();
   }
 
