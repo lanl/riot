@@ -197,7 +197,7 @@ def generate_input():
 
     riot.input(
         "radiation_transport/jacobi",
-        err_thr=1.0e-6,  # implicit residual threshold
+        err_thr_global=1.0e-6,  # implicit residual threshold
         dt_ratio_hyperbolic=2.0,  # Multiple of light-crossing time
     )
 
