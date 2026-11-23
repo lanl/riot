@@ -42,6 +42,9 @@ LatLonGrid::LatLonGrid(int ntheta, int nphi, bool fv_fix)
       ind_reflect("ind_reflect", 3, 1, 1), wgt_reflect("wgt_reflect", 3, 1, 1) {
 
   nangles = ntheta * nphi;
+  chain_length = parthenon::IsCoord<parthenon::UniformCylindrical>()
+                     ? nphi
+                     : (parthenon::IsCoord<parthenon::UniformSpherical>() ? ntheta : 0);
 
   // Host Arrays
   ParArrayHost<Real> theta_v("theta_v", ntheta);

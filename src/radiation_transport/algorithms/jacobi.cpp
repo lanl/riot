@@ -248,6 +248,16 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   mi.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
   jacobi_pkg->AddField<ccrad::intensity>(mi);
 
+  // Source function
+  // S = (sigma_a B + sigma_s J) / sigma_t of the face flux (see FaceWeights), iterated
+  // (and communicated) with the intensity
+  Metadata ms = Metadata({Metadata::Cell, Metadata::Independent, Metadata::FillGhost,
+                          Metadata::CommunicateOne, Metadata::Intensive, MetadataJacobi,
+                          MetadataOperatorSplit},
+                         std::vector<int>({ngroups}));
+  ms.RegisterRefinementOps<ProlongatePiecewiseConstant, RestrictAverage>();
+  jacobi_pkg->AddField<ccrad::source>(ms);
+
   // Opacity fields
   Metadata mo =
       Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, Metadata::FillGhost,
@@ -391,8 +401,9 @@ TaskCollection JacobiTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   // Assemble MeshData subsets once; they are reused across any subcycles this step
   namespace mdname = container_names;
   namespace ccrad = cell_variables::cell_averaged::rad;
-  std::vector<std::string> intensity_names = pm->GetVariableNames(
-      std::vector<std::string>{ccrad::intensity::name()}, std::vector<int>{});
+  std::vector<std::string> iterated = {ccrad::intensity::name(), ccrad::source::name()};
+  std::vector<std::string> intensity_names =
+      pm->GetVariableNames(iterated, std::vector<int>{});
   auto &base = pm->mesh_data.Get();
   pm->mesh_data.Add(mdname::riter, base, intensity_names);
   pm->mesh_data.Add(mdname::rout, base, intensity_names);
@@ -719,9 +730,10 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
 
   // Convergence tests: the residual against the threshold and, if the step fraction is
   // positive, the estimated remaining error against that fraction of the step change,
-  // floored at the threshold. An exactly zero residual is the fixed point itself, so its
-  // error is zero. Slot 0 holds the residual history of the global test, slot g + 1 that
-  // of group g.
+  // floored at the threshold. A residual at or below the machine epsilon is the fixed
+  // point to working precision, where the contraction rate only measures round-off (and
+  // may read >= 1 indefinitely), so its error is the residual itself. Slot 0 holds the
+  // residual history of the global test, slot g + 1 that of group g.
   auto &history = *jacobi_pkg->MutableParam<std::vector<Real>>("residual_history");
   bool threshold_met = true;
   bool residual_met = true;
@@ -734,9 +746,9 @@ TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *presidual, Mesh *pm
     h[1] = h[0];
     h[0] = residual;
     const bool estimated = (step_fraction > 0.0);
-    const Real error = (residual == 0.0) ? 0.0
-                       : (rate < 1.0)    ? rate / (1.0 - rate) * residual
-                                         : std::numeric_limits<Real>::infinity();
+    const Real error = (residual <= std::numeric_limits<Real>::epsilon()) ? residual
+                       : (rate < 1.0) ? rate / (1.0 - rate) * residual
+                                      : std::numeric_limits<Real>::infinity();
     const Real target = std::max(step_fraction * step, threshold);
     threshold_met = threshold_met && (residual <= threshold);
     residual_met =
@@ -981,6 +993,8 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
   auto pm = rout->GetParentPointer();
   auto jacobi_pkg = pm->packages.Get(pkg_name);
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
+  const int nchain = jacobi_pkg->Param<int>("chain_length");
+  const bool coupling = jacobi_pkg->Param<bool>("coupling");
 
   // Resolved packages and indexing
   auto &resolved_pkgs = pm->resolved_packages;
@@ -1002,17 +1016,18 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
   // Utilities
   const auto unit_utils = jacobi_pkg->Param<UnitUtils>("unit_utils");
   const Real cdt = unit_utils.c * dt;
-  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Packing
   namespace ccr = cell_variables::cell_averaged::rad;
   using parthenon::MakePackDescriptor;
   static auto desc_g = MakePackDescriptor<ccr::aa, ccr::ss>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
+  static auto desc_s = MakePackDescriptor<ccr::source>(resolved_pkgs.get());
   auto vg = desc_g.GetPack(rbase);
   auto vb = desc_i.GetPack(rbase);
   auto vi = desc_i.GetPack(riter);
   auto vo = desc_i.GetPack(rout);
+  auto vs = desc_s.GetPack(riter);
 
   // Angular flux indexing
   const auto NDIR = AngularFluxDirs();
@@ -1033,15 +1048,15 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
 
         // Compute Jacobi coefficients
         // clang-format off
-        const auto tw = FaceTauWeights(vg, coords, ndim, futils, gg, b, k, j, i);
+        const auto tau = FaceTaus(vg, coords, ndim, coupling, gg, b, k, j, i);
         Real g1p = 1.0, g1pp = 0.0;
         std::array<Real, 6> gn = {0.0};
         GCoef<X1DIR>(coords, cp, NDIR, ivol, split_g1,
-                     tw, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
+                     tau, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
         if (multid) GCoef<X2DIR>(coords, cp, NDIR, ivol, split_g1,
-                                 tw, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
+                                 tau, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
         if (threed) GCoef<X3DIR>(coords, cp, NDIR, ivol, split_g1,
-                                 tw, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
+                                 tau, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
         // clang-format on
 
         // Spatial flux divergence operator
@@ -1052,7 +1067,20 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
         df += threed *
               (gn[4] * vi(b, n, k - threed, j, i) + gn[5] * vi(b, n, k + threed, j, i));
 
-        // Angular flux divergence operator
+        // Source function part of the face flux from neighbors (lagged; the cell's own
+        // source function, with coefficient gs, is implicit in ApplyRHS)
+        // clang-format off
+        Real gs = 0.0;
+        df += SourceFlux<X1DIR>(vs, coords, cp, NDIR, ivol,
+                                tau, aa, b, gg, k, j, i, gs);
+        if (multid) df += SourceFlux<X2DIR>(vs, coords, cp, NDIR, ivol,
+                                            tau, aa, b, gg, k, j, i, gs);
+        if (threed) df += SourceFlux<X3DIR>(vs, coords, cp, NDIR, ivol,
+                                            tau, aa, b, gg, k, j, i, gs);
+        // clang-format on
+
+        // Angular flux divergence operator (upwind intensity part of the angular edges;
+        // their source function part is the cell's own, implicit in ApplyRHS)
         [[maybe_unused]] auto &wght_ = wght;
         [[maybe_unused]] auto &numn_ = numn;
         [[maybe_unused]] auto &gflx_ = gflx;
@@ -1060,14 +1088,16 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
         [[maybe_unused]] auto &indn_ = indn;
         if constexpr (do_angular_fluxes) {
           const Real mcw_ix1 = -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
           for (int nb = 0; nb < numn_(aa); ++nb) {
-            const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb);
+            const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb) *
+                            AngularWeight(indn_, aa, nb, blo, bhi);
             g1p += (na > 0) * na;
             df += (na < 0) * na * vi(b, GAI(nangles, gg, indn_(aa, nb)), k, j, i);
           }
         }
 
-        vo(b, n, k, j, i) = std::max((vb(b, n, k, j, i) - df) / g1p, 0.0);
+        vo(b, n, k, j, i) = (vb(b, n, k, j, i) - df) / g1p;
       });
 
   return TaskStatus::complete;
@@ -1087,6 +1117,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   const bool coupling = jacobi_pkg->Param<bool>("coupling");
   if (!(coupling)) return TaskStatus::complete;
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
+  const int nchain = jacobi_pkg->Param<int>("chain_length");
 
   // troot verbosity flag
   const bool verbose = (jacobi_pkg->Param<int>("verbose") == 3);
@@ -1108,7 +1139,6 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   // Extract Jacobi params
   const bool affect_fluid = jacobi_pkg->Param<bool>("affect_fluid");
   const bool fixed_temp_rhs = jacobi_pkg->Param<bool>("fixed_temp_rhs");
-  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Extract angular grid params
   const auto agrid = GetAngularGridArrays(jacobi_pkg);
@@ -1117,6 +1147,7 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   const auto &arcw = agrid.arc_weights;
   const auto &wght = agrid.weights;
   const auto &numn = agrid.num_neighbors;
+  const auto &indn = agrid.ind_neighbors;
 
   // Hydro
   auto &hydro_pkg = pm->packages.Get("hydro");
@@ -1138,9 +1169,11 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
   static auto desc_u = MakePackDescriptor<ccmat::rho, cm::rho, ccbulk::temperature,
                                           ccbulk::internal_energy>(resolved_pkgs.get());
   static auto desc_o = MakePackDescriptor<ccrad::intensity>(resolved_pkgs.get());
+  static auto desc_s = MakePackDescriptor<ccrad::source>(resolved_pkgs.get());
   auto vb = desc_b.GetPack(rbase);
   auto vu = desc_u.GetPack(ubase);
   auto vo = desc_o.GetPack(rout);
+  auto vs = desc_s.GetPack(rout);
 
   // Angular flux indexing
   const auto NDIR = AngularFluxDirs();
@@ -1175,13 +1208,17 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
           Real &aa1 = vb(b, ccrad::s1(gg), k, j, i) = 0.0;
           Real &aa2 = vb(b, ccrad::s2(gg), k, j, i) = 0.0;
           Real &aa3 = vb(b, ccrad::s3(gg), k, j, i) = 0.0;
-          const auto tw = FaceTauWeights(vb, coords, ndim, futils, gg, b, k, j, i);
+          // ...where the face fluxes carry the cell's own source function gs S, so that
+          //      (g1 + cdt sigma_t) I = g1 I* + (cdt sigma_t - gs) S
+          // ...with cdt sigma_t S = cdt sigma_a B + cdt sigma_s J...
+          const auto tau = FaceTaus(vb, coords, ndim, coupling, gg, b, k, j, i);
           for (int aa = 0; aa < nangles; ++aa) {
-            const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, ivol,
-                                   mcw, split_g1, tw, aa, k, j, i);
+            Real gs = 0.0;
+            const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, indn,
+                                   ivol, mcw, split_g1, nchain, tau, aa, k, j, i, gs);
             const Real &ii = vo(b, GAI(nangles, gg, aa), k, j, i);
             const Real tmp = wght(aa) / (g1 + cdtsigt);
-            aa1 += tmp;
+            aa1 += (cdtsigt > 0.0) ? (1.0 - gs / cdtsigt) * tmp : tmp;
             aa2 += g1 * ii * tmp;
           }
           aa3 = 1.0 / (1.0 - aa1 * cdtsigs);
@@ -1212,16 +1249,36 @@ TaskStatus ApplyRHS(MeshData<Real> *rbase, MeshData<Real> *rout, MeshData<Real> 
             // Set advanced stage specific intensity
             const Real ee = emissivity.Next();
             const Real jj = (aa1 * ee + aa2) * aa3;
-            const auto tw = FaceTauWeights(vb, coords, ndim, futils, gg, b, k, j, i);
+            const Real sf =
+                (cdtsigt > 0.0) ? (cdtsigs * jj + cdtsiga * ee) / cdtsigt : 0.0;
+            vs(b, ccrad::source(gg), k, j, i) = sf;
+            const auto tau = FaceTaus(vb, coords, ndim, coupling, gg, b, k, j, i);
             for (int aa = 0; aa < nangles; ++aa) {
-              const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, ivol,
-                                     mcw, split_g1, tw, aa, k, j, i);
+              Real gs = 0.0;
+              const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, indn,
+                                     ivol, mcw, split_g1, nchain, tau, aa, k, j, i, gs);
               Real &ii = vo(b, GAI(nangles, gg, aa), k, j, i);
               // clang-format off
               ii = std::max(ii + ((cdtsigs * jj +
                                    cdtsiga * ee -
-                                   cdtsigt * ii) / (g1 + cdtsigt)), 0.0);
+                                   cdtsigt * ii -
+                                   gs * sf) / (g1 + cdtsigt)), 0.0);
               // clang-format on
+            }
+          }
+        } else {
+          // No absorption, emission or scattering this iteration (root failed), so the
+          // cell's own source function enters the face fluxes at its current value (as
+          // in JacobiFeedback)
+          for (int gg = 0; gg < ngroups; ++gg) {
+            const Real &sf = vs(b, ccrad::source(gg), k, j, i);
+            const auto tau = FaceTaus(vb, coords, ndim, coupling, gg, b, k, j, i);
+            for (int aa = 0; aa < nangles; ++aa) {
+              Real gs = 0.0;
+              const Real g1 = G1Coef(coords, cp, NDIR, ndim, wght, gflx, arcw, numn, indn,
+                                     ivol, mcw, split_g1, nchain, tau, aa, k, j, i, gs);
+              Real &ii = vo(b, GAI(nangles, gg, aa), k, j, i);
+              ii = std::max(ii - gs * sf / g1, 0.0);
             }
           }
         }
@@ -1240,6 +1297,8 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   auto jacobi_pkg = pm->packages.Get(pkg_name);
   if (!(jacobi_pkg->Param<bool>("affect_fluid"))) return TaskStatus::complete;
   const bool split_g1 = jacobi_pkg->Param<bool>("split_g1");
+  const int nchain = jacobi_pkg->Param<int>("chain_length");
+  const bool coupling = jacobi_pkg->Param<bool>("coupling");
 
   // Indexing
   const int ndim = pm->ndim;
@@ -1260,7 +1319,6 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   // Utilities
   const auto unit_utils = jacobi_pkg->Param<UnitUtils>("unit_utils");
   const Real cdt = unit_utils.c * dt;
-  const auto futils = jacobi_pkg->Param<FluxUtils>("flux_utils");
 
   // Packing
   namespace ccbulk = cell_variables::cell_averaged::bulk;
@@ -1268,12 +1326,15 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
   auto &resolved_pkgs = pm->resolved_packages;
   static auto desc_g = MakePackDescriptor<ccr::aa, ccr::ss>(resolved_pkgs.get());
   static auto desc_i = MakePackDescriptor<ccr::intensity>(resolved_pkgs.get());
+  static auto desc_s = MakePackDescriptor<ccr::source>(resolved_pkgs.get());
   static auto desc_u = MakePackDescriptor<ccbulk::internal_energy>(resolved_pkgs.get());
   auto vu = desc_u.GetPack(ubase);
   auto vg = desc_g.GetPack(rbase);
   auto vb = desc_i.GetPack(rbase);
   auto vi = desc_i.GetPack(riter);
   auto vo = desc_i.GetPack(rout);
+  auto vs = desc_s.GetPack(riter);
+  auto vso = desc_s.GetPack(rout);
 
   // Angular flux indexing
   const auto NDIR = AngularFluxDirs();
@@ -1293,7 +1354,7 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
         for (int gg = 0; gg < ngroups; ++gg) {
           Real er_old = 0.0;
           Real er_new = 0.0;
-          const auto tw = FaceTauWeights(vg, coords, ndim, futils, gg, b, k, j, i);
+          const auto tau = FaceTaus(vg, coords, ndim, coupling, gg, b, k, j, i);
           for (int aa = 0; aa < nangles; ++aa) {
             // Collapsed indexing
             const int n = GAI(nangles, gg, aa);
@@ -1303,11 +1364,11 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             Real g1p = 1.0, g1pp = 0.0;
             std::array<Real, 6> gn = {0.0};
             GCoef<X1DIR>(coords, cp, NDIR, ivol, split_g1,
-                         tw, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
+                         tau, aa, k, j, i, g1p, g1pp, gn[0], gn[1]);
             if (multid) GCoef<X2DIR>(coords, cp, NDIR, ivol, split_g1,
-                                     tw, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
+                                     tau, aa, k, j, i, g1p, g1pp, gn[2], gn[3]);
             if (threed) GCoef<X3DIR>(coords, cp, NDIR, ivol, split_g1,
-                                     tw, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
+                                     tau, aa, k, j, i, g1p, g1pp, gn[4], gn[5]);
             // clang-format on
 
             // Backtrack contributions from g2-g7 and gn
@@ -1318,6 +1379,19 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             df += threed * (gn[4] * vi(b, n, k - threed, j, i) +
                             gn[5] * vi(b, n, k + threed, j, i));
 
+            // Source function part of the face flux: lagged neighbors (identical to
+            // JacobiUpdate) and the cell's own (advanced) source function from ApplyRHS,
+            // whose coefficient gs includes the angular edges below
+            // clang-format off
+            Real gs = 0.0;
+            df += SourceFlux<X1DIR>(vs, coords, cp, NDIR, ivol,
+                                    tau, aa, b, gg, k, j, i, gs);
+            if (multid) df += SourceFlux<X2DIR>(vs, coords, cp, NDIR, ivol,
+                                                tau, aa, b, gg, k, j, i, gs);
+            if (threed) df += SourceFlux<X3DIR>(vs, coords, cp, NDIR, ivol,
+                                                tau, aa, b, gg, k, j, i, gs);
+            // clang-format on
+
             [[maybe_unused]] auto &wght_ = wght;
             [[maybe_unused]] auto &numn_ = numn;
             [[maybe_unused]] auto &gflx_ = gflx;
@@ -1326,12 +1400,17 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             if constexpr (do_angular_fluxes) {
               const Real mcw_ix1 =
                   -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+              const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
               for (int nb = 0; nb < numn_(aa); ++nb) {
                 const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb);
-                g1p += (na > 0) * na;
-                df += (na < 0) * na * vi(b, GAI(nangles, gg, indn_(aa, nb)), k, j, i);
+                const Real ab = AngularWeight(indn_, aa, nb, blo, bhi);
+                g1p += (na > 0) * ab * na;
+                df +=
+                    (na < 0) * ab * na * vi(b, GAI(nangles, gg, indn_(aa, nb)), k, j, i);
+                gs += (1.0 - ab) * na;
               }
             }
+            df += gs * vso(b, ccr::source(gg), k, j, i);
 
             // Compute change in moments from coupling term
             // ...Jiang 21, Equation (22)...

@@ -188,7 +188,6 @@ def generate_input():
         do_explicit=True,  # enable explicit transport
         do_jacobi=False,  # enable implicit Jacobi solver
         nlevel=4,  # level of geodesic mesh
-        beta=5.0,  # parameter controlling tauc in Rusanov rad-flux
         coupling=True,  # flag to enable radiation source term
         affect_fluid=False,  # feedback on the fluid
         troot_tol=1.0e-6,  # temperature root find tolerance

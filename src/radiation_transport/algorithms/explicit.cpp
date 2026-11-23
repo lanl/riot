@@ -82,10 +82,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
       "radiation transport to limit global timestep.");
 
   // RK subcycler
-  const std::string integrator = pin->GetOrAddString(
-      input_block, "integrator", "rk2",
-      "Temporal integrator for explicit thermal radiation transport subcycler");
-  params.Add("integrator", integrator);
+  PARTHENON_REQUIRE(pin->GetOrAddString(input_block, "integrator", "rk1") == "rk1",
+                    "The explicit radiation transport subcycler requires integrator=rk1");
+  params.Add("integrator", std::string("rk1"));
 
   // Subcycling
   params.Add(
@@ -119,6 +118,11 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                std::vector<int>({ngroups}));
   explicit_pkg->AddField<ccrad::aa>(m);
   explicit_pkg->AddField<ccrad::ss>(m);
+
+  // Source function
+  // S = (sigma_a B + sigma_s J) / sigma_t of the face flux (see FaceWeights), set at the
+  // start of each step (see SetSource) and by each stage's source term (see ApplyRHS)
+  explicit_pkg->AddField<ccrad::source>(m);
 
   // Moments and auxillary scratch fields
   m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy, MetadataExplicit,
@@ -259,8 +263,10 @@ TaskCollection ExplicitTasks(Mesh *pm, parthenon::SimTime &tm, const Real dt) {
   // Assemble MeshData subsets
   namespace mdname = container_names;
   namespace ccrad = cell_variables::cell_averaged::rad;
-  std::vector<std::string> opac_names = pm->GetVariableNames(
-      std::vector<std::string>{ccrad::aa::name(), ccrad::ss::name()}, std::vector<int>{});
+  std::vector<std::string> opac_names =
+      pm->GetVariableNames(std::vector<std::string>{ccrad::aa::name(), ccrad::ss::name(),
+                                                    ccrad::source::name()},
+                           std::vector<int>{});
   auto &base = pm->mesh_data.Get();
   auto &r0 = pm->mesh_data.AddShallow(mdname::r0, base, explicit_names);
   auto &r1 = pm->mesh_data.Add(mdname::r1, r0);
@@ -317,10 +323,11 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
     if (affect_fluid) srec = tl.AddTask(srec, parthenon::StartReceiveBoundBufs<any>, a0);
     srec = tl.AddTask(srec, parthenon::StartReceiveFluxCorrections, r0);
 
-    // Set opacities
+    // Set opacities and the source function
     auto set_opac = tl.AddTask(srec, UpdateOpacities, base.get());
+    auto set_src = tl.AddTask(set_opac, SetSource, base.get());
     auto opac_bc =
-        parthenon::AddBoundaryExchangeTasks(set_opac, tl, ro, pmesh->multilevel);
+        parthenon::AddBoundaryExchangeTasks(set_src, tl, ro, pmesh->multilevel);
 
     // Prepare for iterations
     auto prep_sc = tl.AddTask(TaskQualifier::once_per_region | TaskQualifier::local_sync,
@@ -470,6 +477,58 @@ TaskStatus UpdateOpacities(MeshData<Real> *md) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  TaskStatus Explicit::SetSource
+//! \brief Set the source function S = (sigma_a B + sigma_s J) / sigma_t of the face
+//! fluxes from the start-of-step intensity and temperature (ApplyRHS sets it thereafter)
+TaskStatus SetSource(MeshData<Real> *md) {
+  if (md->NumBlocks() == 0) return TaskStatus::complete;
+
+  auto pm = md->GetParentPointer();
+  auto explicit_pkg = pm->packages.Get(pkg_name);
+  if (!(explicit_pkg->Param<bool>("coupling"))) return TaskStatus::complete;
+
+  // Resolved packages and indexing
+  auto &resolved_pkgs = pm->resolved_packages;
+  const int ngroups = explicit_pkg->Param<int>("ngroups");
+  const int nangles = explicit_pkg->Param<int>("nangles");
+  const auto unit_utils = explicit_pkg->Param<UnitUtils>("unit_utils");
+  const auto fbnd = *(explicit_pkg->MutableParam<ParArray1D<Real>>("fbnd_d"));
+  const auto agrid = GetAngularGridArrays(explicit_pkg);
+  const auto &wght = agrid.weights;
+
+  // Packing
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ccrad = cell_variables::cell_averaged::rad;
+  static auto desc =
+      MakePackDescriptor<ccbulk::temperature, ccrad::aa, ccrad::ss, ccrad::intensity,
+                         ccrad::source>(resolved_pkgs.get());
+  auto pack = desc.GetPack(md);
+
+  auto idx_space =
+      RiotFlatLoop::GetIndexSpace(IndexDomain::interior, pack.GetNBlocks(), md);
+  RiotFlatLoop::four_d(
+      "SetSource", idx_space,
+      KOKKOS_LAMBDA(const int &b, const int &k, const int &j, const int &i) {
+        EmissivitySweep emissivity(pack(b, ccbulk::temperature(), k, j, i), fbnd, ngroups,
+                                   unit_utils);
+        for (int gg = 0; gg < ngroups; ++gg) {
+          const Real ee = emissivity.Next();
+          Real jj = 0.0;
+          for (int aa = 0; aa < nangles; ++aa) {
+            jj += wght(aa) * pack(b, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i);
+          }
+          const Real &siga = pack(b, ccrad::aa(gg), k, j, i);
+          const Real &sigs = pack(b, ccrad::ss(gg), k, j, i);
+          const Real sigt = siga + sigs;
+          pack(b, ccrad::source(gg), k, j, i) =
+              (sigt > 0.0) ? (sigs * jj + siga * ee) / sigt : 0.0;
+        }
+      });
+
+  return TaskStatus::complete;
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  TaskStatus CalculateFluxes
 //! \brief Computes fluxes
 TaskStatus CalculateFluxes(MeshData<Real> *r0) {
@@ -485,6 +544,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
   const int threed = ndim > 2;
   const int ngroups = explicit_pkg->Param<int>("ngroups");
   const int nangles = explicit_pkg->Param<int>("nangles");
+  const bool coupling = explicit_pkg->Param<bool>("coupling");
+  const int nchain = explicit_pkg->Param<int>("chain_length");
   IndexRange ib = r0->GetBoundsI(IndexDomain::interior);
   IndexRange jb = r0->GetBoundsJ(IndexDomain::interior);
   IndexRange kb = r0->GetBoundsK(IndexDomain::interior);
@@ -500,11 +561,6 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
   const auto &numn = agrid.num_neighbors;
   const auto &indn = agrid.ind_neighbors;
 
-  // Spatial fluxes
-  auto futils = explicit_pkg->Param<FluxUtils>("flux_utils");
-  const Real beta = futils.beta;
-  const Real tmax = futils.taumax;
-
   // Angular flux indexing
   const auto NDIR = AngularFluxDirs();
 
@@ -513,7 +569,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
   static auto desc_ii = MakePackDescriptor<ccr::intensity>(
       pm->resolved_packages.get(), {}, {parthenon::PDOpt::WithFluxes});
   static auto desc_da = MakePackDescriptor<ccr::divfa>(pm->resolved_packages.get());
-  static auto desc_op = MakePackDescriptor<ccr::aa, ccr::ss>(pm->resolved_packages.get());
+  static auto desc_op =
+      MakePackDescriptor<ccr::aa, ccr::ss, ccr::source>(pm->resolved_packages.get());
   auto ii = desc_ii.GetPack(r0);
   auto da = desc_da.GetPack(r0);
   auto op = desc_op.GetPack(r0);
@@ -532,41 +589,42 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         const int aa = AI(nangles, n);
 
         // Calculate fluxes
-        Real cn = cc * cp(aa, NDIR[X1DIR - 1]);
+        Real nn = cp(aa, NDIR[X1DIR - 1]);
         Real dx = coords.CellWidth<X1DIR>(k, j, i);
         ii.flux(b, X1DIR, n, k, j, i) =
-            SpatialFlux<X1DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
+            SpatialFlux<X1DIR>(ii, op, cc, nn, coupling, b, n, gg, k, j, i, dx);
         if (i == ib.e) {
           dx = coords.CellWidth<X1DIR>(k, j, i + 1);
           ii.flux(b, X1DIR, n, k, j, i + 1) =
-              SpatialFlux<X1DIR>(ii, cn, b, n, k, j, i + 1, op, gg, beta, dx, tmax);
+              SpatialFlux<X1DIR>(ii, op, cc, nn, coupling, b, n, gg, k, j, i + 1, dx);
         }
 
         if (multid) { // Cartesian or RZ
-          cn = cc * cp(aa, NDIR[X2DIR - 1]);
+          nn = cp(aa, NDIR[X2DIR - 1]);
           dx = coords.CellWidth<X2DIR>(k, j, i);
           ii.flux(b, X2DIR, n, k, j, i) =
-              SpatialFlux<X2DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
+              SpatialFlux<X2DIR>(ii, op, cc, nn, coupling, b, n, gg, k, j, i, dx);
           if (j == jb.e) {
             dx = coords.CellWidth<X2DIR>(k, j + 1, i);
             ii.flux(b, X2DIR, n, k, j + 1, i) =
-                SpatialFlux<X2DIR>(ii, cn, b, n, k, j + 1, i, op, gg, beta, dx, tmax);
+                SpatialFlux<X2DIR>(ii, op, cc, nn, coupling, b, n, gg, k, j + 1, i, dx);
           }
         }
 
         if (threed) { // 3D Cartesian only
-          cn = cc * cp(aa, NDIR[X3DIR - 1]);
+          nn = cp(aa, NDIR[X3DIR - 1]);
           dx = coords.CellWidth<X3DIR>(k, j, i);
           ii.flux(b, X3DIR, n, k, j, i) =
-              SpatialFlux<X3DIR>(ii, cn, b, n, k, j, i, op, gg, beta, dx, tmax);
+              SpatialFlux<X3DIR>(ii, op, cc, nn, coupling, b, n, gg, k, j, i, dx);
           if (k == kb.e) {
             dx = coords.CellWidth<X3DIR>(k + 1, j, i);
             ii.flux(b, X3DIR, n, k + 1, j, i) =
-                SpatialFlux<X3DIR>(ii, cn, b, n, k + 1, j, i, op, gg, beta, dx, tmax);
+                SpatialFlux<X3DIR>(ii, op, cc, nn, coupling, b, n, gg, k + 1, j, i, dx);
           }
         }
 
-        // Compute angular flux divergence
+        // Compute angular flux divergence, whose edge intensity ab I_up + (1 - ab) S
+        // takes the cell's own source function (see AngularWeight)
         [[maybe_unused]] auto &da_ = da;
         [[maybe_unused]] auto &wght_ = wght;
         [[maybe_unused]] auto &numn_ = numn;
@@ -576,11 +634,15 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         if constexpr (do_angular_fluxes) {
           Real &divfa = da_(b, n, k, j, i) = 0.0;
           const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
+          const auto tau = FaceTaus(op, coords, ndim, coupling, gg, b, k, j, i);
+          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
+          const Real &sf = op(b, ccr::source(gg), k, j, i);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb);
             const Real &iu = (na > 0) ? ii(b, n, k, j, i)
                                       : ii(b, GAI(nangles, gg, indn_(aa, nb)), k, j, i);
-            divfa += na * iu * arcw_(aa, nb);
+            const Real ab = AngularWeight(indn_, aa, nb, blo, bhi);
+            divfa += na * (ab * iu + (1.0 - ab) * sf) * arcw_(aa, nb);
           }
         }
       });
@@ -650,7 +712,7 @@ TaskStatus Update(MeshData<Real> *r0, MeshData<Real> *r1, const Real g0, const R
 
         // Apply RK logic
         Real &ii = i0(b, n, k, j, i);
-        ii = std::max(g0 * ii + g1 * i1(b, n, k, j, i) - bdt * df, 0.0);
+        ii = g0 * ii + g1 * i1(b, n, k, j, i) - bdt * df;
       });
 
   return TaskStatus::complete;
@@ -709,7 +771,8 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
   static auto desc =
       MakePackDescriptor<ccmat::rho, cm::rho, ccbulk::temperature,
                          ccbulk::internal_energy, ccrad::aa, ccrad::ss, ccrad::s1,
-                         ccrad::s2, ccrad::s3, ccrad::intensity>(resolved_pkgs.get());
+                         ccrad::s2, ccrad::s3, ccrad::intensity, ccrad::source>(
+          resolved_pkgs.get());
   auto pack = desc.GetPack(md);
 
   // Apply explicit source term
@@ -772,6 +835,8 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
             Real er_new = 0.0;
             const Real ee = emissivity.Next();
             const Real jj = (aa1 * ee + aa2) * aa3;
+            pack(b, ccrad::source(gg), k, j, i) =
+                (cdtsigt > 0.0) ? (cdtsigs * jj + cdtsiga * ee) / cdtsigt : 0.0;
             for (int aa = 0; aa < nangles; ++aa) {
               const int n = GAI(nangles, gg, aa);
               Real &ii = pack(b, ccrad::intensity(n), k, j, i);
@@ -790,6 +855,13 @@ TaskStatus ApplyRHS(MeshData<Real> *md, const Real dt) {
           if (affect_fluid) {
             tbase = tadv; // overwritten upon PTE
             pack(b, ccbulk::internal_energy(), k, j, i) += delta_er;
+          }
+        } else {
+          // No absorption, emission or scattering this stage (root failed), so only the
+          // clip of the flux update applies (the source function keeps its value)
+          for (int n = 0; n < ngroups * nangles; ++n) {
+            Real &ii = pack(b, ccrad::intensity(n), k, j, i);
+            ii = std::max(ii, 0.0);
           }
         }
       });

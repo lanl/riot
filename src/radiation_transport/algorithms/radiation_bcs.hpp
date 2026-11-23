@@ -104,9 +104,12 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
   const int ngroups = rad_pkg->Param<int>("ngroups");
   const int nangles = rad_pkg->Param<int>("nangles");
 
-  // Intensity
+  // Intensity (and the source function S, which is driven alike)
   static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
+  static auto descs = GetBoundaryPackDescriptorMap<ccrad::source>(mbd);
   auto vr = descr[coarse].GetPack(mbd.get());
+  auto vs = descs[coarse].GetPack(mbd.get());
+  const bool has_source = (vs.GetMaxNumberOfVars() > 0);
   if (vr.GetMaxNumberOfVars() > 0) {
     using RiotTables::Uniform1D;
     const bool from_table = rad_pkg->Param<bool>("drive_from_table");
@@ -139,12 +142,16 @@ inline void DriveBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) 
               vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) =
                   std::max(ee, vr(0, ccrad::intensity(GAI(nangles, gg, aa)), kr, jr, ir));
             }
+            if (has_source) {
+              vs(0, ccrad::source(gg), k, j, i) =
+                  std::max(ee, vs(0, ccrad::source(gg), kr, jr, ir));
+            }
           }
         });
   }
 
-  // Opacity: by default zero at the boundary to force a purely upwind flux (even when
-  // radiation_transport/beta > 0)
+  // Opacity: by default zero at the boundary to force a purely upwind flux (zero face
+  // optical depth, see FaceWeights)
   static auto desco = GetBoundaryPackDescriptorMap<ccrad::aa, ccrad::ss>(mbd);
   auto vo = desco[coarse].GetPack(mbd.get());
   if (vo.GetMaxNumberOfVars() > 0) {
@@ -230,10 +237,14 @@ inline void ReflectBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse
         });
   }
 
-  // Opacity
+  // Opacity (and the source function S)
   static auto desco = GetBoundaryPackDescriptorMap<ccrad::aa, ccrad::ss>(mbd);
+  static auto descs = GetBoundaryPackDescriptorMap<ccrad::source>(mbd);
   auto vo = desco[coarse].GetPack(mbd.get());
-  if (vo.GetMaxNumberOfVars() > 0) {
+  auto vs = descs[coarse].GetPack(mbd.get());
+  const bool has_opacity = (vo.GetMaxNumberOfVars() > 0);
+  const bool has_source = (vs.GetMaxNumberOfVars() > 0);
+  if (has_opacity || has_source) {
     pmb->par_for_bndry(
         "ReflectBC-opacity", nb, domain, parthenon::TopologicalElement::CC, coarse, false,
         KOKKOS_LAMBDA(const int &l, const int &k, const int &j, const int &i) {
@@ -241,8 +252,13 @@ inline void ReflectBCImpl(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse
           int kr, jr, ir;
           RadiationBC::RefIdx<DIR>(k, j, i, msum - g, kr, jr, ir);
           for (int gg = 0; gg < ngroups; ++gg) {
-            vo(0, ccrad::aa(gg), k, j, i) = vo(0, ccrad::aa(gg), kr, jr, ir);
-            vo(0, ccrad::ss(gg), k, j, i) = vo(0, ccrad::ss(gg), kr, jr, ir);
+            if (has_opacity) {
+              vo(0, ccrad::aa(gg), k, j, i) = vo(0, ccrad::aa(gg), kr, jr, ir);
+              vo(0, ccrad::ss(gg), k, j, i) = vo(0, ccrad::ss(gg), kr, jr, ir);
+            }
+            if (has_source) {
+              vs(0, ccrad::source(gg), k, j, i) = vs(0, ccrad::source(gg), kr, jr, ir);
+            }
           }
         });
   }
@@ -326,9 +342,9 @@ inline void AddDriveParams(StateDescriptor *rad_pkg, ParameterInput *pin,
   params.Add("drive_force_upwind_flux_bc",
              pin->GetOrAddBoolean(
                  drive_block, "force_upwind_flux_bc", true,
-                 "Zero the boundary opacity to force a purely upwind flux (even when "
-                 "radiation_transport/beta > 0) for the drive boundary condition; if "
-                 "false, copy the interior opacity instead"));
+                 "Zero the boundary opacity to force a purely upwind flux (zero face "
+                 "optical depth) for the drive boundary condition; if false, copy the "
+                 "interior opacity instead"));
 }
 
 } // namespace BCOption

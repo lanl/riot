@@ -195,7 +195,6 @@ def generate_input():
         do_explicit=False,  # enable explicit transport
         do_jacobi=True,  # enable implicit Jacobi solver
         nlevel=8,  # level of geodesic mesh
-        beta=0.0,  # parameter controlling tauc in Rusanov rad-flux
         coupling=True,  # flag to enable radiation source term
         affect_fluid=False,  # feedback on the fluid
         cfl=0.8,  # The Courant, Friedrichs, & Lewy (CFL) Number
