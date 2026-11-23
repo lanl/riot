@@ -1086,9 +1086,10 @@ TaskStatus JacobiUpdate(MeshData<Real> *rbase, MeshData<Real> *riter,
         [[maybe_unused]] auto &gflx_ = gflx;
         [[maybe_unused]] auto &arcw_ = arcw;
         [[maybe_unused]] auto &indn_ = indn;
+        [[maybe_unused]] auto &nchain_ = nchain;
         if constexpr (do_angular_fluxes) {
           const Real mcw_ix1 = -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
-          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
+          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain_, tau, aa);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb) *
                             AngularWeight(indn_, aa, nb, blo, bhi);
@@ -1397,10 +1398,11 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
             [[maybe_unused]] auto &gflx_ = gflx;
             [[maybe_unused]] auto &arcw_ = arcw;
             [[maybe_unused]] auto &indn_ = indn;
+            [[maybe_unused]] auto &nchain_ = nchain;
             if constexpr (do_angular_fluxes) {
               const Real mcw_ix1 =
                   -cdt * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
-              const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
+              const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain_, tau, aa);
               for (int nb = 0; nb < numn_(aa); ++nb) {
                 const Real na = mcw_ix1 * gflx_(aa, nb) * arcw_(aa, nb);
                 const Real ab = AngularWeight(indn_, aa, nb, blo, bhi);

@@ -631,11 +631,13 @@ TaskStatus CalculateFluxes(MeshData<Real> *r0) {
         [[maybe_unused]] auto &gflx_ = gflx;
         [[maybe_unused]] auto &indn_ = indn;
         [[maybe_unused]] auto &arcw_ = arcw;
+        [[maybe_unused]] auto &ndim_ = ndim;
+        [[maybe_unused]] auto &nchain_ = nchain;
         if constexpr (do_angular_fluxes) {
           Real &divfa = da_(b, n, k, j, i) = 0.0;
           const Real mcw_ix1 = -cc * InverseRadiusForAngularFlux(coords, i) / wght_(aa);
-          const auto tau = FaceTaus(op, coords, ndim, coupling, gg, b, k, j, i);
-          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
+          const auto tau = FaceTaus(op, coords, ndim_, coupling, gg, b, k, j, i);
+          const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain_, tau, aa);
           const Real &sf = op(b, ccr::source(gg), k, j, i);
           for (int nb = 0; nb < numn_(aa); ++nb) {
             const Real na = mcw_ix1 * gflx_(aa, nb);
