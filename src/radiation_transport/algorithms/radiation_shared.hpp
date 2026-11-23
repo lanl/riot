@@ -119,20 +119,11 @@ inline bool AddCouplingParams(ParameterInput *pin, Params &params) {
 
 //----------------------------------------------------------------------------------------
 //! \fn void AddCouplingUtils
-//! \brief Build the Rusanov flux and temperature root-find utility structs (only
-//! populated when coupling is enabled) and store them.
+//! \brief Build the temperature root-find utility struct (only populated when coupling
+//! is enabled) and store it.
 inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool coupling) {
-  FluxUtils futils;
   RootUtils rutils;
   if (coupling) {
-    // Flux params
-    futils.beta = pin->GetOrAddReal(
-        radiation_block, "beta", 3.0,
-        "Coefficient weighting the local optical depth for the Rusanov flux");
-    futils.taumax =
-        pin->GetOrAddReal(radiation_block, "taumax", std::numeric_limits<Real>::max(),
-                          "Optical depth max used in Rusanov flux");
-    PARTHENON_REQUIRE(futils.taumax > 0.0, "Tau max must be > 0!");
     // Root find params
     rutils.tol = pin->GetOrAddReal(
         radiation_block, "troot_tol", 1.0e-8,
@@ -143,7 +134,6 @@ inline void AddCouplingUtils(ParameterInput *pin, Params &params, const bool cou
     PARTHENON_REQUIRE(rutils.tol > 0.0, "Temp rootfind tolerance must be > 0!");
     PARTHENON_REQUIRE(rutils.titer > 0, "Temp rootfind iterations must be > 0!");
   }
-  params.Add("flux_utils", futils);
   params.Add("root_utils", rutils);
 }
 
@@ -159,15 +149,17 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
       "uses nangles = 2*nlevel in 1D spherical, 4*nlevel^2 in RZ, 8*nlevel^2 otherwise");
   params.Add("nlevel", nlevel);
 
-  // Angular mesh
-  const std::string default_amesh =
-      (parthenon::IsCoord<parthenon::UniformCylindrical>() ||
-       parthenon::IsCoord<parthenon::UniformSpherical>())
-          ? "latlon"
-          : "geodesic";
+  // Angular mesh (curvilinear coordinates require the lat-lon mesh, whose angular flux
+  // edges chain along the angular drift, see AngularWeight)
+  constexpr bool curvilinear = parthenon::IsCoord<parthenon::UniformCylindrical>() ||
+                               parthenon::IsCoord<parthenon::UniformSpherical>();
+  const std::string default_amesh = curvilinear ? "latlon" : "geodesic";
   const std::string amesh =
       pin->GetOrAddString(radiation_block, "angular_mesh", default_amesh,
-                          "Choose which angular mesh to use for SN");
+                          "Choose which angular mesh to use for SN (latlon only in "
+                          "curvilinear coordinates)");
+  PARTHENON_REQUIRE(!(curvilinear) || (amesh == "latlon"),
+                    "Curvilinear coordinates require the latlon angular mesh");
   params.Add("angular_mesh", amesh);
   const bool fv_fix = pin->GetOrAddBoolean(
       radiation_block, "fv_fix", true,
@@ -198,6 +190,14 @@ inline int AddAngularMesh(ParameterInput *pin, Params &params) {
     PARTHENON_THROW("Invalid angular mesh choice!");
   }
   params.Add("nangles", nangles);
+
+  // Angular edge upwind weights along the lat-lon chains (see AngularWeight), which are
+  // unique on chains but not on the geodesic grid, whose angular flux edges form cycles
+  // (the geodesic grid is hence not allowed in curvilinear coordinates, see above)
+  params.Add("chain_length",
+             (amesh == "latlon")
+                 ? params.Get<std::shared_ptr<LatLonGrid>>("latlon_grid")->chain_length
+                 : 0);
   return nangles;
 }
 

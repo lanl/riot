@@ -78,12 +78,6 @@ DNAME(ubase);
 #undef DNAME
 
 //----------------------------------------------------------------------------------------
-// ...Flux stencils
-enum class FluxType { hll, upwind, null };
-// ...Mean types
-enum class StencilType { minimum, harmonic, arithmetic, null };
-
-//----------------------------------------------------------------------------------------
 //! \fn  int GI
 //  \brief Returns group index given group-angle index n
 KOKKOS_INLINE_FUNCTION
@@ -116,11 +110,6 @@ GetRadPackage(const parthenon::Packages_t &packages) {
 
 //----------------------------------------------------------------------------------------
 // Utility structs
-struct FluxUtils {
-  Real beta = 0.0;   // constant multiplying tauc for constructing Rusanov flux
-  Real taumax = 0.0; // tau max for Rusanov flux stability
-};
-
 struct RootUtils {
   Real tol = 0.0; // relative temperature tolerance for advanced temperature
   int titer = 0;  // max #iter for advanced temp root find
@@ -157,20 +146,115 @@ MMOpacity(const Opacity &opac, const Real rm, const Real rbarm, const Real vfrac
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  Real OpacityStencil
-//! \brief Combines two neighboring opacities into a face value (minimum, harmonic, or
-//! arithmetic mean) for the Rusanov flux optical-depth weighting
-template <StencilType ST = StencilType::minimum>
-KOKKOS_FORCEINLINE_FUNCTION static Real OpacityStencil(const Real val1, const Real val2) {
-  if constexpr (ST == StencilType::minimum) {
-    return std::min(val1, val2);
-  } else if constexpr (ST == StencilType::harmonic) {
-    const Real sum = val1 + val2;
-    return (sum == 0.0) ? 0.0 : 2.0 * val1 * val2 / sum;
-  } else if constexpr (ST == StencilType::arithmetic) {
-    return 0.5 * (val1 + val2);
+//! \fn  std::array<Real, 6> FaceTaus
+//! \brief Optical depths (cell width times the smaller total opacity) on the lower and
+//! upper faces of each active direction (zero without coupling, i.e., pure upwind)
+template <typename V1>
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 6>
+FaceTaus(V1 &pack, const parthenon::Coordinates_t &coords, const int ndim,
+         const bool &coupling, const int &gg, const int &b, const int &k, const int &j,
+         const int &i) {
+  namespace ccr = cell_variables::cell_averaged::rad;
+
+  std::array<Real, 6> tau = {0.0};
+  if (!(coupling)) return tau;
+  const Real sc = pack(b, ccr::aa(gg), k, j, i) + pack(b, ccr::ss(gg), k, j, i);
+  for (int dir = X1DIR; dir <= ndim; ++dir) {
+    const bool x1d = (dir == X1DIR);
+    const bool x2d = (dir == X2DIR);
+    const bool x3d = (dir == X3DIR);
+
+    // Total opacities
+    const Real dx = coords.CellWidth(dir, k, j, i);
+    const Real sl = pack(b, ccr::aa(gg), k - x3d, j - x2d, i - x1d) +
+                    pack(b, ccr::ss(gg), k - x3d, j - x2d, i - x1d);
+    const Real sr = pack(b, ccr::aa(gg), k + x3d, j + x2d, i + x1d) +
+                    pack(b, ccr::ss(gg), k + x3d, j + x2d, i + x1d);
+
+    tau[2 * (dir - 1)] = dx * std::min(sl, sc);
+    tau[2 * (dir - 1) + 1] = dx * std::min(sr, sc);
   }
-  return Null<Real>();
+
+  return tau;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::array<Real, 2> FaceWeights
+//! \brief Upwind weight b = 2|n| / (2|n| + tau) and its complement 1 - b of the source
+//! flux, whose face intensity is the upwind intensity relaxed toward the source function
+//! S = (sigma_a B + sigma_s J) / sigma_t over the half cell to the face,
+//! I_face = b I_up + (1 - b) S, i.e., the face flux
+//! F = b n (I_L + I_R) / 2 - b |n| (I_R - I_L) / 2 + (1 - b) n (S_L + S_R) / 2.
+//! In the diffusion limit b (1 + tau / 2|n|) = 1 cancels the upwind bias exactly, so the
+//! flux is asymptotic preserving, and it is pure upwind in optically thin faces.
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 2> FaceWeights(const Real &nn,
+                                                                   const Real &tau) {
+  // (tau = 0 gives b = 1 for any n; n = 0 carries no flux, so b = 1 there is harmless)
+  const Real an2 = 2.0 * std::abs(nn);
+  const Real den = an2 + tau;
+  if (den > 0.0) return {an2 / den, tau / den};
+  return {1.0, 0.0};
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  Real AngularWeight
+//! \brief Upwind weight beta of the angular edge intensity beta I_up + (1 - beta) S on
+//! edge nb of angle aa (cf. FaceWeights).  The lat-lon angular flux edges chain
+//! consecutive angles (see LatLonGrid::chain_length), along which the edge coefficients
+//! gflux * arc_weights are running sums of w <n_r>, i.e., the unique conservative
+//! coefficients for which the angular flux divergence cancels the curvature term of the
+//! r face fluxes for uniform intensities.  The source flux splits the r face flux into
+//! b n I_up and (1 - b) n S parts, and the same construction for each part splits these
+//! running sums into those of w <n_r> b and w <n_r> (1 - b), with b the mean upwind
+//! weight of the two r faces, (b_l + b_r) / 2, i.e., beta is their ratio (blo and bhi on
+//! the edges to the chain neighbors aa - 1 and aa + 1, see ChainWeights).  The other
+//! edges (between chains or to aa itself) carry no angular flux (gflux = 0).
+KOKKOS_FORCEINLINE_FUNCTION static Real AngularWeight(const ParArrayND<int> &indn,
+                                                      const int &aa, const int &nb,
+                                                      const Real &blo, const Real &bhi) {
+  return (indn(aa, nb) < aa) ? blo : bhi;
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::array<Real, 2> ChainTerm
+//! \brief Terms {w <n_r>, w <n_r> b} of angle kk in the running sums along its chain
+//! (see AngularWeight)
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 2>
+ChainTerm(const ParArrayND<Real> &cp, const std::array<int, 3> &NDIR,
+          const ParArrayND<Real> &wght, const std::array<Real, 6> &tau, const int &kk) {
+  const Real &nn = cp(kk, NDIR[X1DIR - 1]);
+  const Real fl = FaceWeights(nn, tau[0])[0];
+  const Real fr = FaceWeights(nn, tau[1])[0];
+  const Real tw = wght(kk) * nn;
+  return {tw, tw * 0.5 * (fl + fr)};
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::array<Real, 2> ChainWeights
+//! \brief Upwind weights {blo, bhi} (see AngularWeight) of angle aa from a single walk
+//! over its chain from the nearer end (the chain sums vanish by symmetry), whose terms
+//! share the sign of <n_r>, so that beta is a mean of the r face weights
+KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 2>
+ChainWeights(const ParArrayND<Real> &cp, const std::array<int, 3> &NDIR,
+             const ParArrayND<Real> &wght, const int &nchain,
+             const std::array<Real, 6> &tau, const int &aa) {
+  // Running sums from the nearer chain end up to (excluding) aa
+  const int a0 = (aa / nchain) * nchain;
+  const int a1 = a0 + nchain - 1;
+  const bool left = (aa - a0 <= a1 - aa);
+  Real sw = 0.0, sb = 0.0;
+  for (int kk = (left ? a0 : aa + 1); kk <= (left ? aa - 1 : a1); ++kk) {
+    const auto [tw, tb] = ChainTerm(cp, NDIR, wght, tau, kk);
+    sw += tw;
+    sb += tb;
+  }
+
+  // Edges toward (bn) and away from (bf) the nearer chain end
+  const auto [tw, tb] = ChainTerm(cp, NDIR, wght, tau, aa);
+  const Real bn = (sw != 0.0) ? sb / sw : 1.0;
+  const Real bf = (sw + tw != 0.0) ? (sb + tb) / (sw + tw) : 1.0;
+  if (left) return {bn, bf};
+  return {bf, bn};
 }
 
 //----------------------------------------------------------------------------------------

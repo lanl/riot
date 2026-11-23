@@ -186,7 +186,10 @@ void ShockInnerX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
 
     // Intensity
     static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
+    static auto descs = GetBoundaryPackDescriptorMap<ccrad::source>(mbd);
     auto vr = descr[coarse].GetPack(mbd.get());
+    auto vs = descs[coarse].GetPack(mbd.get());
+    const bool has_source = (vs.GetMaxNumberOfVars() > 0);
     if (vr.GetMaxNumberOfVars() > 0) {
       auto spr = shock_params;
       pmb->par_for_bndry(
@@ -199,6 +202,7 @@ void ShockInnerX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
               for (int aa = 0; aa < nangles; ++aa) {
                 vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ee;
               }
+              if (has_source) vs(0, ccrad::source(gg), k, j, i) = ee;
             }
           });
     }
@@ -268,7 +272,10 @@ void ShockOuterX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
 
     // Intensity
     static auto descr = GetBoundaryPackDescriptorMap<ccrad::intensity>(mbd);
+    static auto descs = GetBoundaryPackDescriptorMap<ccrad::source>(mbd);
     auto vr = descr[coarse].GetPack(mbd.get());
+    auto vs = descs[coarse].GetPack(mbd.get());
+    const bool has_source = (vs.GetMaxNumberOfVars() > 0);
     if (vr.GetMaxNumberOfVars() > 0) {
       auto spr = shock_params;
       pmb->par_for_bndry(
@@ -281,6 +288,7 @@ void ShockOuterX1(std::shared_ptr<MeshBlockData<Real>> &mbd, bool coarse) {
               for (int aa = 0; aa < nangles; ++aa) {
                 vr(0, ccrad::intensity(GAI(nangles, gg, aa)), k, j, i) = ee;
               }
+              if (has_source) vs(0, ccrad::source(gg), k, j, i) = ee;
             }
           });
     }
