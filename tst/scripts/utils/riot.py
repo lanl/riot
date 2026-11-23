@@ -58,9 +58,13 @@ def make(cmake_args, make_nproc):
         try:
             t0 = timer()
             logger.debug("Executing: " + " ".join(cmake_command))
-            subprocess.check_call(cmake_command, stdout=out_log)
+            subprocess.check_call(
+                cmake_command, stdout=out_log, stderr=subprocess.STDOUT
+            )
             logger.debug("Executing: " + " ".join(make_command))
-            subprocess.check_call(make_command, stdout=out_log)
+            subprocess.check_call(
+                make_command, stdout=out_log, stderr=subprocess.STDOUT
+            )
             logger.debug("Build took {0:.3g} seconds.".format(timer() - t0))
         except subprocess.CalledProcessError as err:
             logger.error("Something bad happened", exc_info=True)

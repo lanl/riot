@@ -212,7 +212,6 @@ riot.input(
     do_jacobi=True,  # enable implicit Jacobi solver
     do_explicit=False,  # enable explicit transport
     nlevel=3,  # level of geodesic mesh
-    beta=1.0,  # parameter controlling tauc in Rusanov rad-flux
     coupling=True,  # flag to enable radiation source term
     affect_fluid=True,  # feedback on the fluid
     fixed_pgen_opac=True,  # do not update opacities set in pgen
@@ -222,7 +221,7 @@ riot.input(
 
 riot.input(
     "radiation_transport/jacobi",
-    err_thr=1.0e-4,  # implicit residual threshold
+    err_thr_global=1.0e-4,  # implicit residual threshold
     dt_ratio_hyperbolic=1.0e3,  # Multiple of light-crossing time
     verbose=2,  # Verbosity
 )

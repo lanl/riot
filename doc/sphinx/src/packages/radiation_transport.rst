@@ -66,7 +66,14 @@ For efficiency the transported field ``ccrad::intensity`` stores a scaled intens
 
      E_f = \sum_{a} w_a\,I_{f,a},
 
-where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the angular quadrature weights :math:`w_a` are normalized to :math:`\sum_a w_a = 1`. The streaming term is discretized with a Rusanov flux weighted by the local optical depth (controlled by ``beta`` and ``taumax``), so the scheme transitions smoothly between the optically thin (transport) and optically thick (diffusion) limits. In reduced-dimension curvilinear geometries (1D spherical, 2D cylindrical) an additional angular-flux divergence term (``ccrad::divfa``) accounts for the rotation of :math:`\vec{n}` along curved streaming paths; it is compiled in only for those coordinate systems.
+where :math:`I_{f,a}` is the stored intensity in direction :math:`a` and the angular quadrature weights :math:`w_a` are normalized to :math:`\sum_a w_a = 1`. Both solvers discretize the streaming term with the same *source flux*. The intensity carried across a face is the blend :math:`b\,I_{\text{up}} + (1-b)\,\bar{S}_f`, where :math:`I_{\text{up}}` is the upwind intensity and :math:`\bar{S}_f` is the mean of the source functions
+
+.. math::
+
+     S_f = \frac{\sigma_{a,f}\,\varepsilon_f + \sigma_{s,f}\,J_f}{\sigma_{a,f} + \sigma_{s,f}},
+       \qquad J_f = \sum_a w_a\,I_{f,a},
+
+of the two cells sharing the face. The weight :math:`b = 2|n|/(2|n| + \tau)` depends only on the face-normal direction component :math:`n` and on the face optical depth :math:`\tau = \Delta x\,\min(\sigma_{t,L}, \sigma_{t,R})`, with :math:`\sigma_t = \sigma_a + \sigma_s`. Optically thin faces (and every face when ``coupling`` is off) are thus pure upwind, while at large :math:`\tau` the face intensity approaches the local source function, as required in the diffusion limit; there is no tunable parameter. The source function is stored in ``ccrad::source``. The Jacobi solver iterates it along with the intensity, and the explicit solver evaluates it at the start of each step and again after the source update of each stage. In reduced-dimension curvilinear geometries (1D spherical, 2D cylindrical) an additional angular-flux divergence term (``ccrad::divfa``) accounts for the rotation of :math:`\vec{n}` along curved streaming paths. Its edge intensities use the same blend, with the upwind weights taken along the latitude–longitude chains. The term is compiled in only for those coordinate systems.
 
 Angular Discretization
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -126,7 +133,7 @@ Two integrators advance the transport equation. Radiation transport is enabled b
       +-------------+------------------------------------------------------------------------------------------------------+
       | **Solver**  | **Description**                                                                                      |
       +=============+======================================================================================================+
-      | do_explicit | Sub-cycled explicit integrator (Runge–Kutta), with an optical-depth-weighted Rusanov streaming flux. |
+      | do_explicit | Sub-cycled explicit integrator (Runge–Kutta); the time step is set by the light-crossing time.       |
       +-------------+------------------------------------------------------------------------------------------------------+
       | do_jacobi   | Iterative implicit (Jacobi) solver; robust at large optical depth, iterated to a residual threshold. |
       +-------------+------------------------------------------------------------------------------------------------------+
@@ -171,14 +178,6 @@ Parameters are organized into a shared ``<radiation_transport>`` block and sever
      - bool
      - ``false``
      - Skip the advanced-temperature solve in the source term.
-   * - beta
-     - Real
-     - ``3.0``
-     - Weight on the local optical depth in the Rusanov flux.
-   * - taumax
-     - Real
-     - *large*
-     - Cap on the optical depth used in the Rusanov flux (default :math:`\approx` ``Real`` max).
    * - troot_tol
      - Real
      - ``1e-8``
@@ -212,7 +211,7 @@ Parameters are organized into a shared ``<radiation_transport>`` block and sever
      - ``1.0``
      - Speed of light, radiation, Boltzmann, and Planck constants (only when ``units_override``).
 
-The ``beta``, ``taumax``, ``troot_tol``, and ``troot_max_iter`` parameters are read only when ``coupling`` is ``true``.
+The ``troot_tol`` and ``troot_max_iter`` parameters are read only when ``coupling`` is ``true``.
 
 .. list-table:: Angular-grid parameters (in the ``<radiation_transport>`` block).
    :class: wraptable
@@ -257,8 +256,8 @@ The explicit solver adds sub-cycling controls:
      - Description
    * - integrator
      - string
-     - ``rk2``
-     - Time integrator for sub-cycling: ``rk1``, ``rk2``, or ``rk3``.
+     - ``rk1``
+     - Time integrator for sub-cycling; only ``rk1`` is permitted.
    * - dt_ratio_hyperbolic
      - Real
      - ``-1.0``
@@ -285,20 +284,24 @@ The Jacobi solver adds iteration and timestep controls:
      - Maximum Jacobi iterations per step.
    * - niter_min
      - int
-     - *geom.*
-     - Minimum iterations per step, even if ``err_thr`` is already met (default 0 in Cartesian, :math:`\sim` the angular-mesh diameter in curvilinear geometries).
-   * - err_thr
+     - ``0``
+     - Minimum iterations per step before the solve may exit on convergence.
+   * - err_thr_global
      - Real
      - ``1e-8``
-     - Residual threshold for convergence.
-   * - per_group_residual
-     - bool
-     - ``false``
-     - Additionally require each group's relative residual to meet ``err_thr_group``.
+     - Threshold on the global relative residual; also floors the target of ``err_step_global``.
    * - err_thr_group
      - Real
-     - ``err_thr``
-     - Per-group residual threshold.
+     - *off*
+     - Additionally require each group's relative residual to meet this threshold.
+   * - err_step_global
+     - Real
+     - ``0.5``
+     - If positive, additionally require the estimated remaining error :math:`\rho/(1-\rho)` :math:`\times` residual, with :math:`\rho` the contraction rate of the residuals, to fall below this fraction of the relative intensity change over the step.
+   * - err_step_group
+     - Real
+     - ``0``
+     - Per-group counterpart of ``err_step_global``, from each group's own contraction rate and step change; requires ``err_thr_group``, which floors its target.
    * - per_group_residual_floor
      - Real
      - ``1e-3``
@@ -323,7 +326,7 @@ Convergence Subcycling
 
 The Jacobi solver performs a single *global* implicit solve over the whole mesh each step, with the opacities lagged from the start of the step. This is a demanding nonlinear problem, and RIOT provides an escape hatch for the rare case in which an individual solve truly goes off the rails — its residual growing or stalling rather than settling. When a solve is judged to be diverging, it is discarded and the operator-split step is retried from the pristine start-of-step state with the timestep divided by ``reduce_factor``, repeating (reducing further as needed) until each subinterval completes and the full step is covered. It is a robustness backstop rather than part of the normal solve, and it is off by default.
 
-Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors act only while the residual is above the convergence threshold, so a solve that has already converged but is held open by ``niter_min`` is never discarded. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
+Subcycling is distinct from the ordinary iteration count. Reaching ``niter_limit`` is *not* divergence: a solve that iterates smoothly and is simply cut off at the iteration cap is accepted and committed as usual. A solve is flagged as diverging only when its residual becomes non-finite, when the stall detector is enabled and the solve fails to improve on its best residual so far for ``ndiverge_limit`` consecutive iterations, or when the rise detector is enabled and the residual climbs more than a fraction ``diverge_rise_frac`` above its best so far. The rise detector catches a solve that is growing away from its best residual long before the stall detector would. Both detectors flag divergence only while a residual is above its threshold, so a solve held open by ``niter_min`` or by its error estimate is never discarded. A solve whose residuals meet their thresholds but which stalls before its error estimate is met has reached the floor the iteration can resolve, and the stall detector accepts it as converged instead. If subcycling is disabled (``nreduce_limit`` ``= 0``) or the reduction budget is exhausted, a genuinely diverging solve aborts the run.
 
 .. list-table:: Convergence-subcycling parameters (in the ``<radiation_transport/jacobi>`` block).
    :class: wraptable
@@ -456,6 +459,10 @@ The package registers the radiation fields in the table below under the ``ccrad:
      - :math:`E_f`
      - :math:`N_\nu`
      - Cell, Derived, OneCopy, OperatorSplit; group radiation energy density and moments.
+   * - ccrad::source
+     - :math:`S_f`
+     - :math:`N_\nu`
+     - Source function of the face flux. Jacobi: Cell, Independent, FillGhost, Intensive, iterated with the intensity. Explicit: Cell, Derived, OneCopy, FillGhost, set each step and each stage.
    * - ccrad::s1, s2, s3
      - —
      - :math:`N_\nu`
@@ -489,11 +496,10 @@ A grey, geodesic-grid transport run using the implicit Jacobi solver, coupled to
               do_jacobi=True,          # select the implicit solver
               nlevel=1,                # geodesic grid: 12 angles
               coupling=True,
-              affect_fluid=True,       # let radiation heat the matter
-              beta=5.0)
+              affect_fluid=True)       # let radiation heat the matter
 
    riot.input("radiation_transport/jacobi",
-              err_thr=1.0e-4, niter_limit=200,
+              err_thr_global=1.0e-4, niter_limit=200,
               dt_ratio_hyperbolic=5.0e4)
 
    # A hot radiating wall driving the inner-x1 face:

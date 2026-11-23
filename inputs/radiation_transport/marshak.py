@@ -72,7 +72,7 @@ riot.input(
     "parthenon/time",
     nlim=-1,  # cycle limit
     tlim=4.0e-3,  # time limit
-    integrator="rk1",  # time integration algorithm
+    integrator="rk2",  # time integration algorithm
     ncycle_out=100,  # interval for stdout summary info
     dt_init=1.0e-9,  # first-cycle timestep (controller grows it thereafter)
 )
@@ -144,7 +144,6 @@ riot.input(
     do_jacobi=True,  # enable implicit Jacobi solver (diffusion-dominated)
     fv_fix=False,  # use centroid unit normals
     nlevel=1,  # level of geodesic mesh
-    beta=5.0,  # parameter controlling tauc in Rusanov rad-flux
     coupling=True,  # flag to enable radiation source term
     affect_fluid=True,  # feedback on the fluid (heats the static matter)
     troot_tol=1.0e-6,  # temperature root find tolerance
@@ -152,7 +151,7 @@ riot.input(
 
 riot.input(
     "radiation_transport/jacobi",
-    err_thr=1.0e-4,  # implicit residual threshold
+    err_thr_global=1.0e-4,  # implicit residual threshold
     niter_limit=200,  # cap Jacobi iterations per step
     dt_ratio_hyperbolic=1.0e4,  # timestep controller for multiple of hyperbolic dt
 )

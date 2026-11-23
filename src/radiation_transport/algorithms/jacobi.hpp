@@ -47,8 +47,8 @@ TaskID CreateJacobiTaskList(const TaskID &begin, const int i, Mesh *pmesh,
                             std::shared_ptr<MeshData<Real>> riter,
                             std::shared_ptr<MeshData<Real>> rout,
                             std::shared_ptr<MeshData<Real>> ubase, const Real dt);
-TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *riter,
-                            MeshData<Real> *rout);
+TaskStatus CheckConvergence(HostArray1D<Real> *residual, MeshData<Real> *rbase,
+                            MeshData<Real> *riter, MeshData<Real> *rout);
 TaskStatus IncrementCounterAndSetResidual(HostArray1D<Real> *vresidual, Mesh *pmesh);
 TaskStatus CompletionFunction(int i, HostArray1D<Real> *presidual, MeshData<Real> *riter,
                               MeshData<Real> *rout);
@@ -66,51 +66,13 @@ TaskStatus JacobiFeedback(MeshData<Real> *rbase, MeshData<Real> *riter,
                           MeshData<Real> *rout, MeshData<Real> *ubase, const Real dt);
 
 //----------------------------------------------------------------------------------------
-//! \fn  Real TauWeight
-//! \brief Assigns optical depth weights for Rusanov flux
-KOKKOS_FORCEINLINE_FUNCTION static Real TauWeight(const Real &tau, const Real &tmax) {
-  return 1.0 / (1.0 + std::min(tau, tmax));
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn  std::array<Real, 6> FaceTauWeights
-//! \brief Optical depth weights on the lower and upper faces of each active direction
-template <typename V1>
-KOKKOS_FORCEINLINE_FUNCTION static std::array<Real, 6>
-FaceTauWeights(V1 &pack, const parthenon::Coordinates_t &coords, const int ndim,
-               const FluxUtils &futils, const int &gg, const int &b, const int &k,
-               const int &j, const int &i) {
-  namespace ccr = cell_variables::cell_averaged::rad;
-
-  std::array<Real, 6> tw = {0.0};
-  const Real sc = pack(b, ccr::aa(gg), k, j, i) + pack(b, ccr::ss(gg), k, j, i);
-  for (int dir = X1DIR; dir <= ndim; ++dir) {
-    const bool x1d = (dir == X1DIR);
-    const bool x2d = (dir == X2DIR);
-    const bool x3d = (dir == X3DIR);
-
-    // Total opacities
-    const Real bdx = futils.beta * coords.CellWidth(dir, k, j, i);
-    const Real sl = pack(b, ccr::aa(gg), k - x3d, j - x2d, i - x1d) +
-                    pack(b, ccr::ss(gg), k - x3d, j - x2d, i - x1d);
-    const Real sr = pack(b, ccr::aa(gg), k + x3d, j + x2d, i + x1d) +
-                    pack(b, ccr::ss(gg), k + x3d, j + x2d, i + x1d);
-
-    tw[2 * (dir - 1)] = TauWeight(bdx * std::min(sl, sc), futils.taumax);
-    tw[2 * (dir - 1) + 1] = TauWeight(bdx * std::min(sr, sc), futils.taumax);
-  }
-
-  return tw;
-}
-
-//----------------------------------------------------------------------------------------
 //! \fn  void GCoef
 //! \brief Computes matrix coefficients for Jacobi
 template <int SDIR>
 KOKKOS_FORCEINLINE_FUNCTION static void
 GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
       const std::array<int, 3> &NDIR, const Real &ivol, const bool &split_g1,
-      const std::array<Real, 6> &tw, const int &aa, const int &k, const int &j,
+      const std::array<Real, 6> &tau, const int &aa, const int &k, const int &j,
       const int &i, Real &g1p, Real &g1pp, Real &glra, Real &glrb) {
   // Directions
   const Real &nn = cp(aa, NDIR[SDIR - 1]);
@@ -122,32 +84,65 @@ GCoef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
   constexpr bool x3d = (SDIR == X3DIR);
 
   // Compute L and R wave speeds at i face
+  Real fb = FaceWeights(nn, tau[2 * (SDIR - 1)])[0];
   Real ww = ivol * nn * coords.FaceArea<SDIR>(k, j, i);
-  Real ss = sgnn * tw[2 * (SDIR - 1)];
-  g1p += ww * (ss - (!split_g1 || down));
-  g1pp += -split_g1 * up * ww;
-  glra = -ww * (1.0 + ss);
+  Real ss = sgnn * fb;
+  g1p += ww * (ss - fb * (!split_g1 || down));
+  g1pp += -split_g1 * up * ww * fb;
+  glra = -ww * (fb + ss);
 
   // Compute L and R wave speeds at i+1 face
+  fb = FaceWeights(nn, tau[2 * (SDIR - 1) + 1])[0];
   ww = ivol * nn * coords.FaceArea<SDIR>(k + x3d, j + x2d, i + x1d);
-  ss = sgnn * tw[2 * (SDIR - 1) + 1];
-  g1p += ww * (ss + (!split_g1 || up));
-  g1pp += split_g1 * down * ww;
-  glrb = ww * (1.0 - ss);
+  ss = sgnn * fb;
+  g1p += ww * (ss + fb * (!split_g1 || up));
+  g1pp += split_g1 * down * ww * fb;
+  glrb = ww * (fb - ss);
 
   return;
 }
 
 //----------------------------------------------------------------------------------------
-//! \fn  void GCoef
-//! \brief Computes matrix coefficients for Jacobi
+//! \fn  Real SourceFlux
+//! \brief Flux divergence of the source function part of the face flux,
+//! (1 - b) n (S_L + S_R) / 2, at the i and i+1 faces: returns the (lagged) neighbor part
+//! and accumulates the coefficient gs of the cell's own S (implicit in ApplyRHS)
+template <int SDIR, typename V1>
+KOKKOS_FORCEINLINE_FUNCTION static Real
+SourceFlux(V1 &pack, const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
+           const std::array<int, 3> &NDIR, const Real &ivol,
+           const std::array<Real, 6> &tau, const int &aa, const int &b, const int &gg,
+           const int &k, const int &j, const int &i, Real &gs) {
+  namespace ccr = cell_variables::cell_averaged::rad;
+  constexpr int x1d = (SDIR == X1DIR);
+  constexpr int x2d = (SDIR == X2DIR);
+  constexpr int x3d = (SDIR == X3DIR);
+
+  // Face weights (ww * (1 - b)) at i and i+1 faces
+  const Real &nn = cp(aa, NDIR[SDIR - 1]);
+  const Real fl = FaceWeights(nn, tau[2 * (SDIR - 1)])[1];
+  const Real fr = FaceWeights(nn, tau[2 * (SDIR - 1) + 1])[1];
+  const Real wl = ivol * nn * coords.FaceArea<SDIR>(k, j, i) * fl;
+  const Real wr = ivol * nn * coords.FaceArea<SDIR>(k + x3d, j + x2d, i + x1d) * fr;
+  gs += wr - wl;
+
+  return wr * pack(b, ccr::source(gg), k + x3d, j + x2d, i + x1d) -
+         wl * pack(b, ccr::source(gg), k - x3d, j - x2d, i - x1d);
+}
+
+//----------------------------------------------------------------------------------------
+//! \fn  Real G1Coef
+//! \brief Computes the Jacobi coefficient g1 and accumulates the coefficient gs of the
+//! cell's own source function in the face fluxes (see SourceFlux) and angular edges (see
+//! AngularWeight)
 KOKKOS_FORCEINLINE_FUNCTION static Real
 G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
        const std::array<int, 3> &NDIR, const int ndim, const ParArrayND<Real> &wght,
        const ParArrayND<Real> &gflx, const ParArrayND<Real> &arcw,
-       const ParArrayND<int> &numn, const Real &ivol, const Real &mcw,
-       const bool &split_g1, const std::array<Real, 6> &tw, const int &aa, const int &k,
-       const int &j, const int &i) {
+       const ParArrayND<int> &numn, const ParArrayND<int> &indn, const Real &ivol,
+       const Real &mcw, const bool &split_g1, const int &nchain,
+       const std::array<Real, 6> &tau, const int &aa, const int &k, const int &j,
+       const int &i, Real &gs) {
   // Contributions from each spatial flux direction
   Real g1p = 1.0;
   for (int dir = X1DIR; dir <= ndim; ++dir) {
@@ -161,14 +156,18 @@ G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
     const bool x3d = (dir == X3DIR);
 
     // Compute L and R wave speeds at i face
+    const auto [fbl, fcl] = FaceWeights(nn, tau[2 * (dir - 1)]);
     Real ww = ivol * nn * coords.FaceArea(dir, k, j, i);
-    Real ss = sgnn * tw[2 * (dir - 1)];
-    g1p += ww * (ss - (!split_g1 || down));
+    Real ss = sgnn * fbl;
+    g1p += ww * (ss - fbl * (!split_g1 || down));
+    gs -= ww * fcl;
 
     // Compute L and R wave speeds at i+1 face
+    const auto [fbr, fcr] = FaceWeights(nn, tau[2 * (dir - 1) + 1]);
     ww = ivol * nn * coords.FaceArea(dir, k + x3d, j + x2d, i + x1d);
-    ss = sgnn * tw[2 * (dir - 1) + 1];
-    g1p += ww * (ss + (!split_g1 || up));
+    ss = sgnn * fbr;
+    g1p += ww * (ss + fbr * (!split_g1 || up));
+    gs += ww * fcr;
   }
 
   // Contributions from each angular flux direction
@@ -176,11 +175,15 @@ G1Coef(const parthenon::Coordinates_t &coords, const ParArrayND<Real> &cp,
   [[maybe_unused]] auto &numn_ = numn;
   [[maybe_unused]] auto &gflx_ = gflx;
   [[maybe_unused]] auto &arcw_ = arcw;
+  [[maybe_unused]] auto &indn_ = indn;
   if constexpr (do_angular_fluxes) {
     const Real mcw_over_ww = mcw / wght_(aa);
+    const auto [blo, bhi] = ChainWeights(cp, NDIR, wght_, nchain, tau, aa);
     for (int nb = 0; nb < numn_(aa); ++nb) {
       const Real na = mcw_over_ww * gflx_(aa, nb) * arcw_(aa, nb);
-      g1p += (na > 0) * na;
+      const Real ab = AngularWeight(indn_, aa, nb, blo, bhi);
+      g1p += (na > 0) * ab * na;
+      gs += (1.0 - ab) * na;
     }
   }
 

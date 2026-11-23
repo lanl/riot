@@ -55,6 +55,9 @@ class LatLonGrid {
 
   int nangles;
   int ntheta_, nphi_;
+  // The angular flux edges link consecutive angles in chains of chain_length angles: the
+  // rings of fixed polar level in 2D RZ, the polar levels in 1D spherical (0 otherwise)
+  int chain_length;
   ParArrayND<int> num_neighbors;
   ParArrayND<int> ind_neighbors;
   ParArrayND<int> ind_neighbors_edges;
