@@ -55,7 +55,7 @@ class RiotDriver : public EvolutionDriver {
   // raw pointers so that Kokkos::Views in Params get freed before Kokkos::Finalize()
   StateDescriptor *riot_pkg, *hydro_pkg, *mix_pkg, *tn_pkg, *mat_pkg, *lset_pkg,
       *gravity_pkg, *strength_pkg, *ion_pkg, *laser_pkg;
-  bool do_hydro, do_strength, do_mix, do_tn, do_levelsets, do_gravity,
+  bool do_hydro, do_thinc, do_strength, do_mix, do_tn, do_levelsets, do_gravity,
       do_multigroup_diffusion, do_ionization, do_lasers, curvilinear;
   bool fixed_fluid, use_general_pte, sparse_dealloc;
   riot_plugins::Plugins plugins;

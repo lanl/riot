@@ -135,20 +135,26 @@ SumTermsHelper(const IndexRangeType &idx_range, const int b, const PackView_t up
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::UpdateToNextStage
-//! \brief
+//! \brief With kinematic advection, only KinematicAdvected fields are updated and no
+//!        dudt sources are applied, freezing the bulk state.
 inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
                                     const Real gam0, const Real gam1, const Real beta_dt,
                                     const dudt_vec_t &dudt_array) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   using parthenon::PDOpt;
   using parthenon::variable_names::any;
-  std::vector<MetadataFlag> flags({Metadata::WithFluxes});
 
   auto pm = umd->GetParentPointer();
   const int ndim = pm->ndim;
   const bool multi_d = (ndim > 1);
   const bool three_d = (ndim > 2);
-  bool sparse_physics = pm->packages.Get("riot")->template Param<bool>("sparse_physics");
+  auto &riot_pkg = pm->packages.Get("riot");
+  bool sparse_physics = riot_pkg->template Param<bool>("sparse_physics");
+  const bool kinematic = riot_pkg->template Param<bool>("kinematic_advection");
+
+  std::vector<MetadataFlag> flags(
+      {kinematic ? Metadata::GetUserFlag(riot::metadata::KinematicAdvected)
+                 : Metadata::WithFluxes});
 
   // make packs for the full state vector
   auto desc = parthenon::MakePackDescriptor<any>(umd, flags, {PDOpt::WithFluxes});
@@ -158,7 +164,7 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
 
   auto delta = riot::MakePack<ccbulk::cell_delta>(umd);
 
-  auto pack_data = impl::MakeDudtPacks(umd, dudt_array);
+  auto pack_data = impl::MakeDudtPacks(umd, kinematic ? dudt_vec_t{} : dudt_array);
   auto upacks = std::get<0>(pack_data);
   auto dudt_packs = std::get<1>(pack_data);
   const int num_dudt = std::get<2>(pack_data);
@@ -191,15 +197,26 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
             const auto [k, j, i] = idx_range.GetKJI(kji);
             const Real ivol = 1.0 / coords.CellVolume(k, j, i);
 
-            Real dudt = (coords.template FaceArea<X1DIR>(k, j, i) * f1(kji) -
-                         coords.template FaceArea<X1DIR>(k, j, i + 1) * f1(kji + di));
+            const Real flux_x_left =
+                Kokkos::fma(coords.template FaceArea<X1DIR>(k, j, i), f1(kji), Real(0.0));
+            const Real flux_x_right = Kokkos::fma(
+                coords.template FaceArea<X1DIR>(k, j, i + 1), f1(kji + di), Real(0.0));
+            const Real dudt_x = flux_x_left - flux_x_right;
+            Real dudt_y = 0.0;
             if (multi_d) {
-              dudt += (coords.template FaceArea<X2DIR>(k, j, i) * f2(kji) -
-                       coords.template FaceArea<X2DIR>(k, j + 1, i) * f2(kji + dj));
+              const Real flux_y_left = Kokkos::fma(
+                  coords.template FaceArea<X2DIR>(k, j, i), f2(kji), Real(0.0));
+              const Real flux_y_right = Kokkos::fma(
+                  coords.template FaceArea<X2DIR>(k, j + 1, i), f2(kji + dj), Real(0.0));
+              dudt_y = flux_y_left - flux_y_right;
             }
+            Real dudt = dudt_x + dudt_y;
             if (three_d) {
-              dudt += (coords.template FaceArea<X3DIR>(k, j, i) * f3(kji) -
-                       coords.template FaceArea<X3DIR>(k + 1, j, i) * f3(kji + dk));
+              const Real flux_z_left = Kokkos::fma(
+                  coords.template FaceArea<X3DIR>(k, j, i), f3(kji), Real(0.0));
+              const Real flux_z_right = Kokkos::fma(
+                  coords.template FaceArea<X3DIR>(k + 1, j, i), f3(kji + dk), Real(0.0));
+              dudt += flux_z_left - flux_z_right;
             }
 
             // the literature writes this as: u0 = gam0 u0 + gam1 u1 + beta dt dudt
@@ -235,9 +252,12 @@ template <typename F, typename T>
 TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
   Kokkos::Profiling::pushRegion("Task_DeepCopy");
 
+  // Copy on every block, not just the sparse_physics-active ones: a block can become
+  // active between RK stages (cell_delta is allocated on ghost receive), and its
+  // UpdateToNextStage then reads this copy as the start-of-step state.
   auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = riot::GetPack(desc, to);
-  const auto &src = riot::GetPack(desc, from);
+  const auto &dst = desc.GetPack(to);
+  const auto &src = desc.GetPack(from);
 
   const int nblocks = src.GetNBlocks();
   using lt = RiotUtils::LoopType<>;

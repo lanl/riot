@@ -45,9 +45,9 @@ Region::Region(ParameterInput *pin, const std::string &block, const int id,
   if (mask_type == "python") {
     mask = py.make_mask();
   } else {
-    PARTHENON_REQUIRE(region_mask_map.count(mask_type) > 0,
+    PARTHENON_REQUIRE(region_primitives::region_mask_map.count(mask_type) > 0,
                       mask_type + " is not a valid mask_type");
-    mask = region_mask_map.at(mask_type)(pin, block);
+    mask = region_primitives::region_mask_map.at(mask_type)(pin, block);
   }
 
   /******

@@ -267,7 +267,7 @@ class ParticlePusher {
     }
     auto vmag1 = lp.vmag();
     auto speed = 0.5 * (vmag0 + vmag1);
-    Real path = 0.5 * h * speed;
+    Real path = h * speed;
 
     // finish it off
     path += rk1(lp, accel, vmag1);

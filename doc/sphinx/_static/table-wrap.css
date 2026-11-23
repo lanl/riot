@@ -12,6 +12,7 @@ table.wraptable {
 table.wraptable th,
 table.wraptable td {
   min-width: 0;
+  white-space: normal !important;
   overflow-wrap: anywhere !important;
   word-break: break-word;
 }

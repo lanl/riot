@@ -42,6 +42,7 @@
 #include "riot_utils/sparse_update.hpp"
 #include "scalars/scalars.hpp"
 #include "strength/strength.hpp"
+#include "thinc/thinc.hpp"
 #include "tnburn/tnburn.hpp"
 #include "variables.hpp"
 
@@ -80,6 +81,7 @@ RiotDriver::RiotDriver(ParameterInput *pin, ApplicationInput *app_in, Mesh *pm)
 
   riot_pkg = pm->packages.Get("riot").get();
   do_hydro = riot_pkg->Param<bool>("do_hydro");
+  do_thinc = riot_pkg->Param<bool>("do_thinc");
   do_strength = riot_pkg->Param<bool>("do_strength");
   do_mix = riot_pkg->Param<bool>("do_mix");
   do_tn = riot_pkg->Param<bool>("do_tn");
@@ -186,8 +188,8 @@ TaskCollection RiotDriver::RiotStepTasks() {
   auto &init_region = tc.AddRegion(num_partitions);
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = init_region[i];
-    auto &mu0 = pmesh->mesh_data.GetOrAdd(mdname::u0, i);
-    auto &mu1 = pmesh->mesh_data.GetOrAdd(mdname::u1, i);
+    auto &mu0 = RiotUtils::GetOrAddPartition(pmesh, mdname::u0, i);
+    auto &mu1 = RiotUtils::GetOrAddPartition(pmesh, mdname::u1, i);
     tl.AddTask(none, sparse_update::DeepCopyIndependentData<MeshData<Real>>, mu1.get(),
                mu0.get());
   }
@@ -203,8 +205,8 @@ TaskCollection RiotDriver::RiotStepTasks() {
     TaskRegion &tr = tc.AddRegion(num_partitions);
     for (int i = 0; i < num_partitions; i++) {
       auto &tl = tr[i];
-      auto &mu0 = pmesh->mesh_data.GetOrAdd(mdname::u0, i);
-      auto &mu1 = pmesh->mesh_data.GetOrAdd(mdname::u1, i);
+      auto &mu0 = RiotUtils::GetOrAddPartition(pmesh, mdname::u0, i);
+      auto &mu1 = RiotUtils::GetOrAddPartition(pmesh, mdname::u1, i);
 
       // start looking for incoming messages. These calls are not required but may
       // have an impact on MPI performance (TODO(LFR): Check if these change anything)
@@ -214,7 +216,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // compute hydro fluxes
       auto hydro_flx = none;
       if (do_hydro) {
-        hydro_flx = tl.AddTask(none, Hydro::CalculateFluxes, mu0.get());
+        auto thinc_states = none;
+        if (do_thinc) thinc_states = tl.AddTask(none, THINC::CalculateStates, mu0.get());
+        hydro_flx = tl.AddTask(thinc_states, Hydro::CalculateFluxes, mu0.get());
       }
 
       // calculate mix fluxes (before doing flux correction)
@@ -243,25 +247,25 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // geometric sources, if curvilinear
       auto geom_source = none;
       if (curvilinear) {
-        geom_source =
-            tl.AddTask(none, Hydro::CalculateGeometricSource, mu0.get(),
-                       hydro_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+        geom_source = tl.AddTask(
+            none, Hydro::CalculateGeometricSource, mu0.get(),
+            RiotUtils::GetOrAddSubsetPartition(pmesh, hydro_pkg, "dudt", i).get());
       }
 
       // compute strength sources, if enabled
       auto strength_source = none;
       if (do_strength) {
-        strength_source =
-            tl.AddTask(hydro_flx | mix_flx, Strength::CalculateStrengthSource, mu0.get(),
-                       strength_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+        strength_source = tl.AddTask(
+            hydro_flx | mix_flx, Strength::CalculateStrengthSource, mu0.get(),
+            RiotUtils::GetOrAddSubsetPartition(pmesh, strength_pkg, "dudt", i).get());
       }
 
       // compute gravitational sources, if enabled
       auto gravity_source = none;
       if (do_gravity) {
-        gravity_source =
-            tl.AddTask(none, Gravity::CalculateGravitySource, mu0.get(),
-                       gravity_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+        gravity_source = tl.AddTask(
+            none, Gravity::CalculateGravitySource, mu0.get(),
+            RiotUtils::GetOrAddSubsetPartition(pmesh, gravity_pkg, "dudt", i).get());
       }
 
       auto plugin_sources = plugins.AddSources(tl, none, mu0.get(), pmesh, i, dt);
@@ -269,14 +273,16 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // compute Mix sources, if enabled
       auto mix_source = none;
       if (do_mix) {
-        mix_source = tl.AddTask(none, Mix::CalculateMixSource, mu0.get(),
-                                mix_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+        mix_source = tl.AddTask(
+            none, Mix::CalculateMixSource, mu0.get(),
+            RiotUtils::GetOrAddSubsetPartition(pmesh, mix_pkg, "dudt", i).get());
       }
 
       // compute TN sources, if enabled
       auto tn_shared_source = none;
       if (do_tn) {
-        auto *pmdudt_tn = tn_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get();
+        auto *pmdudt_tn =
+            RiotUtils::GetOrAddSubsetPartition(pmesh, tn_pkg, "dudt", i).get();
         auto tn_source =
             tl.AddTask(none, TNBurn::CalculateTNBurnSource, mu0.get(), pmdudt_tn, dt);
         tn_shared_source =
@@ -286,9 +292,9 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // compute ionization sources, if enabled
       auto ionization_source = none;
       if (do_ionization) {
-        ionization_source =
-            tl.AddTask(none, Ionization::CalculateElectronPDVWork, mu0.get(),
-                       ion_pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get());
+        ionization_source = tl.AddTask(
+            none, Ionization::CalculateElectronPDVWork, mu0.get(),
+            RiotUtils::GetOrAddSubsetPartition(pmesh, ion_pkg, "dudt", i).get());
         // TODO(JMM): Add heat exchange sources
       }
 
@@ -306,7 +312,7 @@ TaskCollection RiotDriver::RiotStepTasks() {
       // partitions, so the cached value is valid for this partition i.
       sparse_update::dudt_vec_t dudt_args;
       for (auto &[label, pkg] : pmesh->packages.AllPackagesWithSubMeshData("dudt")) {
-        auto *smd = pkg->GetOrAddMeshDataSubset(pmesh, "dudt", i).get();
+        auto *smd = RiotUtils::GetOrAddSubsetPartition(pmesh, pkg, "dudt", i).get();
         const auto &uids = pkg->GetAllMeshDataSubsets().at("dudt").GetUids();
         dudt_args.emplace_back(smd, uids);
       }

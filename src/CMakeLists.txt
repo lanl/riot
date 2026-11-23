@@ -23,6 +23,9 @@ set (SRC_LIST
   diagnostics/energies.cpp
   diagnostics/masses.cpp
   diagnostics/masses.hpp
+  diagnostics/riot_viz.cpp
+  diagnostics/riot_viz.hpp
+  diagnostics/stb_impl.c
 
   gravity/gravity.cpp
   gravity/gravity.hpp
@@ -87,7 +90,7 @@ set (SRC_LIST
   radiation_transport/angular_grids/geodesic_grid.cpp
   radiation_transport/angular_grids/geodesic_grid.hpp
   radiation_transport/angular_grids/latlon_grid.cpp
-  radiation_transport/angular_grids/latlon_grid.cpp
+  radiation_transport/angular_grids/latlon_grid.hpp
   radiation_transport/transport_utils/transport_utils.hpp
 
   riot_pgen/conduction_analytic.cpp
@@ -112,7 +115,6 @@ set (SRC_LIST
   riot_pgen/regions.cpp
   riot_pgen/regions.hpp
   riot_pgen/region_pgen.cpp
-  riot_pgen/region_primitives.cpp
   riot_pgen/region_primitives.hpp
   riot_pgen/region_python.cpp
   riot_pgen/region_python.hpp
@@ -131,6 +133,7 @@ set (SRC_LIST
   riot_limits.hpp.in
 
   riot_utils/sparse_update.hpp
+  riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp
   riot_utils/riot_utils.hpp
   riot_utils/riot_utils.cpp
@@ -154,6 +157,9 @@ set (SRC_LIST
   tracers/tracers.hpp
 
   template_main.hpp
+
+  thinc/thinc.hpp
+  thinc/thinc.cpp
 
   variables.hpp
 )
@@ -209,10 +215,17 @@ target_include_directories(riotlib PUBLIC
   $<$<BOOL:${RIOT_BUILD_CAD}>:${OpenCASCADE_INCLUDE_DIR}>
 )
 
+target_include_directories(riotlib PUBLIC
+    ${PROJECT_SOURCE_DIR}/external/stb)
+
+target_include_directories(riotlib PUBLIC
+    ${PROJECT_SOURCE_DIR}/external/font8x8)
+
 target_compile_features(riotlib PUBLIC cxx_std_17)
 
 if (Kokkos_ENABLE_CUDA)
-  target_compile_options(riotlib PUBLIC --expt-relaxed-constexpr)
+  # CXX-only: the C sources (stb_impl.c) are built by the plain C compiler, not nvcc.
+  target_compile_options(riotlib PUBLIC $<$<COMPILE_LANGUAGE:CXX>:--expt-relaxed-constexpr>)
 endif()
 
 if (RIOT_ENABLE_SANITIZE)
