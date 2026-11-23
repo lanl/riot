@@ -70,7 +70,9 @@ jobs:
           git submodule update --init --recursive \
             external/kokkos-kernels \
             external/singularity-eos \
-            external/singularity-opac
+            external/singularity-opac \
+            external/stb \
+            external/font8x8
 
       - name: Initialize pinned Parthenon
         if: ${{ inputs.parthenon_ref == '' }}

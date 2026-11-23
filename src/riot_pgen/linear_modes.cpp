@@ -303,6 +303,8 @@ void UserWorkAfterLoop(Mesh *pmesh, ParameterInput *pin, parthenon::SimTime &tm)
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace mdname = riot::container_names;
 
+  PARTHENON_REQUIRE(pmesh->DefaultNumPartitions() == 1,
+                    "linear_modes L1 errors require a single partition (pack_size=-1)");
   auto &md = pmesh->mesh_data.GetOrAdd("base", 0);
   if (md->NumBlocks() == 0) return;
   auto pmb = md->GetBlockData(0)->GetBlockPointer();

@@ -312,10 +312,10 @@ TaskCollection ExplicitTransport(Mesh *pmesh, const int nsteps, const Real time,
   for (int i = 0; i < num_partitions; i++) {
     auto &tl = tr[i];
     auto &base = pmesh->mesh_data.GetOrAdd("base", i);
-    auto &r0 = pmesh->mesh_data.GetOrAdd(mdname::r0, i);
-    auto &r1 = pmesh->mesh_data.GetOrAdd(mdname::r1, i);
-    auto &a0 = pmesh->mesh_data.GetOrAdd(mdname::a0, i);
-    auto &ro = pmesh->mesh_data.GetOrAdd(mdname::ro, i);
+    auto &r0 = RiotUtils::GetOrAddPartition(pmesh, mdname::r0, i);
+    auto &r1 = RiotUtils::GetOrAddPartition(pmesh, mdname::r1, i);
+    auto &a0 = RiotUtils::GetOrAddPartition(pmesh, mdname::a0, i);
+    auto &ro = RiotUtils::GetOrAddPartition(pmesh, mdname::ro, i);
 
     // Start receives on MeshData registers
     auto srec = tl.AddTask(none, parthenon::StartReceiveBoundBufs<any>, ro);

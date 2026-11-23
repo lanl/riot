@@ -13,7 +13,6 @@
 // This file was made in part with generative AI.
 #ifndef VARIABLES_HPP_
 #define VARIABLES_HPP_
-// This file was made in part with generative AI.
 
 #include <map>
 #include <set>
@@ -221,6 +220,22 @@ PARTICLE_VARIABLE(Real, p.l, vy);
 PARTICLE_VARIABLE(Real, p.l, vz);
 PARTICLE_VARIABLE(Real, p.l, wavelength);
 } // namespace laser
+
+namespace ray_tracer {
+PARTICLE_VARIABLE(Real, p.rt, vx);
+PARTICLE_VARIABLE(Real, p.rt, vy);
+PARTICLE_VARIABLE(Real, p.rt, vz);
+} // namespace ray_tracer
+
+namespace riot_viz {
+VARIABLE_SCALAR(p.vr, particles, false);
+PARTICLE_VARIABLE(int, p.vr, camera_id);
+PARTICLE_VARIABLE(int, p.vr, pixel_id);
+PARTICLE_VARIABLE(Real, p.vr, r);
+PARTICLE_VARIABLE(Real, p.vr, g);
+PARTICLE_VARIABLE(Real, p.vr, b);
+PARTICLE_VARIABLE(Real, p.vr, a);
+} // namespace riot_viz
 } // namespace particles
 
 // PTE diagnostics

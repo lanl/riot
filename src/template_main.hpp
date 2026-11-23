@@ -17,6 +17,7 @@
 #include <defs.hpp>
 #include <parthenon_manager.hpp>
 
+#include "diagnostics/diagnostics.hpp"
 #include "riot_pgen/pgen.hpp"
 #ifdef RIOT_ENABLE_PYTHON
 #include "riot_utils/py_init.hpp"
@@ -61,6 +62,7 @@ int main(int argc, char *argv[]) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   pman.app_input->ProcessPackages = T::ProcessPackages;
   pman.app_input->ProblemGenerator = ProblemGenerator;
+  pman.app_input->PostStepDiagnosticsInLoop = diagnostics::PostStepDiagnosticsInLoop;
 
   // call ParthenonInit to set up the mesh
   pman.ParthenonInitPackagesAndMesh();
