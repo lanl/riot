@@ -1,0 +1,366 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Magnetohydrodynamics &mdash; riot  documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="../../_static/table-wrap.css?v=9e914635" />
+
+  
+      <script src="../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+      <script src="../../_static/doctools.js?v=9bcbadda"></script>
+      <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+      <script async="async" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Material Strength" href="strength.html" />
+    <link rel="prev" title="Hydrodynamics" href="hydro.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            riot
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../building.html">Building <code class="docutils literal notranslate"><span class="pre">riot</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="materials.html">Materials and Equations of State</a></li>
+<li class="toctree-l1"><a class="reference internal" href="hydro.html">Hydrodynamics</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Magnetohydrodynamics</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#constrained-transport">Constrained Transport</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#riemann-solver-and-reconstruction">Riemann Solver and Reconstruction</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#geometry-and-refinement">Geometry and Refinement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#initial-conditions">Initial Conditions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#diagnostics">Diagnostics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#example-decks">Example Decks</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#input-parameters">Input Parameters</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#registered-fields">Registered Fields</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="strength.html">Material Strength</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ionization.html">Ionization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="laser.html">Laser Ray Tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="levelsets.html">Level Sets</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scalars.html">Passive Scalars</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gravity.html">Gravity</a></li>
+<li class="toctree-l1"><a class="reference internal" href="prescribed_sources.html">Prescribed Sources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tracers.html">Tracer Particles</a></li>
+<li class="toctree-l1"><a class="reference internal" href="mix.html">Turbulent Mixing (BHR)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_transport.html">Radiation Transport</a></li>
+<li class="toctree-l1"><a class="reference internal" href="radiation_diffusion.html">Radiation Diffusion (P1)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tnburn.html">Thermonuclear Burn</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sparse_physics.html">Sparse Physics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="regions.html">Regions</a></li>
+<li class="toctree-l1"><a class="reference internal" href="python_interface.html">The Python Interface</a></li>
+<li class="toctree-l1"><a class="reference internal" href="diagnostics.html">Diagnostics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="visualization.html">Visualization</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../programmer_guide.html">Developer’s guide</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../contributing.html">Contributing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../rshow.html">Rshow PHDF plot viewer</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">riot</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Magnetohydrodynamics</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../../_sources/src/packages/mhd.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="magnetohydrodynamics">
+<span id="chap-mhd"></span><h1>Magnetohydrodynamics<a class="headerlink" href="#magnetohydrodynamics" title="Link to this heading"></a></h1>
+<p>Setting <code class="docutils literal notranslate"><span class="pre">mhd</span> <span class="pre">=</span> <span class="pre">true</span></code> in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block extends the hydro
+solver of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a> to ideal MHD. The magnetic field
+<span class="math notranslate nohighlight">\(\vec{B}\)</span> is in Heaviside–Lorentz units, so the magnetic pressure
+is <span class="math notranslate nohighlight">\(B^2/2\)</span>, with no factors of <span class="math notranslate nohighlight">\(4\pi\)</span> or <span class="math notranslate nohighlight">\(\mu_0\)</span>. A
+field <span class="math notranslate nohighlight">\(\vec{B}_G\)</span> given in Gaussian units enters as <span class="math notranslate nohighlight">\(\vec{B}
+= \vec{B}_G/\sqrt{4\pi}\)</span>. With the magnetic terms the momentum and
+energy equations become</p>
+<div class="math notranslate nohighlight">
+\[\begin{split}\frac{\partial \left(\rho\vec{v}\right)}{\partial t}
+  + \nabla\!\cdot\!\left[\rho\vec{v}\otimes\vec{v}
+  + \left(p + \tfrac{1}{2}B^2\right)\mathsf{I}
+  - \vec{B}\otimes\vec{B} - \mathsf{s}\right] &amp;= \vec{0}, \\[2pt]
+\frac{\partial E}{\partial t}
+  + \nabla\!\cdot\!\left[\left(E + p + \tfrac{1}{2}B^2\right)\vec{v}
+  - \left(\vec{v}\!\cdot\!\vec{B}\right)\vec{B}
+  - \mathsf{s}\!\cdot\!\vec{v}\right] &amp;= 0, \\[2pt]
+\frac{\partial \vec{B}}{\partial t} + \nabla\!\times\!\vec{\mathcal{E}} &amp;= \vec{0},
+  \qquad \vec{\mathcal{E}} = -\vec{v}\times\vec{B},\end{split}\]</div>
+<p>where the total energy now includes the magnetic energy, <span class="math notranslate nohighlight">\(E = u +
+\tfrac{1}{2}\rho|\vec{v}|^2 + \tfrac{1}{2}B^2\)</span>. The bulk internal energy
+passed to the PTE closure is recovered by subtracting both the kinetic
+and the magnetic energy. The material densities, volume fractions and
+the PTE closure are handled exactly as in the hydro case.</p>
+<section id="constrained-transport">
+<h2>Constrained Transport<a class="headerlink" href="#constrained-transport" title="Link to this heading"></a></h2>
+<p>The evolved field is face-centered: <code class="docutils literal notranslate"><span class="pre">ffbulk::bfield</span></code> stores the
+component normal to each cell face. It is updated with constrained
+transport: the EMF <span class="math notranslate nohighlight">\(\vec{\mathcal{E}}\)</span> lives on cell edges, and
+each face is updated by the circulation of <span class="math notranslate nohighlight">\(\vec{\mathcal{E}}\)</span>
+around its boundary (Stokes’ theorem). This keeps the discrete
+divergence of <span class="math notranslate nohighlight">\(\vec{B}\)</span> at round-off for all time. The edge EMFs
+are built from the face EMFs returned by the Riemann solver with the
+upwind corner integration of Gardiner &amp; Stone (2005). The upwind
+direction at each face is chosen from the mass flux with the continuous
+weight of Athena++. The EMFs are stored as the edge fluxes of
+<code class="docutils literal notranslate"><span class="pre">ffbulk::bfield</span></code>, so Parthenon’s flux correction keeps them consistent
+across fine/coarse boundaries.</p>
+</section>
+<section id="riemann-solver-and-reconstruction">
+<h2>Riemann Solver and Reconstruction<a class="headerlink" href="#riemann-solver-and-reconstruction" title="Link to this heading"></a></h2>
+<p>MHD always uses the HLLD solver. Any other <code class="docutils literal notranslate"><span class="pre">riemann</span></code> choice is
+replaced by <code class="docutils literal notranslate"><span class="pre">hlld</span></code> with a warning, and <code class="docutils literal notranslate"><span class="pre">hlld</span></code> without <code class="docutils literal notranslate"><span class="pre">mhd</span></code> is an
+error. The cell-centered field <code class="docutils literal notranslate"><span class="pre">ccbulk::bfield</span></code> (the average of the
+face fields) is reconstructed with the other bulk primitives, using the
+same <code class="docutils literal notranslate"><span class="pre">recon</span></code> and <code class="docutils literal notranslate"><span class="pre">plm_slope_limit</span></code>. The field component normal to a
+face is not reconstructed: both sides of the Riemann problem use the
+face value from <code class="docutils literal notranslate"><span class="pre">ffbulk::bfield</span></code>. The corner integration needs face
+EMFs one cell beyond the block interior in each transverse direction, so
+MHD needs one more ghost cell than the same reconstruction in pure
+hydro. The time step uses the fast magnetosonic speed in each direction.</p>
+</section>
+<section id="geometry-and-refinement">
+<h2>Geometry and Refinement<a class="headerlink" href="#geometry-and-refinement" title="Link to this heading"></a></h2>
+<p>MHD runs in <code class="docutils literal notranslate"><span class="pre">UniformCartesian</span></code> and <code class="docutils literal notranslate"><span class="pre">UniformCylindrical</span></code> coordinates.
+The CT update uses the true edge lengths and face areas, and in
+cylindrical coordinates the cell-centered field is interpolated to the
+cell centroid. The magnetic contributions to the geometric source terms
+(the <span class="math notranslate nohighlight">\(r\)</span>-momentum term <span class="math notranslate nohighlight">\(\tfrac{1}{2}(B_r^2 + B_z^2 -
+B_\phi^2)/r\)</span> and the corresponding <span class="math notranslate nohighlight">\(B_r B_\phi\)</span> term in the
+<span class="math notranslate nohighlight">\(\phi\)</span>-momentum) are included. With static or adaptive refinement,
+new fine faces are filled with the divergence-preserving prolongation of
+Tóth &amp; Roe (2002), and coarse faces are restricted by area averaging.
+MHD cannot be combined with material strength, ionization, radiation
+transport or the BHR mix model. Sparse physics is turned off
+automatically when MHD is enabled.</p>
+</section>
+<section id="initial-conditions">
+<h2>Initial Conditions<a class="headerlink" href="#initial-conditions" title="Link to this heading"></a></h2>
+<p>The field is set from one of two optional methods of the Python class
+named in the <code class="docutils literal notranslate"><span class="pre">&lt;regions&gt;</span></code> block (Chapter <a class="reference internal" href="python_interface.html#chap-python"><span class="std std-ref">The Python Interface</span></a>). Both fill
+an <span class="math notranslate nohighlight">\((N,3)\)</span> output array in place:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">f_b_vector_potential(self,</span> <span class="pre">pos,</span> <span class="pre">a)</span></code> returns the vector potential
+<span class="math notranslate nohighlight">\(\vec{A}\)</span> at the cell edge centers. <code class="docutils literal notranslate"><span class="pre">ffbulk::bfield</span></code> is set to its
+discrete curl, so the initial <span class="math notranslate nohighlight">\(\nabla\!\cdot\!\vec{B}\)</span> is zero to
+round-off. This is the preferred method.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">f_b_bfield(self,</span> <span class="pre">pos,</span> <span class="pre">b)</span></code> returns <span class="math notranslate nohighlight">\(\vec{B}\)</span> at the face
+centers; each face keeps its normal component. Initialization stops
+with an error unless the resulting discrete
+<span class="math notranslate nohighlight">\(\nabla\!\cdot\!\vec{B}\)</span> vanishes to round-off. This suits fields
+that are uniform, or vary only along the face directions.</p></li>
+</ul>
+<p>Without either method <span class="math notranslate nohighlight">\(\vec{B} = 0\)</span>. Positions and vector
+components follow the same Cartesian convention as the other state
+setters: in cylindrical coordinates <code class="docutils literal notranslate"><span class="pre">self.x</span></code>, <code class="docutils literal notranslate"><span class="pre">self.y</span></code> and
+<code class="docutils literal notranslate"><span class="pre">self.z</span></code> index the <span class="math notranslate nohighlight">\(r\)</span>, <span class="math notranslate nohighlight">\(\phi\)</span> and <span class="math notranslate nohighlight">\(z\)</span> components.
+The magnetic energy of the initial field is added to the total energy
+automatically.</p>
+</section>
+<section id="diagnostics">
+<h2>Diagnostics<a class="headerlink" href="#diagnostics" title="Link to this heading"></a></h2>
+<p>The history file gains the total magnetic energy <code class="docutils literal notranslate"><span class="pre">ME</span></code> and the maximum
+of <span class="math notranslate nohighlight">\(|\nabla\!\cdot\!\vec{B}|\,\Delta x\)</span> (<code class="docutils literal notranslate"><span class="pre">max_divB_dx</span></code>, with
+<span class="math notranslate nohighlight">\(\Delta x\)</span> the smallest width of each cell), which should stay at
+round-off. The cell-centered field <code class="docutils literal notranslate"><span class="pre">ccbulk::bfield</span></code> and the divergence
+<code class="docutils literal notranslate"><span class="pre">ccbulk::divb</span></code> can be added to the HDF5 outputs.</p>
+</section>
+<section id="example-decks">
+<h2>Example Decks<a class="headerlink" href="#example-decks" title="Link to this heading"></a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">inputs/mhd/</span></code> holds the Brio–Wu shock tube (<code class="docutils literal notranslate"><span class="pre">brio_wu.py</span></code>), the
+Orszag–Tang vortex (<code class="docutils literal notranslate"><span class="pre">orszag_tang.py</span></code>), field loop advection in 2D and
+3D (<code class="docutils literal notranslate"><span class="pre">field_loop.py</span></code>, <code class="docutils literal notranslate"><span class="pre">--3d</span></code> for the loop inclined to the grid of
+Gardiner &amp; Stone 2008), and two cylindrical problems: field loop
+advection in <span class="math notranslate nohighlight">\(r\)</span>–<span class="math notranslate nohighlight">\(z\)</span> (<code class="docutils literal notranslate"><span class="pre">field_loop_rz.py</span></code>) and a rotating
+magnetized pinch equilibrium (<code class="docutils literal notranslate"><span class="pre">rotating_pinch.py</span></code>). Each deck takes
+<code class="docutils literal notranslate"><span class="pre">--help</span></code>.</p>
+</section>
+<section id="input-parameters">
+<h2>Input Parameters<a class="headerlink" href="#input-parameters" title="Link to this heading"></a></h2>
+<table class="wraptable docutils align-default" id="id1">
+<caption><span class="caption-text">MHD parameter in the <code class="docutils literal notranslate"><span class="pre">&lt;physics&gt;</span></code> block.</span><a class="headerlink" href="#id1" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 25.0%" />
+<col style="width: 12.0%" />
+<col style="width: 18.0%" />
+<col style="width: 45.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Parameter</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Default</p></th>
+<th class="head"><p>Description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>mhd</p></td>
+<td><p>bool</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">false</span></code></p></td>
+<td><p>Evolve the ideal MHD equations with constrained transport.</p></td>
+</tr>
+</tbody>
+</table>
+<p>The reconstruction (<code class="docutils literal notranslate"><span class="pre">recon</span></code>, <code class="docutils literal notranslate"><span class="pre">plm_slope_limit</span></code>) and <code class="docutils literal notranslate"><span class="pre">cfl</span></code> of the
+<code class="docutils literal notranslate"><span class="pre">&lt;hydro&gt;</span></code> block apply to MHD as well (Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>).</p>
+</section>
+<section id="registered-fields">
+<h2>Registered Fields<a class="headerlink" href="#registered-fields" title="Link to this heading"></a></h2>
+<p>With MHD enabled the hydro package registers the fields below in
+addition to those of Chapter <a class="reference internal" href="hydro.html#chap-hydro"><span class="std std-ref">Hydrodynamics</span></a>. <code class="docutils literal notranslate"><span class="pre">ffbulk</span></code> is
+<code class="docutils literal notranslate"><span class="pre">face_variables::face_averaged::bulk</span></code> and <code class="docutils literal notranslate"><span class="pre">ccbulk</span></code> is
+<code class="docutils literal notranslate"><span class="pre">cell_variables::cell_averaged::bulk</span></code>.</p>
+<table class="wraptable docutils align-default" id="tab-mhd-fields">
+<caption><span class="caption-text">Fields registered by the hydro package for MHD.</span><a class="headerlink" href="#tab-mhd-fields" title="Link to this table"></a></caption>
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 14.0%" />
+<col style="width: 16.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Symbol</p></th>
+<th class="head"><p>Components</p></th>
+<th class="head"><p>Metadata / description</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>ffbulk::bfield</p></td>
+<td><p><span class="math notranslate nohighlight">\(\vec{B}\!\cdot\!\hat{n}\)</span></p></td>
+<td><p>—</p></td>
+<td><p>Face, Independent, WithFluxes, FillGhost, Vector; face-normal magnetic field. The edge fluxes hold the EMFs.</p></td>
+</tr>
+<tr class="row-odd"><td><p>ccbulk::bfield</p></td>
+<td><p><span class="math notranslate nohighlight">\(\vec{B}\)</span></p></td>
+<td><p>3</p></td>
+<td><p>Cell, Intensive, Vector, Derived, OneCopy; cell-centered magnetic field.</p></td>
+</tr>
+<tr class="row-even"><td><p>ccbulk::divb</p></td>
+<td><p><span class="math notranslate nohighlight">\(\nabla\!\cdot\!\vec{B}\)</span></p></td>
+<td><p>1</p></td>
+<td><p>Cell, Derived, OneCopy; discrete divergence of the field (diagnostic, filled before outputs).</p></td>
+</tr>
+<tr class="row-odd"><td><p>ffbulk::bnormal, ffbulk::vrho, ffbulk::emf</p></td>
+<td><p>—</p></td>
+<td><p>1, 1, 2</p></td>
+<td><p>Face, Derived, OneCopy, CellMemAligned; Riemann-solve scratch: a cell-aligned copy of the face-normal field, the upwind mass flux proxy and the two transverse face EMFs.</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="hydro.html" class="btn btn-neutral float-left" title="Hydrodynamics" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="strength.html" class="btn btn-neutral float-right" title="Material Strength" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026. Triad National Security.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  
+<div class="rst-versions" data-toggle="rst-versions" role="note" aria-label="versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    <span class="fa fa-book"> Other Versions</span>
+    v: main
+    <span class="fa fa-caret-down"></span>
+  </span>
+  <div class="rst-other-versions">
+    <dl>
+      <dt>Tags</dt>
+      <dd><a href="../../../regression-gold-20260831/index.html">regression-gold-20260831</a></dd>
+      <dd><a href="../../../regression-gold-20261117/index.html">regression-gold-20261117</a></dd>
+      <dd><a href="../../../regression-gold-20261117b/index.html">regression-gold-20261117b</a></dd>
+    </dl>
+    <dl>
+      <dt>Branches</dt>
+      <dd><a href="mhd.html">main</a></dd>
+      <dd><a href="../../../HEAD/src/packages/mhd.html">HEAD</a></dd>
+      <dd><a href="../../../jdolence/rshow_refactor/index.html">jdolence/rshow_refactor</a></dd>
+      <dd><a href="../../../jmm/alt-materials/index.html">jmm/alt-materials</a></dd>
+      <dd><a href="../../../jmm/demo/index.html">jmm/demo</a></dd>
+      <dd><a href="../../../jmm/faster-pte/index.html">jmm/faster-pte</a></dd>
+      <dd><a href="../../../jmm/fix-jdolence-visualization/index.html">jmm/fix-jdolence-visualization</a></dd>
+      <dd><a href="../../../jmm/openpmd/index.html">jmm/openpmd</a></dd>
+      <dd><a href="../../../jmm/sw2lw-nccl/index.html">jmm/sw2lw-nccl</a></dd>
+      <dd><a href="../../../jmm/try-pgen-mesh/index.html">jmm/try-pgen-mesh</a></dd>
+      <dd><a href="../../../lfroberts36/diffusion-user-bcs/index.html">lfroberts36/diffusion-user-bcs</a></dd>
+      <dd><a href="../../../pdmullen/demo/index.html">pdmullen/demo</a></dd>
+      <dd><a href="../../../pdmullen/experimental/index.html">pdmullen/experimental</a></dd>
+      <dd><a href="../../../pdmullen/flux_corr_trt/index.html">pdmullen/flux_corr_trt</a></dd>
+      <dd><a href="../../../pdmullen/forrest/index.html">pdmullen/forrest</a></dd>
+      <dd><a href="../../../pdmullen/grav/index.html">pdmullen/grav</a></dd>
+      <dd><a href="../../../pdmullen/grav-mg-scaling/index.html">pdmullen/grav-mg-scaling</a></dd>
+      <dd><a href="../../../pdmullen/rate-residual/index.html">pdmullen/rate-residual</a></dd>
+      <dd><a href="../../../pdmullen/sw2lw/index.html">pdmullen/sw2lw</a></dd>
+      <dd><a href="../../../pdmullen/sw2lw-luke/index.html">pdmullen/sw2lw-luke</a></dd>
+      <dd><a href="../../../pdmullen/void-grav/index.html">pdmullen/void-grav</a></dd>
+      <dd><a href="../../../swjones/isotopic-diffusion/index.html">swjones/isotopic-diffusion</a></dd>
+      <dd><a href="../../../swjones/rshow-compare/index.html">swjones/rshow-compare</a></dd>
+      <dd><a href="../../../v2026.10.08-rc/index.html">v2026.10.08-rc</a></dd>
+    </dl>
+  </div>
+</div><script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
