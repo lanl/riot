@@ -81,6 +81,18 @@ constexpr char block_active_flag[] = CELL_DELTA_NAME;
     static constexpr bool is_sparse() { return sparse; }                                 \
   }
 
+#define VARIABLE_FACE_VECTOR(ns, varname, sparse, ncomp)                                 \
+  struct varname : public parthenon::variable_names::base_w_tt_t<                        \
+                       false, parthenon::TopologicalType::Face, ncomp> {                 \
+    template <class... Ts>                                                               \
+    KOKKOS_INLINE_FUNCTION varname(Ts &&...args)                                         \
+        : parthenon::variable_names::base_w_tt_t<                                        \
+              false, parthenon::TopologicalType::Face, ncomp>(                           \
+              std::forward<Ts>(args)...) {}                                              \
+    static std::string name() { return #ns "." #varname; }                               \
+    static constexpr bool is_sparse() { return sparse; }                                 \
+  }
+
 #define PARTICLE_VARIABLE(type, ns, varname)                                             \
   struct varname : public parthenon::swarm_variable_names::base_t<type> {                \
     template <class... Ts>                                                               \
@@ -130,6 +142,10 @@ VARIABLE_SCALAR(c.c, cell_delta, false);
 VARIABLE_SCALAR(c.c.bulk, laser_deposition, false);
 VARIABLE_SCALAR(c.c.bulk, laser_energy_density, false);
 VARIABLE_SCALAR(c.c.bulk, laser_tau_max, false);
+// Ideal MHD: cell-centered magnetic field (average of the face field
+// face_variables::face_averaged::bulk::bfield) and its divergence.
+VARIABLE_VECTOR(c.c.bulk, bfield, false, 3);
+VARIABLE_SCALAR(c.c.bulk, divb, false);
 } // namespace bulk
 
 namespace mat {
@@ -197,9 +213,23 @@ VARIABLE_SCALAR(c.m, lr_cache, true);
 } // namespace material_averaged
 } // namespace cell_variables
 
-// Face-centered, material-averaged quantities. Presently only the diffusive
-// mass flux register used by the BHR mix model lives here.
+// Face-centered quantities: bulk MHD fields, and the material diffusive mass flux
+// register used by the BHR mix model.
 namespace face_variables {
+namespace face_averaged {
+namespace bulk {
+// Ideal MHD (constrained transport). bfield is the evolved, face-centered magnetic
+// field (node memory layout, so it must only be accessed with explicit
+// (b, TE, var, k, j, i) indexing). The remaining fields are scratch written by the
+// Riemann solve with cell memory layout, so the flat pack views can be used on them:
+// bnormal is a cell-aligned copy of bfield, vrho the upwind mass flux proxy, and emf
+// the two transverse face EMFs.
+VARIABLE_FACE(f.f.bulk, bfield, false);
+VARIABLE_FACE(f.f.bulk, bnormal, false);
+VARIABLE_FACE(f.f.bulk, vrho, false);
+VARIABLE_FACE_VECTOR(f.f.bulk, emf, false, 2);
+} // namespace bulk
+} // namespace face_averaged
 namespace mat {
 VARIABLE_FACE(f.m, diffusive_fluxes, true);
 } // namespace mat

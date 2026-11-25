@@ -183,11 +183,15 @@ the CFL condition with the user-specified Courant number ``cfl``.
       hllc       HLLC (contact-restoring) solver; default
       chllc      Carbuncle-corrected HLLC (Minoshima & Miyoshi 2021)
       lhllc      Low-Mach and carbuncle-corrected HLLC (experimental)
+      hlld       HLLD solver (Miyoshi & Kusano 2005); MHD only
       ========== ====================================================
 
 When material strength is enabled, a strength-aware Riemann solver
 that accounts for the deviatoric stress contribution is selected
 automatically.
+
+The extension to magnetohydrodynamics is described in Chapter
+:ref:`chap:mhd`.
 
 Input Parameters
 ----------------
@@ -211,10 +215,26 @@ All parameters below reside in the ``<hydro>`` block unless otherwise noted.
      - string
      - ``=recon``
      - Reconstruction method used for volume fractions.
+   * - plm_slope_limit
+     - Real
+     - ``1.99``
+     - PLM slope limit :math:`\alpha \in [1, 2]` in
+       :math:`\Delta q = \mathrm{minmod}(\Delta q_c, \alpha \min(|\Delta q_-|, |\Delta q_+|))`;
+       1 is minmod, 2 is MC. Applies to the bulk flow variables and the
+       cell-centered magnetic field. Values near 1 suppress post-shock
+       oscillations, e.g. in MHD shock tubes.
+   * - plm_slope_limit_mat
+     - Real
+     - ``1.5``
+     - PLM slope limit of the material density and internal energy.
+   * - plm_slope_limit_vfrac
+     - Real
+     - ``1.99``
+     - PLM slope limit of the volume fractions.
    * - riemann
      - string
      - ``hllc``
-     - Riemann solver (the table below).
+     - Riemann solver (the table below). Forced to ``hlld`` with MHD (Chapter :ref:`chap:mhd`).
    * - cfl
      - Real
      - ``0.8``

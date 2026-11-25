@@ -788,6 +788,8 @@ class BlockInitData {
   }
 
   std::vector<int> set_mask(sample_positions_t &x);
+  template <typename host_mirror_t>
+  void init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc, host_mirror_t &E);
   bool near_boundary(const int k0, const int j0, const int i0, const int reg_id) const;
   std::vector<int> set_clean_mask();
 

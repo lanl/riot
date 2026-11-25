@@ -51,12 +51,15 @@ namespace Hydro {
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                                             StateDescriptor *mat_pkg) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   const int nghost = parthenon::Globals::nghost;
   auto hydro = std::make_shared<StateDescriptor>("hydro");
   Params &params = hydro->AllParams();
 
   const bool do_ionization = pin->GetOrAddBoolean("physics", "ionization", false);
+  const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
+  params.Add("do_mhd", do_mhd);
   bool do_plasma_viscosity = false;
   if (do_ionization) {
     do_plasma_viscosity = pin->GetOrAddBoolean("ionization", "plasma_viscosity", false);
@@ -83,6 +86,9 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     auto recon_tag = RiotReconstruction::NAME_MAP.at(recon_name);
     int stencil_width = RiotReconstruction::STENCIL_WIDTH.at(recon_tag);
     stencil_width += (do_ionization && do_plasma_viscosity);
+    // CT corner EMFs need face EMFs from one transverse ghost row. MHD is incompatible
+    // with ionization (below), so this never stacks with the viscosity ghost.
+    stencil_width += do_mhd;
     PARTHENON_REQUIRE(nghost > stencil_width,
                       "Must have enough ghosts for reconstruction stencil " + recon_name);
     return std::make_pair(stencil_width, recon_tag);
@@ -93,6 +99,25 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
   params.Add("recon", recon_tag);
   params.Add("vfrac_recon", vfrac_recon_tag);
   params.Add("stencil_width", stencil_width);
+
+  // PLM slope limits theta in slope = minmod(central, theta * one-sided): 1 is minmod,
+  // 2 is MC.
+  SlopeLimits slope_limits;
+  auto GetSlopeLimit = [&](const std::string &name, const Real def,
+                           const std::string &what) {
+    const Real theta = pin->GetOrAddReal(
+        "hydro", name, def, "PLM slope limit in [1, 2] (1 = minmod, 2 = MC) for " + what);
+    PARTHENON_REQUIRE_THROWS(theta >= 1.0 && theta <= 2.0,
+                             "hydro/" + name + " must be in [1, 2]");
+    return theta;
+  };
+  slope_limits.bulk = GetSlopeLimit("plm_slope_limit", slope_limits.bulk,
+                                    "the bulk flow variables and magnetic field");
+  slope_limits.mat = GetSlopeLimit("plm_slope_limit_mat", slope_limits.mat,
+                                   "the material density and internal energy");
+  slope_limits.vfrac =
+      GetSlopeLimit("plm_slope_limit_vfrac", slope_limits.vfrac, "the volume fractions");
+  params.Add("plm_slope_limits", slope_limits);
 
   // CFL is 0.8 by default
   Real cfl = pin->GetOrAddReal("hydro", "cfl", 0.8, "Courant-Friedrichs-Lewy number");
@@ -106,11 +131,24 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
 
   // Choose Riemann Solver
   // TODO(JMM): Move Carbuncle correction into HLLC solver
+  const bool user_set_solver = pin->DoesParameterExist("hydro", "riemann");
   std::string solver = pin->GetOrAddString(
       "hydro", "riemann", "hllc",
-      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll"},
-      "Riemann solver to use");
-  if (solver == "hllc") {
+      std::vector<std::string>{"hllc", "hllcf", "chllc", "lhllc", "hll", "hlld"},
+      "Riemann solver to use (forced to hlld when MHD is enabled)");
+  if (do_mhd) {
+    if (solver != "hlld" && user_set_solver && parthenon::Globals::my_rank == 0) {
+      PARTHENON_WARN("MHD is enabled, so the hlld Riemann solver will be used instead "
+                     "of " +
+                     solver);
+    }
+    solver = "hlld";
+  }
+  if (solver == "hlld") {
+    PARTHENON_REQUIRE_THROWS(do_mhd,
+                             "The hlld Riemann solver requires <physics>/mhd=true");
+    params.Add("riemann_solver", RiemannSolver::hlld);
+  } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
   } else if (solver == "hllcf") {
     if (parthenon::Globals::my_rank == 0) {
@@ -228,6 +266,47 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     hydro->AddField<ccbulk::face_velocity>(m);
   }
 
+  if (do_mhd) {
+    PARTHENON_REQUIRE_THROWS(parthenon::IsCoord<parthenon::UniformCartesian>() ||
+                                 parthenon::IsCoord<parthenon::UniformCylindrical>(),
+                             "MHD is only implemented for uniform Cartesian and "
+                             "cylindrical coordinates");
+    PARTHENON_REQUIRE_THROWS(!do_strength, "MHD is incompatible with material strength");
+    PARTHENON_REQUIRE_THROWS(!do_ionization, "MHD is incompatible with ionization");
+
+    // Face-centered magnetic field, evolved with constrained transport. The edge fluxes
+    // automatically allocated by WithFluxes hold the EMFs. Node memory layout is
+    // required for FillGhost on face fields, so this field must never be accessed with
+    // the flat (cell-aligned) pack views.
+    m = Metadata({Metadata::Face, Metadata::Independent, Metadata::WithFluxes,
+                  Metadata::FillGhost, Metadata::Vector});
+    m.RegisterRefinementOps<parthenon::refinement_ops::ProlongateSharedMinMod,
+                            parthenon::refinement_ops::RestrictAverage,
+                            parthenon::refinement_ops::ProlongateInternalTothAndRoe>();
+    hydro->AddField<ffbulk::bfield>(m);
+
+    // Cell-centered magnetic field (average of the face fields)
+    m = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Vector,
+                  Metadata::Derived, Metadata::OneCopy},
+                 vel_arr_size);
+    hydro->AddField<ccbulk::bfield>(m);
+
+    // Divergence of B (diagnostic)
+    m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy});
+    hydro->AddField<ccbulk::divb>(m);
+
+    // Cell-aligned face scratch written by the Riemann solve: normal B, upwind mass
+    // flux proxy, and the two transverse EMFs (slot0 = E_tbc, slot1 = E_tac)
+    m = Metadata(
+        {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned});
+    hydro->AddField<ffbulk::bnormal>(m);
+    hydro->AddField<ffbulk::vrho>(m);
+    m = Metadata(
+        {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned},
+        std::vector<int>{2});
+    hydro->AddField<ffbulk::emf>(m);
+  }
+
   // Hydro Timestep
   hydro->EstimateTimestepMesh = EstimateTimestepMesh;
   if (amr_int) {
@@ -254,10 +333,19 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                            "Output to the total kinetic energy in the history file. "
                            "Useful for turbulence studies.");
   params.Add("track_total_kinetic_energy", history_tot_ke);
+  parthenon::HstVar_list scalar_histories{};
   if (history_tot_ke) {
-    parthenon::HstVar_list scalar_histories{};
     scalar_histories.emplace_back(parthenon::UserHistoryOperation::sum,
                                   total_kinetic_energy, "KE");
+  }
+  if (do_mhd) {
+    scalar_histories.emplace_back(parthenon::UserHistoryOperation::sum,
+                                  total_magnetic_energy, "ME");
+    scalar_histories.emplace_back(parthenon::UserHistoryOperation::max, max_divb,
+                                  "max_divB_dx");
+    hydro->UserWorkBeforeOutputMesh = CalculateDivBMesh;
+  }
+  if (!scalar_histories.empty()) {
     hydro->AddParam<>(parthenon::hist_param_key, scalar_histories, true);
   }
 
@@ -523,7 +611,12 @@ TaskStatus GuessCellVolumeFractions(MeshData<Real> *md) {
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus Hydro::CalculateGeometricSource
-//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries
+//! \brief Calculates "Geometric Source Terms" for 1D Spherical and 2D RZ Geometries.
+//!        In cylindrical (r, z, phi) coordinates, the divergence of the momentum flux
+//!        tensor T = rho v v + (p + B^2/2) I - B B - sigma has the geometric parts
+//!          S_r = T_phiphi / r,  S_phi = -T_rphi / r,
+//!        i.e. pressure, deviatoric/viscous hoop stress, centrifugal and magnetic hoop
+//!        stress in S_r, and Coriolis and magnetic tension in S_phi.
 TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
@@ -538,12 +631,14 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
   auto &strength_mats = materials->Param<std::vector<int>>("strength_mats");
 
   const bool do_ionization = pm->packages.Get("riot")->Param<bool>("do_ionization");
+  const bool do_mhd = pm->packages.Get("hydro")->Param<bool>("do_mhd");
   bool do_plasma_viscosity = false;
   if (do_ionization) {
     do_plasma_viscosity = pm->packages.Get("ionization")->Param<bool>("plasma_viscosity");
   }
 
-  auto v = riot::MakePack<ccbulk::pressure, ccmat::volume_fraction, cm::deviatoric_stress,
+  auto v = riot::MakePack<ccbulk::pressure, ccbulk::rho, ccbulk::velocity, ccbulk::bfield,
+                          ccmat::volume_fraction, cm::deviatoric_stress,
                           ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(
       state, strength_mats);
   const int nblocks = v.GetNBlocks();
@@ -559,8 +654,9 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
 
   RiotLoop::outer(
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        // stress = T_phiphi (T_thetatheta + T_phiphi in spherical), shear = T_rphi
         auto stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
-        auto visc_stress = RiotLoop::GetPerPointScratch<Real>(idx_range);
+        auto shear = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto geom = RiotLoop::GetPerPointScratch<Real>(idx_range);
         auto &coords = v.GetCoordinates(b);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
@@ -583,7 +679,29 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
         const int nstr_mat = v.GetSize(b, ccmat::volume_fraction());
         RiotLoop::inner(idx_range, [&](const auto kji) {
           stress(kji) = pv(ccbulk::pressure(), kji);
+          shear(kji) = 0.0;
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+            const Real rho = pv(ccbulk::rho(), kji);
+            const Real vr = pv(ccbulk::velocity(0), kji);
+            const Real vphi = pv(ccbulk::velocity(2), kji);
+            stress(kji) += rho * vphi * vphi;
+            shear(kji) = rho * vr * vphi;
+          }
         });
+
+        // Runtime check outside the constexpr-if: a device lambda cannot first capture
+        // a variable inside one
+        if (do_mhd) {
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
+            RiotLoop::inner(idx_range, [&](const auto kji) {
+              const Real br = pv(ccbulk::bfield(0), kji);
+              const Real bz = pv(ccbulk::bfield(1), kji);
+              const Real bphi = pv(ccbulk::bfield(2), kji);
+              stress(kji) += 0.5 * (br * br + bz * bz - bphi * bphi);
+              shear(kji) -= br * bphi;
+            });
+          }
+        }
 
         if (do_strength) {
           for (int n = 0; n < nstr_mat; n++) {
@@ -622,7 +740,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
         RiotLoop::inner(idx_range, [&](const auto kji) {
           pvsrc(ccbulk::momentum(0), kji) = stress(kji) * geom(kji);
           pvsrc(ccbulk::momentum(1), kji) = 0.0;
-          pvsrc(ccbulk::momentum(2), kji) = 0.0;
+          pvsrc(ccbulk::momentum(2), kji) = -shear(kji) * geom(kji);
         });
       });
 
@@ -697,8 +815,9 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
 
   // strength params
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
+  const bool do_mhd = params.Get<bool>("do_mhd");
   auto v = riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
-                          ccbulk::velocity, ccbulk::max_signal>(md);
+                          ccbulk::velocity, ccbulk::max_signal, ccbulk::bfield>(md);
   const int ndim = pm->ndim;
 
   using rt = RiotUtils::ReductionType<Kokkos::Min<Real>>;
@@ -714,13 +833,27 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           const Real bulk_modulus = pv(ccbulk::bulk_modulus(), idx);
           const Real shear_modulus =
               (do_strength) ? pv(ccbulk::shear_modulus(), idx) : 0.0;
-          const Real cs =
-              std::sqrt(ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho));
+          const Real a2 = ratio((bulk_modulus + (4.0 / 3.0) * shear_modulus), rho);
+          const Real cs = std::sqrt(a2);
+          Real b2 = 0.0;
+          if (do_mhd) {
+            b2 = SQR(pv(ccbulk::bfield(0), idx)) + SQR(pv(ccbulk::bfield(1), idx)) +
+                 SQR(pv(ccbulk::bfield(2), idx));
+          }
           Real denom = 0.0;
           for (int d = 0; d < ndim; d++) {
             const Real vphys =
                 pv(ccbulk::velocity(d), idx) * coords.Scale<TE::CC>(d + 1, k, j, i);
-            const Real csig = std::abs(vphys) + cs;
+            Real csig = std::abs(vphys) + cs;
+            if (do_mhd) {
+              // Fast magnetosonic speed along d (Heaviside-Lorentz units)
+              const Real va2 = ratio(b2, rho);
+              const Real vad2 = ratio(SQR(pv(ccbulk::bfield(d), idx)), rho);
+              const Real s = a2 + va2;
+              const Real cf2 =
+                  0.5 * (s + std::sqrt(std::max(SQR(s) - 4.0 * a2 * vad2, 0.0)));
+              csig = std::abs(vphys) + std::sqrt(cf2);
+            }
             const Real max_sig = std::max(csig, pv(ccbulk::max_signal(d), idx));
             denom += max_sig / coords.CellWidth(d + 1, k, j, i);
           }

@@ -207,6 +207,21 @@ TEST_CASE("PiecewiseLinear is centered and second-order accurate",
     CHECK(fixed.plus == Approx(2.5));
     CHECK(fixed.minus == Approx(1.5));
   }
+
+  SECTION("slope limit 1 is minmod and 2 is MC") {
+    // qm,q0,qp = 0,1,4: one-sided slopes 1 and 3, centered 2.
+    // minmod: dq = 1/2 * 1 = 0.5. MC: dq = 1/2 min(2, 2*1) = 1.
+    const Faces mm = RunFaces(KOKKOS_LAMBDA(Faces & out) {
+      Recon::PiecewiseLinear(0.0, 1.0, 4.0, out.plus, out.minus, 1.0);
+    });
+    CHECK(mm.plus == Approx(1.5));
+    CHECK(mm.minus == Approx(0.5));
+    const Faces mc = RunFaces(KOKKOS_LAMBDA(Faces & out) {
+      Recon::PiecewiseLinear(0.0, 1.0, 4.0, out.plus, out.minus, 2.0);
+    });
+    CHECK(mc.plus == Approx(2.0));
+    CHECK(mc.minus == Approx(0.0));
+  }
 }
 
 TEST_CASE("PPM4 preserves constants and is exact on linear data",

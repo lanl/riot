@@ -38,6 +38,7 @@ block-adaptive, performance portable multi-material radiation hydrodynamics
    src/building
    src/packages/materials
    src/packages/hydro
+   src/packages/mhd
    src/packages/strength
    src/packages/ionization
    src/packages/laser

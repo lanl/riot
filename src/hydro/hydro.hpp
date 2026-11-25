@@ -54,6 +54,11 @@ using sum_bulk_recon_types = RiotLoop::IndexedVarTypeList<
     cell_variables::cell_averaged::bulk::bulk_modulus,
     cell_variables::cell_averaged::bulk::electron_internal_energy>;
 
+//! \brief  Cell-centered magnetic field reconstructed to faces (MHD only; the normal
+//!         component is replaced by the face-centered field in the Riemann solve).
+using mhd_recon_types =
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::bfield>;
+
 //! \brief  Per-material quantities reconstructed to faces and kept for every material.
 using mat_recon_types =
     RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::mat::volume_fraction,
@@ -73,6 +78,15 @@ using strength_mat_recon_types =
                                  cell_variables::material_averaged::shear_modulus>;
 
 static constexpr Real THETA = 1.99;
+
+//! \brief PLM slope limits (<hydro>/plm_slope_limit*) of the bulk flow variables and
+//!         magnetic field, the material density and internal energy, and the volume
+//!         fractions.
+struct SlopeLimits {
+  Real bulk = THETA;
+  Real mat = RiotReconstruction::MATERIAL_SLOPE_LIMIT;
+  Real vfrac = THETA;
+};
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::ReconCells
@@ -312,6 +326,16 @@ TaskStatus CalculateMaxSignalSpeed(MeshData<Real> *state);
 Real EstimateTimestepMesh(MeshData<Real> *rc);
 PrimFluxPack MakeAdvectionPack(MeshData<Real> *md);
 Real total_kinetic_energy(MeshData<Real> *md);
+// Constrained transport (ct.cpp)
+void CopyFaceBToAligned(MeshData<Real> *md);
+TaskStatus CalculateCornerEMF(MeshData<Real> *md, const Real dt);
+TaskStatus UpdateFaceFields(MeshData<Real> *mu0, MeshData<Real> *mu1, const Real gam0,
+                            const Real gam1, const Real beta_dt);
+void FaceToCellB(MeshData<Real> *md, IndexDomain domain);
+void CalculateDivB(MeshData<Real> *md);
+void CalculateDivBMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
+Real total_magnetic_energy(MeshData<Real> *md);
+Real max_divb(MeshData<Real> *md);
 void CalculateStrainRate(MeshData<Real> *state);
 } // namespace Hydro
 #endif // HYDRO_HYDRO_HPP_

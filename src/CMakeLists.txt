@@ -32,6 +32,7 @@ set (SRC_LIST
 
   hydro/advection.hpp
   hydro/calculate_fluxes.cpp
+  hydro/ct.cpp
   hydro/hydro.cpp
   hydro/hydro.hpp
   hydro/riemann.hpp
@@ -132,6 +133,7 @@ set (SRC_LIST
   riot_driver.hpp
   riot_limits.hpp.in
 
+  riot_utils/sparse_update.cpp
   riot_utils/sparse_update.hpp
   riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp

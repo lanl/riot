@@ -14,6 +14,8 @@
 #define RIOT_UTILS_SPARSE_UPDATE_HPP_
 // This file was made in part with generative AI.
 
+#include <algorithm>
+
 #include <kokkos_abstraction.hpp>
 #include <parthenon/package.hpp>
 
@@ -24,6 +26,7 @@ namespace sparse_update {
 
 using namespace parthenon::package::prelude;
 using parthenon::MetadataFlag;
+using parthenon::Uid_t;
 
 using dudt_pair_t = std::pair<MeshData<Real> *, std::vector<Uid_t>>;
 using dudt_vec_t = std::vector<dudt_pair_t>;
@@ -152,9 +155,12 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   bool sparse_physics = riot_pkg->template Param<bool>("sparse_physics");
   const bool kinematic = riot_pkg->template Param<bool>("kinematic_advection");
 
+  // Cell fields only: face fields with fluxes (the CT magnetic field) have node memory
+  // layout and are updated separately (Hydro::UpdateFaceFields).
   std::vector<MetadataFlag> flags(
       {kinematic ? Metadata::GetUserFlag(riot::metadata::KinematicAdvected)
-                 : Metadata::WithFluxes});
+                 : Metadata::WithFluxes,
+       Metadata::Cell});
 
   // make packs for the full state vector
   auto desc = parthenon::MakePackDescriptor<any>(umd, flags, {PDOpt::WithFluxes});
@@ -244,37 +250,59 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   return TaskStatus::complete;
 }
 
+namespace impl {
+//----------------------------------------------------------------------------------------
+//! \fn  void sparse_update::impl::DeepCopyLayout
+//! \brief Deep copy the variables uids, which share one memory layout, over the entire
+//!        domain. layout is the element whose index range covers each component's
+//!        allocation (CC for cell and Metadata::CellMemAligned fields, NN otherwise).
+//!        Defined in sparse_update.cpp and instantiated there for MeshData<Real> with
+//!        cell and face fields.
+//  @NOTE: The kernel must be compiled in one translation unit. nvcc stores the host
+//  copy and call operations of a KOKKOS_LAMBDA in TU-local statics that are set when the
+//  lambda is constructed, while the templates that copy the lambda (outer_kokkos) are
+//  merged across TUs at link time. With the kernel in a header instantiated in several
+//  TUs, the linker kept explicit.cpp's outer_kokkos while riot_driver.cpp constructed the
+//  lambda, so the copy called explicit.cpp's unset (null) helper (V100, nvhpc 25.1).
+template <typename T, parthenon::TopologicalType TT>
+void DeepCopyLayout(const std::vector<Uid_t> &uids,
+                    const parthenon::TopologicalElement layout, T *to, T *from);
+} // namespace impl
+
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyData
-//! \brief
+//! \brief Deep copy the fields of topological type TT (cell, face, edge or node) selected
+//!        by flags over the entire domain. Fields stored with the cell layout
+//!        (Metadata::CellMemAligned) and with the full element layout are copied by
+//!        separate kernels; when the container only holds one layout, only one pack is
+//!        built. Copy on every block, not just the sparse_physics-active ones: a block
+//!        can become active between RK stages (cell_delta is allocated on ghost receive),
+//!        and its UpdateToNextStage then reads this copy as the start-of-step state.
 //  TODO(@jdolence): do we really want this templated?
-template <typename F, typename T>
-TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
-  Kokkos::Profiling::pushRegion("Task_DeepCopy");
-
-  // Copy on every block, not just the sparse_physics-active ones: a block can become
-  // active between RK stages (cell_delta is allocated on ghost receive), and its
-  // UpdateToNextStage then reads this copy as the start-of-step state.
-  auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = desc.GetPack(to);
-  const auto &src = desc.GetPack(from);
-
-  const int nblocks = src.GetNBlocks();
-  using lt = RiotUtils::LoopType<>;
+template <typename F, typename T,
+          parthenon::TopologicalType TT = parthenon::TopologicalType::Cell>
+TaskStatus DeepCopyData(std::vector<F> flags, T *to, T *from) {
   using TE = parthenon::TopologicalElement;
-  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, TE::CC);
+  Kokkos::Profiling::pushRegion("Task_DeepCopy");
+  flags.push_back(parthenon::TopologicalTypeToMetaData(TT));
 
-  // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
-  // WeightedSumData. This was the fastest and most portable.
-  RiotLoop::outer(
-      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-        for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-          auto vsrc = RiotLoop::make_var_view(idx_range, src, var);
-          auto vdst = RiotLoop::make_var_view(idx_range, dst, var);
-          RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-        }
-      });
-  Kokkos::Profiling::popRegion(); // Task_DeepCopy
+  // Every block in a MeshData holds the same variables, so the first block's container
+  // tells us which layouts are present.
+  std::vector<Uid_t> cc_uids, nn_uids;
+  if (from->NumBlocks() > 0) {
+    for (const auto &v : from->GetBlockData(0)->GetVariableVector()) {
+      const auto &m = v->metadata();
+      if (!std::all_of(flags.begin(), flags.end(),
+                       [&](const auto &f) { return m.IsSet(f); })) {
+        continue;
+      }
+      const bool cc = m.IsSet(Metadata::CellMemAligned) || m.IsSet(Metadata::Cell);
+      (cc ? cc_uids : nn_uids).push_back(v->GetUniqueID());
+    }
+  }
+  if (!cc_uids.empty()) impl::DeepCopyLayout<T, TT>(cc_uids, TE::CC, to, from);
+  if (!nn_uids.empty()) impl::DeepCopyLayout<T, TT>(nn_uids, TE::NN, to, from);
+  Kokkos::Profiling::popRegion();
   return TaskStatus::complete;
 }
 
@@ -284,7 +312,10 @@ TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
 template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
-  return DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  // Cell and face fields are copied separately, since they index different elements.
+  DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
+  return DeepCopyData<MetadataFlag, T, parthenon::TopologicalType::Face>(
+      {Metadata::Independent}, to, from);
 }
 
 } // namespace sparse_update

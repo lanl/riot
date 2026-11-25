@@ -93,6 +93,10 @@ chapter.
      - bool
      - ``true``
      - Enable hydrodynamics.
+   * - mhd
+     - bool
+     - ``false``
+     - Enable ideal MHD (Chapter :ref:`chap:mhd`).
    * - strength
      - bool
      - ``false``

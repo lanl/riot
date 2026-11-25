@@ -134,6 +134,15 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
+  const bool do_mhd =
+      pin->GetOrAddBoolean("physics", "mhd", false,
+                           "Evolve the ideal MHD equations with constrained transport");
+  if (do_mhd) {
+    PARTHENON_REQUIRE(do_hydro, "MHD requires hydro.");
+    PARTHENON_REQUIRE(!do_radiation_transport,
+                      "MHD with radiation transport is not yet supported.");
+    PARTHENON_REQUIRE(!do_mix, "MHD with the BHR mix model is not yet supported.");
+  }
 
   // add options to params
   riot->AddParam("do_hydro", do_hydro);
@@ -165,10 +174,10 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
 
   // add a field to track which blocks are active
   bool sparse_physics = pin->GetOrAddBoolean("physics", "sparse_physics", true);
-  if (do_multigroup_diffusion || do_radiation_transport || do_ionization) {
+  if (do_multigroup_diffusion || do_radiation_transport || do_ionization || do_mhd) {
     if (sparse_physics)
-      PARTHENON_WARN(
-          "sparse_physics being disabled because a global solver is being used.");
+      PARTHENON_WARN("sparse_physics being disabled because a global solver or MHD is "
+                     "being used.");
     sparse_physics = false;
     pin->SetBoolean("physics", "sparse_physics", sparse_physics);
   }

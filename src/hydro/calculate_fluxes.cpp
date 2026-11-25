@@ -162,6 +162,68 @@ BulkRiemannFluxes(const Pack_t &v, const IdxRange &idx_range, Delta delta,
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void Hydro::BulkRiemannFluxesMHD
+//! \brief Bulk Riemann flux loop for the HLLD (ideal MHD) solver. Identical to
+//!        BulkRiemannFluxes, but also feeds the reconstructed cell-centered field and the
+//!        face-centered normal field into the solver, and stores the two transverse face
+//!        EMFs and the upwind mass-flux proxy consumed by the CT corner-EMF kernel.
+template <parthenon::CoordinateDirection DIR, typename Pack_t, typename IdxRange,
+          typename Delta, typename SetBulk, typename SumBulk, typename MHDBulk,
+          typename Scratch>
+KOKKOS_INLINE_FUNCTION void
+BulkRiemannFluxesMHD(const Pack_t &v, const IdxRange &idx_range, Delta delta,
+                     const SetBulk &set_bulk_minus, const SetBulk &set_bulk_plus,
+                     const SumBulk &sum_bulk_minus, const SumBulk &sum_bulk_plus,
+                     const MHDBulk &mhd_minus, const MHDBulk &mhd_plus, Scratch &face_vel,
+                     Scratch &riemann_vel, const bool store_vf) {
+  namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  using TE = parthenon::TopologicalElement;
+  constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
+  constexpr int dir = static_cast<int>(DIR);
+  auto fv = RiotLoop::make_flux_pack_view(idx_range, v, DIR);
+  auto pv = RiotLoop::make_pack_view(idx_range, v);
+  RiotLoop::inner(idx_range, [&](const auto kji) {
+    const auto kji_L = kji - delta;
+    const auto kji_R = kji;
+    const Real cs_L = BulkSoundSpeed(sum_bulk_plus(ccbulk::bulk_modulus(), kji_L),
+                                     sum_bulk_plus(ccbulk::rho(), kji_L));
+    const Real cs_R = BulkSoundSpeed(sum_bulk_minus(ccbulk::bulk_modulus(), kji_R),
+                                     sum_bulk_minus(ccbulk::rho(), kji_R));
+
+    Real f_v1, f_v2, f_v3, f_eng, v1face, v2face, v3face, emf0, emf1, vrho;
+    const Real signal_speed = lr_to_flux_hlld<dir>(
+        sum_bulk_plus(ccbulk::rho(), kji_L), sum_bulk_minus(ccbulk::rho(), kji_R),
+        set_bulk_plus(ccbulk::velocity(0), kji_L),
+        set_bulk_minus(ccbulk::velocity(0), kji_R),
+        set_bulk_plus(ccbulk::velocity(1), kji_L),
+        set_bulk_minus(ccbulk::velocity(1), kji_R),
+        set_bulk_plus(ccbulk::velocity(2), kji_L),
+        set_bulk_minus(ccbulk::velocity(2), kji_R),
+        sum_bulk_plus(ccbulk::internal_energy(), kji_L),
+        sum_bulk_minus(ccbulk::internal_energy(), kji_R),
+        set_bulk_plus(ccbulk::pressure(), kji_L),
+        set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R,
+        pv(te, ffbulk::bnormal(), kji), mhd_plus(ccbulk::bfield(0), kji_L),
+        mhd_minus(ccbulk::bfield(0), kji_R), mhd_plus(ccbulk::bfield(1), kji_L),
+        mhd_minus(ccbulk::bfield(1), kji_R), mhd_plus(ccbulk::bfield(2), kji_L),
+        mhd_minus(ccbulk::bfield(2), kji_R), f_v1, f_v2, f_v3, f_eng, v1face, v2face,
+        v3face, riemann_vel(kji), emf0, emf1, vrho);
+
+    fv(ccbulk::momentum(0), kji) = f_v1;
+    fv(ccbulk::momentum(1), kji) = f_v2;
+    fv(ccbulk::momentum(2), kji) = f_v3;
+    fv(ccbulk::total_material_energy(), kji) = f_eng;
+    face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
+    pv(te, ccbulk::face_signal(), kji) = signal_speed;
+    pv(te, ffbulk::emf(0), kji) = emf0;
+    pv(te, ffbulk::emf(1), kji) = emf1;
+    pv(te, ffbulk::vrho(), kji) = vrho;
+    StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
+  });
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  void Hydro::BulkRiemannFluxesLM
 //! \brief Low-Mach variant of BulkRiemannFluxes for chllc/lhllc: identical, but also
 //!        feeds the per-face transverse velocity differences dvn/dvt (from GetVdiff)
@@ -538,9 +600,9 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                          const ThPack_t &vth, const AdvPack_t &adv,
                          const RiotReconstruction::Type recon_tag,
                          const RiotReconstruction::Type vfrac_recon_tag,
-                         const RiemannSolver rsolver_tag, const bool store_vf,
-                         const StrengthArr &mat_strength, const bool do_viscosity,
-                         const bool do_electrons) {
+                         const SlopeLimits slope_limits, const RiemannSolver rsolver_tag,
+                         const bool store_vf, const StrengthArr &mat_strength,
+                         const bool do_viscosity, const bool do_electrons) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
@@ -554,7 +616,9 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
                      : ((DIR == X2DIR) ? parthenon::TopologicalElement::F2
                                        : parthenon::TopologicalElement::F3);
 
-  const int nhalo = 2 * do_viscosity;
+  // The CT corner EMFs need face EMFs from one transverse ghost row
+  const bool do_mhd = (rsolver_tag == RiemannSolver::hlld);
+  const int nhalo = std::max(2 * do_viscosity, static_cast<int>(do_mhd));
   auto idx_space = lt::GetIndexSpace(IndexDomain::interior, nhalo, nblocks, md, face);
 
   // Select the appropriate halo range to reconstruct over
@@ -576,6 +640,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
       idx_space, 2);
   AddTypeIndexedPerPointScratch<Real, halo, strength_mat_recon_types>(idx_space, 2);
   AddPerPointScratch<Real, halo>(idx_space, 2); // advection recon (minus/plus)
+  // MHD path scratch: reconstructed cell-centered field. Only reserved when MHD is on.
+  if (do_mhd) AddTypeIndexedPerPointScratch<Real, halo, mhd_recon_types>(idx_space, 2);
 
   auto delta = idx_space.GetDelta(DIR);
   const auto delta1 = idx_space.GetDelta(X1DIR);
@@ -608,13 +674,11 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         halo_range.TeamBarrier();
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
-          // Material density and internal energy use a tighter MC slope limit;
-          // bulk and vfrac use the default THETA.
-          ReconCells<cm::rho, cm::internal_energy>(
-              spv, halo_range, delta, mat_minus, mat_plus, recon_tag, m,
-              RiotReconstruction::MATERIAL_SLOPE_LIMIT);
+          ReconCells<cm::rho, cm::internal_energy>(spv, halo_range, delta, mat_minus,
+                                                   mat_plus, recon_tag, m,
+                                                   slope_limits.mat);
           ReconCells<ccmat::volume_fraction>(spv, halo_range, delta, mat_minus, mat_plus,
-                                             vfrac_recon_tag, m);
+                                             vfrac_recon_tag, m, slope_limits.vfrac);
           RiotLoop::inner(halo_range, [&](auto kji) {
             const Real vf_p =
                 std::min(1.0, std::max(mat_plus(ccmat::volume_fraction(), m, kji), 0.0));
@@ -678,7 +742,7 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         for (int m = 0; m < nmat; ++m) {
           auto spv = RiotLoop::make_sparse_pack_view(idx_range, v, m);
           ReconCells<cm::bulk_modulus>(spv, halo_range, delta, msum_minus, msum_plus,
-                                       recon_tag);
+                                       recon_tag, 0, slope_limits.bulk);
           if (do_electrons) {
             ReconCells<cm::electron_internal_energy>(spv, halo_range, delta, msum_minus,
                                                      msum_plus, recon_tag);
@@ -738,8 +802,9 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
         auto set_bulk_plus =
             GetTypeIndexedPerPointScratch<Real, set_bulk_recon_types>(halo_range);
         auto pv = RiotLoop::make_pack_view(idx_range, v);
-        ReconCells<ccbulk::pressure, ccbulk::velocity>(
-            pv, halo_range, delta, set_bulk_minus, set_bulk_plus, recon_tag);
+        ReconCells<ccbulk::pressure, ccbulk::velocity>(pv, halo_range, delta,
+                                                       set_bulk_minus, set_bulk_plus,
+                                                       recon_tag, 0, slope_limits.bulk);
         halo_range.TeamBarrier();
 
         ThincFaceStates<DIR, DoTHINC>(v, vth, idx_range, halo_range, b, ndim, delta1,
@@ -785,6 +850,19 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
               v, idx_range, delta, set_bulk_minus, set_bulk_plus, sum_bulk_minus,
               sum_bulk_plus, face_vel, riemann_vel, dvn, dvt, store_vf);
           break;
+        case RiemannSolver::hlld: {
+          auto mhd_minus =
+              GetTypeIndexedPerPointScratch<Real, mhd_recon_types>(halo_range);
+          auto mhd_plus =
+              GetTypeIndexedPerPointScratch<Real, mhd_recon_types>(halo_range);
+          ReconCells<ccbulk::bfield>(pv, halo_range, delta, mhd_minus, mhd_plus,
+                                     recon_tag, 0, slope_limits.bulk);
+          halo_range.TeamBarrier();
+          BulkRiemannFluxesMHD<DIR>(v, idx_range, delta, set_bulk_minus, set_bulk_plus,
+                                    sum_bulk_minus, sum_bulk_plus, mhd_minus, mhd_plus,
+                                    face_vel, riemann_vel, store_vf);
+          break;
+        }
         case RiemannSolver::strong:
           StrengthFluxes<DIR, MAX_STRONG, DoTHINC>(
               v, vstr, idx_range, halo_range, delta, set_bulk_minus, set_bulk_plus,
@@ -847,6 +925,7 @@ void CalculateFluxesDir(const bool do_thinc, const Args &...args) {
 //! \brief Reconstruct state and calculate hydrodynamic fluxes in all directions
 TaskStatus CalculateFluxes(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
 
@@ -858,10 +937,13 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto &options = pm->packages.Get("hydro");
   const auto recon_tag = options->Param<RiotReconstruction::Type>("recon");
   const auto vfrac_recon_tag = options->Param<RiotReconstruction::Type>("vfrac_recon");
+  const auto slope_limits = options->Param<SlopeLimits>("plm_slope_limits");
   auto rsolver_tag = options->Param<RiemannSolver>("riemann_solver");
   const bool do_thinc = pm->packages.Get("riot")->Param<bool>("do_thinc");
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
   if (do_strength) rsolver_tag = RiemannSolver::strong;
+  const bool do_mhd = options->Param<bool>("do_mhd");
+  if (do_mhd) rsolver_tag = RiemannSolver::hlld;
   const bool store_vf = options->Param<bool>("store_vf");
   const auto &mat_strength =
       pm->packages.Get("materials")->Param<parthenon::ParArray1D<bool>>("d.strong");
@@ -881,7 +963,8 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto v =
       riot::MakePack<ccbulk::pressure, ccbulk::velocity, ccbulk::momentum,
                      ccbulk::total_material_energy, ccbulk::electron_internal_energy,
-                     ccbulk::face_signal, ccbulk::face_velocity, ccmat::volume_fraction,
+                     ccbulk::face_signal, ccbulk::face_velocity, ccbulk::bfield,
+                     ffbulk::bnormal, ffbulk::emf, ffbulk::vrho, ccmat::volume_fraction,
                      ccmat::rho, cm::rho, cm::internal_energy, cm::bulk_modulus,
                      cm::electron_internal_energy>(
           md, std::vector<int>{},
@@ -906,17 +989,20 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   // Viscosity flag
   const bool do_viscosity = (do_ionization && do_plasma_viscosity);
 
+  // Normal face fields in a cell-aligned copy readable through the flat pack views
+  if (do_mhd) CopyFaceBToAligned(md);
+
   CalculateFluxesDir<X1DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
-                            rsolver_tag, store_vf, mat_strength, do_viscosity,
-                            do_ionization);
+                            slope_limits, rsolver_tag, store_vf, mat_strength,
+                            do_viscosity, do_ionization);
   if (ndim > 1)
     CalculateFluxesDir<X2DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
-                              rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              do_ionization);
+                              slope_limits, rsolver_tag, store_vf, mat_strength,
+                              do_viscosity, do_ionization);
   if (ndim > 2)
     CalculateFluxesDir<X3DIR>(do_thinc, md, v, vstr, vth, adv, recon_tag, vfrac_recon_tag,
-                              rsolver_tag, store_vf, mat_strength, do_viscosity,
-                              do_ionization);
+                              slope_limits, rsolver_tag, store_vf, mat_strength,
+                              do_viscosity, do_ionization);
 
   return TaskStatus::complete;
 }
