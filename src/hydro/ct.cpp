@@ -130,18 +130,45 @@ KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e,
 }
 
 //----------------------------------------------------------------------------------------
-//! \brief Fill the E_n edge flux of bfield. The number of active dimensions transverse
-//!        to the edge selects the integration -- 2: full corner integration; 1: the edge
+//! \brief E_n on edge e of cell (k, j, i). The number of active dimensions transverse to
+//!        the edge selects the integration -- 2: full corner integration; 1: the edge
 //!        coincides with the faces normal to the single active transverse direction; 0:
-//!        no transverse variation, E_n is unused and set to zero.
+//!        no transverse variation, E_n is unused and set to zero. The branching lives
+//!        here rather than in the kernel, since a device lambda cannot first capture a
+//!        variable (dt, dp, dq) inside a constexpr-if.
+template <int n, int NDIM, typename Coords_t, typename View_t, typename Idx_t,
+          typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real EdgeEMF(const Coords_t &coords, const int k, const int j,
+                                         const int i, const View_t &pv, const Idx_t e,
+                                         const Off_t dp, const Off_t dq, const Real dt) {
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  constexpr int p = (n + 1) % 3;
+  constexpr int q = (n + 2) % 3;
+  if constexpr (p < NDIM && q < NDIM) {
+    const Real wfac_p =
+        CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<p + 1>(k, j, i);
+    const Real wfac_q =
+        CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<q + 1>(k, j, i);
+    return CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
+  } else if constexpr (p < NDIM) {
+    // E_n is slot0 on the F_p faces
+    return pv(FaceTE(p), ffbulk::emf(0), e);
+  } else if constexpr (q < NDIM) {
+    // E_n is slot1 on the F_q faces
+    return pv(FaceTE(q), ffbulk::emf(1), e);
+  } else {
+    return 0.0;
+  }
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Fill the E_n edge flux of bfield (see EdgeEMF).
 template <int n, int NDIM, typename Pack_t>
 void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
   namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr int p = (n + 1) % 3;
   constexpr int q = (n + 2) % 3;
-  constexpr bool p_active = (p < NDIM);
-  constexpr bool q_active = (q < NDIM);
   constexpr int edge_dir = static_cast<int>(EdgeTE(n)) % 3 + 1;
 
   // Cell-layout emf/vrho/velocity and cell bfield are mixed with the node-layout edge
@@ -157,22 +184,8 @@ void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         auto fv = RiotLoop::make_flux_pack_view(idx_range, v, edge_dir);
         RiotLoop::inner(idx_range, [&](const auto e) {
-          if constexpr (p_active && q_active) {
-            const auto [k, j, i] = idx_range.GetKJI(e);
-            const Real wfac_p =
-                CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<p + 1>(k, j, i);
-            const Real wfac_q =
-                CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<q + 1>(k, j, i);
-            fv(ffbulk::bfield(), e) = CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
-          } else if constexpr (p_active) {
-            // E_n is slot0 on the F_p faces
-            fv(ffbulk::bfield(), e) = pv(FaceTE(p), ffbulk::emf(0), e);
-          } else if constexpr (q_active) {
-            // E_n is slot1 on the F_q faces
-            fv(ffbulk::bfield(), e) = pv(FaceTE(q), ffbulk::emf(1), e);
-          } else {
-            fv(ffbulk::bfield(), e) = 0.0;
-          }
+          const auto [k, j, i] = idx_range.GetKJI(e);
+          fv(ffbulk::bfield(), e) = EdgeEMF<n, NDIM>(coords, k, j, i, pv, e, dp, dq, dt);
         });
       });
 }
@@ -189,6 +202,32 @@ void CalculateCornerEMFImpl(MeshData<Real> *md, const Real dt) {
   SetEdgeEMF<0, NDIM>(md, v, dt);
   SetEdgeEMF<1, NDIM>(md, v, dt);
   SetEdgeEMF<2, NDIM>(md, v, dt);
+}
+
+//----------------------------------------------------------------------------------------
+//! \brief Circulation of the edge field E around the F_d face f of cell (k, j, i),
+//!          [(L E_q)|_{+p} - (L E_q)|_{0} - (L E_p)|_{+q} + (L E_p)|_{0}],
+//!        so that (curl E)_d is the circulation over the face area. fp and fq view the
+//!        E_p and E_q edge fields, dp and dq are the unit offsets.
+template <int d, int NDIM, typename var_t, typename Coords_t, typename View_t,
+          typename Idx_t, typename Off_t>
+KOKKOS_FORCEINLINE_FUNCTION Real FaceCirculation(const Coords_t &coords, const int k,
+                                                 const int j, const int i,
+                                                 const View_t &fp, const View_t &fq,
+                                                 const Idx_t f, const Off_t dp,
+                                                 const Off_t dq) {
+  constexpr int p = (d + 1) % 3;
+  constexpr int q = (d + 2) % 3;
+  Real circ = 0.0;
+  if constexpr (p < NDIM) {
+    circ += Measure<EdgeTE(q), p>(coords, k, j, i) * fq(var_t(), f + dp) -
+            Measure<EdgeTE(q)>(coords, k, j, i) * fq(var_t(), f);
+  }
+  if constexpr (q < NDIM) {
+    circ -= Measure<EdgeTE(p), q>(coords, k, j, i) * fp(var_t(), f + dq) -
+            Measure<EdgeTE(p)>(coords, k, j, i) * fp(var_t(), f);
+  }
+  return circ;
 }
 
 //----------------------------------------------------------------------------------------
@@ -223,17 +262,8 @@ void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
         auto fq = RiotLoop::make_flux_pack_view(idx_range, v, eq_dir);
         RiotLoop::inner(idx_range, [&](const auto f) {
           const auto [k, j, i] = idx_range.GetKJI(f);
-          Real circ = 0.0;
-          if constexpr (p < NDIM) {
-            circ +=
-                Measure<EdgeTE(q), p>(coords, k, j, i) * fq(ffbulk::bfield(), f + dp) -
-                Measure<EdgeTE(q)>(coords, k, j, i) * fq(ffbulk::bfield(), f);
-          }
-          if constexpr (q < NDIM) {
-            circ -=
-                Measure<EdgeTE(p), q>(coords, k, j, i) * fp(ffbulk::bfield(), f + dq) -
-                Measure<EdgeTE(p)>(coords, k, j, i) * fp(ffbulk::bfield(), f);
-          }
+          const Real circ = FaceCirculation<d, NDIM, ffbulk::bfield>(coords, k, j, i, fp,
+                                                                     fq, f, dp, dq);
           // Radial faces on the axis have zero area (and circulation); leave them be
           const Real area = Measure<te>(coords, k, j, i);
           const Real curl = (area > 0.0) ? circ / area : 0.0;

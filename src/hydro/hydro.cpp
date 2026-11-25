@@ -689,8 +689,10 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
           }
         });
 
-        if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
-          if (do_mhd) {
+        // Runtime check outside the constexpr-if: a device lambda cannot first capture
+        // a variable inside one
+        if (do_mhd) {
+          if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
             RiotLoop::inner(idx_range, [&](const auto kji) {
               const Real br = pv(ccbulk::bfield(0), kji);
               const Real bz = pv(ccbulk::bfield(1), kji);
