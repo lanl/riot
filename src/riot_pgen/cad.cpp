@@ -153,6 +153,8 @@ auto SetBaseDx(ParameterInput *pin, parthenon::RegionSize &ds) {
   return std::make_tuple(nlevels, dx);
 }
 
+namespace region_primitives {
+
 //----------------------------------------------------------------------------------------
 //! \fn  mask_func_t cad
 //! \brief
@@ -228,3 +230,5 @@ mask_func_t cad(ParameterInput *pin, const std::string &block_name) {
   return base_region_loop(
       [=](const Real x, const Real y, const Real z) { return cad_mask->mask(x, y, z); });
 }
+
+} // namespace region_primitives

@@ -52,7 +52,10 @@ void DeepCopyVectorToDevice(Dst_t &dst, std::vector<T, Extra...> &src) {
 }
 template <typename T, typename... Extra>
 auto VectorToDevice(std::vector<T, Extra...> &v, const std::string &name) {
-  auto device_data = parthenon::ParArray1D<T>(name, v.size());
+  // every entry is overwritten below, and T need not be default constructible
+  using view_t = typename parthenon::ParArray1D<T>::base_t;
+  auto device_data = parthenon::ParArray1D<T>(
+      view_t(Kokkos::view_alloc(Kokkos::WithoutInitializing, name), v.size()));
   DeepCopyVectorToDevice(device_data, v);
   return device_data;
 }
@@ -171,6 +174,24 @@ GetPrimitiveAssociatedVars(parthenon::MeshData<parthenon::Real> *md,
                            const parthenon::Metadata::FlagCollection &flags);
 
 std::vector<std::string> GetUnsplitVarNames(Mesh *pmesh);
+
+//----------------------------------------------------------------------------------------
+//! \fn  std::shared_ptr<MeshData<Real>> &RiotUtils::GetOrAddPartition
+//! \brief GetOrAdd(name, i) that passes the field list name was created with, as
+//! required by parthenon when pack_size != -1
+inline std::shared_ptr<MeshData<Real>> &
+GetOrAddPartition(Mesh *pmesh, const std::string &name, const int i) {
+  return pmesh->mesh_data.Add(name, pmesh->GetDefaultBlockPartitions()[i],
+                              pmesh->mesh_data.GetCreationFields(name));
+}
+
+// As above, for a package's MeshData subset
+template <typename Pkg_t>
+std::shared_ptr<MeshData<Real>> &GetOrAddSubsetPartition(Mesh *pmesh, const Pkg_t &pkg,
+                                                         const std::string &subset,
+                                                         const int i) {
+  return GetOrAddPartition(pmesh, pkg->GetMeshDataSubsetFullname(subset), i);
+}
 
 //----------------------------------------------------------------------------------------
 //! \fn  parthenon::MeshDataDescriptor RiotUtils::MakePackageDudtRequirements
