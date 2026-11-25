@@ -249,60 +249,76 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
   return TaskStatus::complete;
 }
 
+namespace impl {
+//----------------------------------------------------------------------------------------
+//! \fn  void sparse_update::impl::DeepCopyLayout
+//! \brief Deep copy the variables uids, which share one memory layout, over the entire
+//!        domain. layout is the element whose index range covers each component's
+//!        allocation (CC for cell and Metadata::CellMemAligned fields, NN otherwise).
+template <typename T, parthenon::TopologicalType TT>
+void DeepCopyLayout(const std::vector<Uid_t> &uids, const parthenon::TopologicalElement layout,
+                    T *to, T *from) {
+  using TE = parthenon::TopologicalElement;
+  auto desc = riot::MakePackDescriptor(uids, to);
+  const auto &dst = desc.GetPack(to);
+  const auto &src = desc.GetPack(from);
+
+  const int nblocks = src.GetNBlocks();
+  if (nblocks == 0 || src.GetMaxNumberOfVars() == 0) return;
+  using lt = RiotUtils::LoopType<>;
+  auto idx_space =
+      lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, layout, layout);
+  constexpr int nel = parthenon::NumberOfTopologicalElements(TT);
+
+  // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
+  // WeightedSumData. This was the fastest and most portable.
+  RiotLoop::outer(
+      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
+        for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
+          for (int d = 0; d < nel; d++) {
+            const TE te = parthenon::GetTopologicalElementInDir(TT, d);
+            auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
+            auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
+            RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
+          }
+        }
+      });
+}
+} // namespace impl
+
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyData
-//! \brief Deep copy the fields selected by flags over the entire domain. TT selects the
-//!        topological type (cell, face, edge or node); each of its elements is copied
-//!        through a flat view of the whole allocation. The selected fields must share one
-//!        memory layout (all Metadata::CellMemAligned or none).
+//! \brief Deep copy the fields of topological type TT (cell, face, edge or node) selected
+//!        by flags over the entire domain. Fields stored with the cell layout
+//!        (Metadata::CellMemAligned) and with the full element layout are copied by
+//!        separate kernels; when the container only holds one layout, only one pack is
+//!        built. Copy on every block, not just the sparse_physics-active ones: a block can
+//!        become active between RK stages (cell_delta is allocated on ghost receive), and
+//!        its UpdateToNextStage then reads this copy as the start-of-step state.
 //  TODO(@jdolence): do we really want this templated?
 template <typename F, typename T,
           parthenon::TopologicalType TT = parthenon::TopologicalType::Cell>
 TaskStatus DeepCopyData(std::vector<F> flags, T *to, T *from) {
   using TE = parthenon::TopologicalElement;
-  constexpr bool cell = (TT == parthenon::TopologicalType::Cell);
-  Kokkos::Profiling::pushRegion(cell ? "Task_DeepCopy" : "Task_DeepCopyNonCell");
-  TE layout = TE::CC;
-  if constexpr (!cell) {
-    flags.push_back(parthenon::TopologicalTypeToMetaData(TT));
-    int naligned = 0, nselected = 0;
-    for (const auto &[id, m] : from->GetMeshPointer()->resolved_packages->AllFields()) {
-      if (std::all_of(flags.begin(), flags.end(),
-                      [&](const auto &f) { return m.IsSet(f); })) {
-        nselected++;
-        naligned += m.IsSet(Metadata::CellMemAligned);
+  Kokkos::Profiling::pushRegion("Task_DeepCopy");
+  flags.push_back(parthenon::TopologicalTypeToMetaData(TT));
+
+  // Every block in a MeshData holds the same variables, so the first block's container
+  // tells us which layouts are present.
+  std::vector<Uid_t> cc_uids, nn_uids;
+  if (from->NumBlocks() > 0) {
+    for (const auto &v : from->GetBlockData(0)->GetVariableVector()) {
+      const auto &m = v->metadata();
+      if (!std::all_of(flags.begin(), flags.end(),
+                       [&](const auto &f) { return m.IsSet(f); })) {
+        continue;
       }
+      const bool cc = m.IsSet(Metadata::CellMemAligned) || m.IsSet(Metadata::Cell);
+      (cc ? cc_uids : nn_uids).push_back(v->GetUniqueID());
     }
-    PARTHENON_REQUIRE(naligned == 0 || naligned == nselected,
-                      "DeepCopyData fields must share one memory layout");
-    layout = (naligned > 0) ? TE::CC : TE::NN;
   }
-
-  auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = riot::GetPack(desc, to);
-  const auto &src = riot::GetPack(desc, from);
-
-  const int nblocks = src.GetNBlocks();
-  if (nblocks > 0 && src.GetMaxNumberOfVars() > 0) {
-    using lt = RiotUtils::LoopType<>;
-    auto idx_space =
-        lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, layout, layout);
-    constexpr int nel = parthenon::NumberOfTopologicalElements(TT);
-
-    // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
-    // WeightedSumData. This was the fastest and most portable.
-    RiotLoop::outer(
-        idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-          for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-            for (int d = 0; d < nel; d++) {
-              const TE te = parthenon::GetTopologicalElementInDir(TT, d);
-              auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
-              auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
-              RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-            }
-          }
-        });
-  }
+  if (!cc_uids.empty()) impl::DeepCopyLayout<T, TT>(cc_uids, TE::CC, to, from);
+  if (!nn_uids.empty()) impl::DeepCopyLayout<T, TT>(nn_uids, TE::NN, to, from);
   Kokkos::Profiling::popRegion();
   return TaskStatus::complete;
 }
@@ -314,8 +330,7 @@ template <typename T>
 TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // return AverageIndependentData(to, from, 0);
   // Cell and face fields are copied separately, since they index different elements.
-  DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent, Metadata::Cell}), to,
-               from);
+  DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent}), to, from);
   return DeepCopyData<MetadataFlag, T, parthenon::TopologicalType::Face>(
       {Metadata::Independent}, to, from);
 }
