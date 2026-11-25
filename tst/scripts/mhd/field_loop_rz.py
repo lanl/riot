@@ -55,7 +55,7 @@ def run(**kwargs):
 
 # B_r^2 + B_z^2 weighted centroid of the loop in (r, z)
 def loop_centroid(data):
-    b = data.Get("c.c.bulk.bcc", flatten=False)
+    b = data.Get("c.c.bulk.bfield", flatten=False)
     w = b[:, 0] ** 2 + b[:, 1] ** 2
     rc = np.array([0.5 * (xf[1:] + xf[:-1]) for xf in data.xf])
     zc = np.array([0.5 * (yf[1:] + yf[:-1]) for yf in data.yf])
@@ -76,9 +76,7 @@ def analyze():
     logger.debug("Analyzing test " + __name__)
     data0 = phdf("build/src/" + problem_id + ".out1.00000.phdf")
     if data0.Coordinates != "UniformCylindrical":
-        logger.warning(
-            "Skipping " + __name__ + " in a " + data0.Coordinates + " build"
-        )
+        logger.warning("Skipping " + __name__ + " in a " + data0.Coordinates + " build")
         return True
     analyze_status = True
     # time, dt, cycle, nbtotal, ME, max_divB_dx

@@ -143,16 +143,10 @@ VARIABLE_SCALAR(c.c, cell_delta, false);
 VARIABLE_SCALAR(c.c.bulk, laser_deposition, false);
 VARIABLE_SCALAR(c.c.bulk, laser_energy_density, false);
 VARIABLE_SCALAR(c.c.bulk, laser_tau_max, false);
-// Ideal MHD (constrained transport). bfield is the face-centered, evolved magnetic
-// field (node memory layout, so it must only be accessed with explicit
-// (b, TE, var, k, j, i) indexing). The remaining face quantities are cell-aligned
-// scratch written by the Riemann solve.
-VARIABLE_FACE(c.c.bulk, bfield, false);
-VARIABLE_VECTOR(c.c.bulk, bcc, false, 3);
+// Ideal MHD: cell-centered magnetic field (average of the face field
+// face_variables::face_averaged::bulk::bfield) and its divergence.
+VARIABLE_VECTOR(c.c.bulk, bfield, false, 3);
 VARIABLE_SCALAR(c.c.bulk, divb, false);
-VARIABLE_FACE(c.c.bulk, bface_aligned, false);
-VARIABLE_FACE(c.c.bulk, face_vrho, false);
-VARIABLE_FACE_VECTOR(c.c.bulk, face_emf, false, 2);
 } // namespace bulk
 
 namespace mat {
@@ -220,9 +214,23 @@ VARIABLE_SCALAR(c.m, lr_cache, true);
 } // namespace material_averaged
 } // namespace cell_variables
 
-// Face-centered, material-averaged quantities. Presently only the diffusive
-// mass flux register used by the BHR mix model lives here.
+// Face-centered quantities: bulk MHD fields, and the material diffusive mass flux
+// register used by the BHR mix model.
 namespace face_variables {
+namespace face_averaged {
+namespace bulk {
+// Ideal MHD (constrained transport). bfield is the evolved, face-centered magnetic
+// field (node memory layout, so it must only be accessed with explicit
+// (b, TE, var, k, j, i) indexing). The remaining fields are scratch written by the
+// Riemann solve with cell memory layout, so the flat pack views can be used on them:
+// bnormal is a cell-aligned copy of bfield, vrho the upwind mass flux proxy, and emf
+// the two transverse face EMFs.
+VARIABLE_FACE(f.f.bulk, bfield, false);
+VARIABLE_FACE(f.f.bulk, bnormal, false);
+VARIABLE_FACE(f.f.bulk, vrho, false);
+VARIABLE_FACE_VECTOR(f.f.bulk, emf, false, 2);
+} // namespace bulk
+} // namespace face_averaged
 namespace mat {
 VARIABLE_FACE(f.m, diffusive_fluxes, true);
 } // namespace mat

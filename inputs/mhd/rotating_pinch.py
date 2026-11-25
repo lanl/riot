@@ -50,7 +50,7 @@ def make_input():
             "c.c.bulk.rho",
             "c.c.bulk.velocity",
             "c.c.bulk.pressure",
-            "c.c.bulk.bcc",
+            "c.c.bulk.bfield",
             "c.c.bulk.divb",
         ],
         file_type="hdf5",
@@ -85,9 +85,9 @@ def make_input():
 
     riot.input("material0", eos_type="IdealGas", Gamma=5.0 / 3.0, Cv=1.0)
 
-    riot.input("physics", hydro=True)
+    riot.input("physics", hydro=True, mhd=True)
 
-    riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
+    riot.input("hydro", recon="plm", cfl=0.4)
 
     riot.input("regions", file=__file__, name="rotating_pinch")
 

@@ -57,7 +57,7 @@ def analyze():
         "pressure": (data.Get("c.c.bulk.pressure", False)[0, 0], 1.0),
     }
     v = data.Get("c.c.bulk.velocity", False)[0, :, 0]
-    b = data.Get("c.c.bulk.bcc", False)[0, :, 0]
+    b = data.Get("c.c.bulk.bfield", False)[0, :, 0]
     for c in range(2):
         fields["v" + str(c + 1)] = (v[c], -1.0)
         fields["b" + str(c + 1)] = (b[c], -1.0)

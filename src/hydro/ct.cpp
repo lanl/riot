@@ -12,7 +12,7 @@
 //========================================================================================
 // This file was made in part with generative AI.
 //
-// Constrained transport for ideal MHD. The face-centered magnetic field ccbulk::bfield
+// Constrained transport for ideal MHD. The face-centered magnetic field ffbulk::bfield
 // is evolved with
 //   dB/dt = -curl(E),  E = -v x B,
 // where the EMF E lives on cell edges, in the edge flux of bfield (allocated by
@@ -68,9 +68,12 @@ KOKKOS_FORCEINLINE_FUNCTION Real Measure(const Coords_t &coords, const int k, co
 
 //----------------------------------------------------------------------------------------
 //! Sharpness of the CT upwind switch (Athena++ GetWeightForCT). Athena++ uses
-//! v/c = 1024 dt F_rho / (dx (rho_l + rho_r)); face_vrho = 2 F_rho / (rho_l + rho_r), so
+//! v/c = 1024 dt F_rho / (dx (rho_l + rho_r)); vrho = 2 F_rho / (rho_l + rho_r), so
 //! the factor here is 1024 / 2. The weight saturates to fully upwind once the face
 //! Courant number |v| dt/dx exceeds 1/1024: in effect sign(v), but continuous in v.
+//! NOTE: this follows Athena++. AthenaK dropped the continuous weight in favor of the
+//! plain sign of the mass flux, since the sharpness is a tuning knob of unclear benefit
+//! (and possibly less robust at high resolution). Worth comparing in the future.
 constexpr Real CT_UPWIND_SHARPNESS = 512.0;
 
 //----------------------------------------------------------------------------------------
@@ -88,6 +91,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e,
                                            const Off_t dp, const Off_t dq,
                                            const Real wfac_p, const Real wfac_q) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr int p = (n + 1) % 3;
   constexpr int q = (n + 2) % 3;
   constexpr TE tp = FaceTE(p);
@@ -95,21 +99,21 @@ KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e,
 
   // Cell-centered reference EMF E_n = -(v_p B_q - v_q B_p)
   auto ecc = [&](const auto c) {
-    return -(pv(ccbulk::velocity(p), c) * pv(ccbulk::bcc(q), c) -
-             pv(ccbulk::velocity(q), c) * pv(ccbulk::bcc(p), c));
+    return -(pv(ccbulk::velocity(p), c) * pv(ccbulk::bfield(q), c) -
+             pv(ccbulk::velocity(q), c) * pv(ccbulk::bfield(p), c));
   };
   const Real c00 = ecc(e - dp - dq);
   const Real c10 = ecc(e - dq);
   const Real c01 = ecc(e - dp);
   const Real c11 = ecc(e);
 
-  const Real fp0 = pv(tp, ccbulk::face_emf(0), e - dq);
-  const Real fp1 = pv(tp, ccbulk::face_emf(0), e);
-  const Real fq0 = pv(tq, ccbulk::face_emf(1), e - dp);
-  const Real fq1 = pv(tq, ccbulk::face_emf(1), e);
+  const Real fp0 = pv(tp, ffbulk::emf(0), e - dq);
+  const Real fp1 = pv(tp, ffbulk::emf(0), e);
+  const Real fq0 = pv(tq, ffbulk::emf(1), e - dp);
+  const Real fq1 = pv(tq, ffbulk::emf(1), e);
 
   auto weight = [&](const TE te, const Real wfac, const auto f) {
-    const Real v_over_c = wfac * pv(te, ccbulk::face_vrho(), f);
+    const Real v_over_c = wfac * pv(te, ffbulk::vrho(), f);
     return 0.5 + std::max(-0.5, std::min(0.5, v_over_c));
   };
   const Real wp0 = weight(tp, wfac_p, e - dq);
@@ -133,13 +137,15 @@ KOKKOS_FORCEINLINE_FUNCTION Real CornerEMF(const View_t &pv, const Idx_t e,
 template <int n, int NDIM, typename Pack_t>
 void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr int p = (n + 1) % 3;
   constexpr int q = (n + 2) % 3;
   constexpr bool p_active = (p < NDIM);
   constexpr bool q_active = (q < NDIM);
   constexpr int edge_dir = static_cast<int>(EdgeTE(n)) % 3 + 1;
 
-  // Cell-layout face_emf/face_vrho/velocity/bcc are mixed with the node-layout edge flux
+  // Cell-layout emf/vrho/velocity and cell bfield are mixed with the node-layout edge
+  // flux
   using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space =
       lt::GetIndexSpace(IndexDomain::interior, 0, v.GetNBlocks(), md, EdgeTE(n));
@@ -157,15 +163,15 @@ void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
                 CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<p + 1>(k, j, i);
             const Real wfac_q =
                 CT_UPWIND_SHARPNESS * dt / coords.template CellWidth<q + 1>(k, j, i);
-            fv(ccbulk::bfield(), e) = CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
+            fv(ffbulk::bfield(), e) = CornerEMF<n>(pv, e, dp, dq, wfac_p, wfac_q);
           } else if constexpr (p_active) {
             // E_n is slot0 on the F_p faces
-            fv(ccbulk::bfield(), e) = pv(FaceTE(p), ccbulk::face_emf(0), e);
+            fv(ffbulk::bfield(), e) = pv(FaceTE(p), ffbulk::emf(0), e);
           } else if constexpr (q_active) {
             // E_n is slot1 on the F_q faces
-            fv(ccbulk::bfield(), e) = pv(FaceTE(q), ccbulk::face_emf(1), e);
+            fv(ffbulk::bfield(), e) = pv(FaceTE(q), ffbulk::emf(1), e);
           } else {
-            fv(ccbulk::bfield(), e) = 0.0;
+            fv(ffbulk::bfield(), e) = 0.0;
           }
         });
       });
@@ -174,10 +180,11 @@ void SetEdgeEMF(MeshData<Real> *md, const Pack_t &v, const Real dt) {
 template <int NDIM>
 void CalculateCornerEMFImpl(MeshData<Real> *md, const Real dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   using parthenon::PDOpt;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc, ccbulk::velocity, ccbulk::face_emf,
-                          ccbulk::face_vrho>(md, std::vector<int>{},
-                                             std::set<PDOpt>{PDOpt::WithFluxes});
+  auto v = riot::MakePack<ffbulk::bfield, ccbulk::bfield, ccbulk::velocity, ffbulk::emf,
+                          ffbulk::vrho>(md, std::vector<int>{},
+                                        std::set<PDOpt>{PDOpt::WithFluxes});
   if (v.GetNBlocks() == 0) return;
   SetEdgeEMF<0, NDIM>(md, v, dt);
   SetEdgeEMF<1, NDIM>(md, v, dt);
@@ -195,6 +202,7 @@ template <int d, int NDIM, typename Pack_t, typename Pack0_t>
 void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
                      const Real gam0, const Real gam1, const Real beta_dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr int p = (d + 1) % 3;
   constexpr int q = (d + 2) % 3;
   constexpr TE te = FaceTE(d);
@@ -218,19 +226,19 @@ void UpdateFaceField(MeshData<Real> *umd, const Pack_t &v, const Pack0_t &v0,
           Real circ = 0.0;
           if constexpr (p < NDIM) {
             circ +=
-                Measure<EdgeTE(q), p>(coords, k, j, i) * fq(ccbulk::bfield(), f + dp) -
-                Measure<EdgeTE(q)>(coords, k, j, i) * fq(ccbulk::bfield(), f);
+                Measure<EdgeTE(q), p>(coords, k, j, i) * fq(ffbulk::bfield(), f + dp) -
+                Measure<EdgeTE(q)>(coords, k, j, i) * fq(ffbulk::bfield(), f);
           }
           if constexpr (q < NDIM) {
             circ -=
-                Measure<EdgeTE(p), q>(coords, k, j, i) * fp(ccbulk::bfield(), f + dq) -
-                Measure<EdgeTE(p)>(coords, k, j, i) * fp(ccbulk::bfield(), f);
+                Measure<EdgeTE(p), q>(coords, k, j, i) * fp(ffbulk::bfield(), f + dq) -
+                Measure<EdgeTE(p)>(coords, k, j, i) * fp(ffbulk::bfield(), f);
           }
           // Radial faces on the axis have zero area (and circulation); leave them be
           const Real area = Measure<te>(coords, k, j, i);
           const Real curl = (area > 0.0) ? circ / area : 0.0;
-          pv(te, ccbulk::bfield(), f) = gam0 * pv(te, ccbulk::bfield(), f) +
-                                        gam1 * pv0(te, ccbulk::bfield(), f) -
+          pv(te, ffbulk::bfield(), f) = gam0 * pv(te, ffbulk::bfield(), f) +
+                                        gam1 * pv0(te, ffbulk::bfield(), f) -
                                         beta_dt * curl;
         });
       });
@@ -240,10 +248,11 @@ template <int NDIM>
 void UpdateFaceFieldsImpl(MeshData<Real> *umd, MeshData<Real> *u0md, const Real gam0,
                           const Real gam1, const Real beta_dt) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   using parthenon::PDOpt;
-  auto v = riot::MakePack<ccbulk::bfield>(umd, std::vector<int>{},
+  auto v = riot::MakePack<ffbulk::bfield>(umd, std::vector<int>{},
                                           std::set<PDOpt>{PDOpt::WithFluxes});
-  auto v0 = riot::MakePack<ccbulk::bfield>(u0md);
+  auto v0 = riot::MakePack<ffbulk::bfield>(u0md);
   if (v.GetNBlocks() == 0) return;
   UpdateFaceField<0, NDIM>(umd, v, v0, gam0, gam1, beta_dt);
   UpdateFaceField<1, NDIM>(umd, v, v0, gam0, gam1, beta_dt);
@@ -264,10 +273,11 @@ KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const Coords_t &coords, const in
                                                 const View_t &pv, const Idx_t c,
                                                 const Off_t dd) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr TE te = FaceTE(d);
   if constexpr (d < NDIM) {
-    const Real blo = pv(te, ccbulk::bfield(), c);
-    const Real bhi = pv(te, ccbulk::bfield(), c + dd);
+    const Real blo = pv(te, ffbulk::bfield(), c);
+    const Real bhi = pv(te, ffbulk::bfield(), c + dd);
     if constexpr (parthenon::IsCoord<parthenon::UniformCartesian>()) {
       return 0.5 * (blo + bhi);
     } else {
@@ -279,7 +289,7 @@ KOKKOS_FORCEINLINE_FUNCTION Real CellBComponent(const Coords_t &coords, const in
       return ((xhi - xc) * blo + (xc - xlo) * bhi) / (xhi - xlo);
     }
   } else {
-    return pv(te, ccbulk::bfield(), c);
+    return pv(te, ffbulk::bfield(), c);
   }
 }
 
@@ -290,9 +300,10 @@ KOKKOS_FORCEINLINE_FUNCTION Real NetFlux(const Coords_t &coords, const int k, co
                                          const int i, const View_t &pv, const Idx_t c,
                                          const Off_t dd) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   constexpr TE te = FaceTE(d);
-  return Measure<te, d>(coords, k, j, i) * pv(te, ccbulk::bfield(), c + dd) -
-         Measure<te>(coords, k, j, i) * pv(te, ccbulk::bfield(), c);
+  return Measure<te, d>(coords, k, j, i) * pv(te, ffbulk::bfield(), c + dd) -
+         Measure<te>(coords, k, j, i) * pv(te, ffbulk::bfield(), c);
 }
 
 //----------------------------------------------------------------------------------------
@@ -311,7 +322,8 @@ KOKKOS_FORCEINLINE_FUNCTION Real DivB(const Coords_t &coords, const int k, const
 template <int NDIM>
 void CopyFaceBToAlignedImpl(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bface_aligned>(md);
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  auto v = riot::MakePack<ffbulk::bfield, ffbulk::bnormal>(md);
   if (v.GetNBlocks() == 0) return;
   using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, v.GetNBlocks(), md, TE::CC);
@@ -319,12 +331,12 @@ void CopyFaceBToAlignedImpl(MeshData<Real> *md) {
       idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto c) {
-          pv(TE::F1, ccbulk::bface_aligned(), c) = pv(TE::F1, ccbulk::bfield(), c);
+          pv(TE::F1, ffbulk::bnormal(), c) = pv(TE::F1, ffbulk::bfield(), c);
           if constexpr (NDIM > 1) {
-            pv(TE::F2, ccbulk::bface_aligned(), c) = pv(TE::F2, ccbulk::bfield(), c);
+            pv(TE::F2, ffbulk::bnormal(), c) = pv(TE::F2, ffbulk::bfield(), c);
           }
           if constexpr (NDIM > 2) {
-            pv(TE::F3, ccbulk::bface_aligned(), c) = pv(TE::F3, ccbulk::bfield(), c);
+            pv(TE::F3, ffbulk::bnormal(), c) = pv(TE::F3, ffbulk::bfield(), c);
           }
         });
       });
@@ -333,7 +345,8 @@ void CopyFaceBToAlignedImpl(MeshData<Real> *md) {
 template <int NDIM>
 void FaceToCellBImpl(MeshData<Real> *md, IndexDomain domain) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::bcc>(md);
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  auto v = riot::MakePack<ffbulk::bfield, ccbulk::bfield>(md);
   if (v.GetNBlocks() == 0) return;
   using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space = lt::GetIndexSpace(domain, 0, v.GetNBlocks(), md, TE::CC);
@@ -346,9 +359,9 @@ void FaceToCellBImpl(MeshData<Real> *md, IndexDomain domain) {
         auto pv = RiotLoop::make_pack_view(idx_range, v);
         RiotLoop::inner(idx_range, [&](const auto c) {
           const auto [k, j, i] = idx_range.GetKJI(c);
-          pv(ccbulk::bcc(0), c) = CellBComponent<0, NDIM>(coords, k, j, i, pv, c, d1);
-          pv(ccbulk::bcc(1), c) = CellBComponent<1, NDIM>(coords, k, j, i, pv, c, d2);
-          pv(ccbulk::bcc(2), c) = CellBComponent<2, NDIM>(coords, k, j, i, pv, c, d3);
+          pv(ccbulk::bfield(0), c) = CellBComponent<0, NDIM>(coords, k, j, i, pv, c, d1);
+          pv(ccbulk::bfield(1), c) = CellBComponent<1, NDIM>(coords, k, j, i, pv, c, d2);
+          pv(ccbulk::bfield(2), c) = CellBComponent<2, NDIM>(coords, k, j, i, pv, c, d3);
         });
       });
 }
@@ -356,7 +369,8 @@ void FaceToCellBImpl(MeshData<Real> *md, IndexDomain domain) {
 template <int NDIM>
 void CalculateDivBImpl(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto v = riot::MakePack<ccbulk::bfield, ccbulk::divb>(md);
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  auto v = riot::MakePack<ffbulk::bfield, ccbulk::divb>(md);
   if (v.GetNBlocks() == 0) return;
   using lt = RiotUtils::LoopType<LoopConstraint::DifferentMemSpaces>;
   auto idx_space =
@@ -378,7 +392,8 @@ void CalculateDivBImpl(MeshData<Real> *md) {
 template <int NDIM>
 Real MaxDivBImpl(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto v = riot::MakePack<ccbulk::bfield>(md);
+  namespace ffbulk = face_variables::face_averaged::bulk;
+  auto v = riot::MakePack<ffbulk::bfield>(md);
   if (v.GetNBlocks() == 0) return 0.0;
   // Only node-layout bfield is read, so flat views over NN memory
   using rt = RiotUtils::ReductionType<Kokkos::Max<Real>>;
@@ -410,7 +425,7 @@ Real MaxDivBImpl(MeshData<Real> *md) {
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::CopyFaceBToAligned
 //! \brief Copy the normal face field of each active direction into the cell-aligned face
-//!        scratch ccbulk::bface_aligned, so that the flux kernel can read it through the
+//!        scratch ffbulk::bnormal, so that the flux kernel can read it through the
 //!        flat pack views. Covers every cell-memory face index (entire domain).
 void CopyFaceBToAligned(MeshData<Real> *md) {
   switch (md->GetParentPointer()->ndim) {
@@ -465,7 +480,8 @@ TaskStatus UpdateFaceFields(MeshData<Real> *umd, MeshData<Real> *u0md, const Rea
 
 //----------------------------------------------------------------------------------------
 //! \fn  void Hydro::FaceToCellB
-//! \brief Average the face field to cell centers (ccbulk::bcc) over domain. Components in
+//! \brief Average the face field to cell centers (ccbulk::bfield) over domain. Components
+//! in
 //!        collapsed directions are uniform across the cell and copied.
 void FaceToCellB(MeshData<Real> *md, IndexDomain domain) {
   switch (md->GetParentPointer()->ndim) {
@@ -493,11 +509,18 @@ void CalculateDivB(MeshData<Real> *md) {
 }
 
 //----------------------------------------------------------------------------------------
+//! \fn  void Hydro::CalculateDivBMesh
+//! \brief Fill the ccbulk::divb diagnostic before outputs.
+void CalculateDivBMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm) {
+  CalculateDivB(pm->mesh_data.Get().get());
+}
+
+//----------------------------------------------------------------------------------------
 //! \fn  Real Hydro::total_magnetic_energy
 //! \brief History output: volume-integrated magnetic energy B^2/2 (cell-centered field).
 Real total_magnetic_energy(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
-  auto v = riot::MakePack<ccbulk::bcc>(md);
+  auto v = riot::MakePack<ccbulk::bfield>(md);
   if (v.GetNBlocks() == 0) return 0.0;
   using rt = RiotUtils::ReductionType<Kokkos::Sum<Real>>;
   auto idx_space =
@@ -509,8 +532,8 @@ Real total_magnetic_energy(MeshData<Real> *md) {
         RiotLoop::inner_reduce(idx_range, [&](const auto c, Real &leb) {
           const auto [k, j, i] = idx_range.GetKJI(c);
           leb += 0.5 *
-                 (SQR(pv(ccbulk::bcc(0), c)) + SQR(pv(ccbulk::bcc(1), c)) +
-                  SQR(pv(ccbulk::bcc(2), c))) *
+                 (SQR(pv(ccbulk::bfield(0), c)) + SQR(pv(ccbulk::bfield(1), c)) +
+                  SQR(pv(ccbulk::bfield(2), c))) *
                  coords.CellVolume(k, j, i);
         });
       });

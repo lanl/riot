@@ -57,7 +57,7 @@ using sum_bulk_recon_types = RiotLoop::IndexedVarTypeList<
 //! \brief  Cell-centered magnetic field reconstructed to faces (MHD only; the normal
 //!         component is replaced by the face-centered field in the Riemann solve).
 using mhd_recon_types =
-    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::bcc>;
+    RiotLoop::IndexedVarTypeList<cell_variables::cell_averaged::bulk::bfield>;
 
 //! \brief  Per-material quantities reconstructed to faces and kept for every material.
 using mat_recon_types =
@@ -333,6 +333,7 @@ TaskStatus UpdateFaceFields(MeshData<Real> *mu0, MeshData<Real> *mu1, const Real
                             const Real gam1, const Real beta_dt);
 void FaceToCellB(MeshData<Real> *md, IndexDomain domain);
 void CalculateDivB(MeshData<Real> *md);
+void CalculateDivBMesh(Mesh *pm, ParameterInput *pin, parthenon::SimTime &tm);
 Real total_magnetic_energy(MeshData<Real> *md);
 Real max_divb(MeshData<Real> *md);
 void CalculateStrainRate(MeshData<Real> *state);

@@ -52,13 +52,11 @@ def analyze():
     logger.debug("Analyzing test " + __name__)
     data = phdf("build/src/" + problem_id + ".out1.final.phdf")
     if data.Coordinates != "UniformCylindrical":
-        logger.warning(
-            "Skipping " + __name__ + " in a " + data.Coordinates + " build"
-        )
+        logger.warning("Skipping " + __name__ + " in a " + data.Coordinates + " build")
         return True
     analyze_status = True
     v = data.Get("c.c.bulk.velocity", flatten=False)
-    b = data.Get("c.c.bulk.bcc", flatten=False)
+    b = data.Get("c.c.bulk.bfield", flatten=False)
     divb = data.Get("c.c.bulk.divb", flatten=False)
     if np.isnan(v).any() or np.isnan(b).any():
         logger.warning("NaN encountered")

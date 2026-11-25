@@ -358,7 +358,7 @@ void BlockInitData::InitBlock(MeshBlock *pmb, ParameterInput *pin) {
                                    var_mirror_map, mat_tied_mirror_vars, matids);
 
   // face-centered magnetic field (also adds the magnetic energy to the total energy)
-  if (pin->GetOrAddBoolean("hydro", "mhd", false)) {
+  if (pin->GetOrAddBoolean("physics", "mhd", false)) {
     init_magnetic_field(pmb, rc.get(),
                         var_mirror_map.at(ccbulk::total_material_energy::name()));
   }
@@ -398,6 +398,7 @@ template <typename host_mirror_t>
 void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
                                         host_mirror_t &E) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   auto &pyreg = regions.default_python_region;
   const bool have_A = pyreg.HasMethod("f_b_vector_potential");
@@ -426,7 +427,7 @@ void BlockInitData::init_magnetic_field(MeshBlock *pmb, MeshBlockData<Real> *rc,
     return coords->Volume(parthenon::CellLevel::same, te, k, j, i);
   };
 
-  auto bvar = rc->GetVarPtr(ccbulk::bfield::name());
+  auto bvar = rc->GetVarPtr(ffbulk::bfield::name());
   auto bh = bvar->data.GetHostMirror();
   for (int d = 0; d < 3; d++) {
     element_loop(faces[d], [&](const int k, const int j, const int i) {

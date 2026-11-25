@@ -134,7 +134,9 @@ Packages_t RiotDriver::ProcessPackages(std::unique_ptr<ParameterInput> &pin) {
   if (do_lasers) PARTHENON_REQUIRE(do_ionization, "Lasers requires ionization.");
   if (do_prescribed_sources)
     PARTHENON_REQUIRE(do_hydro, "Prescribed sources requires hydro.");
-  const bool do_mhd = pin->GetOrAddBoolean("hydro", "mhd", false);
+  const bool do_mhd =
+      pin->GetOrAddBoolean("physics", "mhd", false,
+                           "Evolve the ideal MHD equations with constrained transport");
   if (do_mhd) {
     PARTHENON_REQUIRE(do_hydro, "MHD requires hydro.");
     PARTHENON_REQUIRE(!do_radiation_transport,

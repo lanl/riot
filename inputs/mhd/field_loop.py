@@ -63,7 +63,7 @@ def make_input():
             "c.c.bulk.rho",
             "c.c.bulk.velocity",
             "c.c.bulk.pressure",
-            "c.c.bulk.bcc",
+            "c.c.bulk.bfield",
             "c.c.bulk.divb",
         ],
         file_type="hdf5",
@@ -105,16 +105,16 @@ def make_input():
 
     riot.input("material0", eos_type="IdealGas", Gamma=5.0 / 3.0, Cv=1.0)
 
-    riot.input("physics", hydro=True)
+    riot.input("physics", hydro=True, mhd=True)
 
-    riot.input("hydro", recon="plm", cfl=0.4, mhd=True)
+    riot.input("hydro", recon="plm", cfl=0.4)
 
     if args.amr:
         # Refine where B_x > 0 or B_y > 0, so fine/coarse boundaries cut through the loop
         for n in range(2):
             riot.input(
                 "parthenon/refinement" + str(n),
-                field="c.c.bulk.bcc",
+                field="c.c.bulk.bfield",
                 vector_i=n,
                 method="magnitude",
                 refine_tol=0.2 * A0,

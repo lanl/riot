@@ -51,14 +51,14 @@ namespace Hydro {
 std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                                             StateDescriptor *mat_pkg) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   const int nghost = parthenon::Globals::nghost;
   auto hydro = std::make_shared<StateDescriptor>("hydro");
   Params &params = hydro->AllParams();
 
   const bool do_ionization = pin->GetOrAddBoolean("physics", "ionization", false);
-  const bool do_mhd = pin->GetOrAddBoolean(
-      "hydro", "mhd", false, "Evolve the ideal MHD equations with constrained transport");
+  const bool do_mhd = pin->GetOrAddBoolean("physics", "mhd", false);
   params.Add("do_mhd", do_mhd);
   bool do_plasma_viscosity = false;
   if (do_ionization) {
@@ -145,7 +145,8 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     solver = "hlld";
   }
   if (solver == "hlld") {
-    PARTHENON_REQUIRE_THROWS(do_mhd, "The hlld Riemann solver requires <hydro>/mhd=true");
+    PARTHENON_REQUIRE_THROWS(do_mhd,
+                             "The hlld Riemann solver requires <physics>/mhd=true");
     params.Add("riemann_solver", RiemannSolver::hlld);
   } else if (solver == "hllc") {
     params.Add("riemann_solver", RiemannSolver::hllc);
@@ -282,13 +283,13 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     m.RegisterRefinementOps<parthenon::refinement_ops::ProlongateSharedMinMod,
                             parthenon::refinement_ops::RestrictAverage,
                             parthenon::refinement_ops::ProlongateInternalTothAndRoe>();
-    hydro->AddField<ccbulk::bfield>(m);
+    hydro->AddField<ffbulk::bfield>(m);
 
     // Cell-centered magnetic field (average of the face fields)
     m = Metadata({Metadata::Cell, Metadata::Intensive, Metadata::Vector,
                   Metadata::Derived, Metadata::OneCopy},
                  vel_arr_size);
-    hydro->AddField<ccbulk::bcc>(m);
+    hydro->AddField<ccbulk::bfield>(m);
 
     // Divergence of B (diagnostic)
     m = Metadata({Metadata::Cell, Metadata::Derived, Metadata::OneCopy});
@@ -298,12 +299,12 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
     // flux proxy, and the two transverse EMFs (slot0 = E_tbc, slot1 = E_tac)
     m = Metadata(
         {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned});
-    hydro->AddField<ccbulk::bface_aligned>(m);
-    hydro->AddField<ccbulk::face_vrho>(m);
+    hydro->AddField<ffbulk::bnormal>(m);
+    hydro->AddField<ffbulk::vrho>(m);
     m = Metadata(
         {Metadata::Face, Metadata::Derived, Metadata::OneCopy, Metadata::CellMemAligned},
         std::vector<int>{2});
-    hydro->AddField<ccbulk::face_emf>(m);
+    hydro->AddField<ffbulk::emf>(m);
   }
 
   // Hydro Timestep
@@ -342,6 +343,7 @@ std::shared_ptr<StateDescriptor> Initialize(ParameterInput *pin,
                                   total_magnetic_energy, "ME");
     scalar_histories.emplace_back(parthenon::UserHistoryOperation::max, max_divb,
                                   "max_divB_dx");
+    hydro->UserWorkBeforeOutputMesh = CalculateDivBMesh;
   }
   if (!scalar_histories.empty()) {
     hydro->AddParam<>(parthenon::hist_param_key, scalar_histories, true);
@@ -635,7 +637,7 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
     do_plasma_viscosity = pm->packages.Get("ionization")->Param<bool>("plasma_viscosity");
   }
 
-  auto v = riot::MakePack<ccbulk::pressure, ccbulk::rho, ccbulk::velocity, ccbulk::bcc,
+  auto v = riot::MakePack<ccbulk::pressure, ccbulk::rho, ccbulk::velocity, ccbulk::bfield,
                           ccmat::volume_fraction, cm::deviatoric_stress,
                           ccbulk::ion_shear_viscosity, ccbulk::strain_rate>(
       state, strength_mats);
@@ -690,9 +692,9 @@ TaskStatus CalculateGeometricSource(MeshData<Real> *state, MeshData<Real> *src) 
         if constexpr (parthenon::IsCoord<parthenon::UniformCylindrical>()) {
           if (do_mhd) {
             RiotLoop::inner(idx_range, [&](const auto kji) {
-              const Real br = pv(ccbulk::bcc(0), kji);
-              const Real bz = pv(ccbulk::bcc(1), kji);
-              const Real bphi = pv(ccbulk::bcc(2), kji);
+              const Real br = pv(ccbulk::bfield(0), kji);
+              const Real bz = pv(ccbulk::bfield(1), kji);
+              const Real bphi = pv(ccbulk::bfield(2), kji);
               stress(kji) += 0.5 * (br * br + bz * bz - bphi * bphi);
               shear(kji) -= br * bphi;
             });
@@ -813,7 +815,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
   const bool do_strength = pm->packages.Get("riot")->Param<bool>("do_strength");
   const bool do_mhd = params.Get<bool>("do_mhd");
   auto v = riot::MakePack<ccbulk::bulk_modulus, ccbulk::shear_modulus, ccbulk::rho,
-                          ccbulk::velocity, ccbulk::max_signal, ccbulk::bcc>(md);
+                          ccbulk::velocity, ccbulk::max_signal, ccbulk::bfield>(md);
   const int ndim = pm->ndim;
 
   using rt = RiotUtils::ReductionType<Kokkos::Min<Real>>;
@@ -833,8 +835,8 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
           const Real cs = std::sqrt(a2);
           Real b2 = 0.0;
           if (do_mhd) {
-            b2 = SQR(pv(ccbulk::bcc(0), idx)) + SQR(pv(ccbulk::bcc(1), idx)) +
-                 SQR(pv(ccbulk::bcc(2), idx));
+            b2 = SQR(pv(ccbulk::bfield(0), idx)) + SQR(pv(ccbulk::bfield(1), idx)) +
+                 SQR(pv(ccbulk::bfield(2), idx));
           }
           Real denom = 0.0;
           for (int d = 0; d < ndim; d++) {
@@ -844,7 +846,7 @@ Real EstimateTimestepMesh(MeshData<Real> *md) {
             if (do_mhd) {
               // Fast magnetosonic speed along d (Heaviside-Lorentz units)
               const Real va2 = ratio(b2, rho);
-              const Real vad2 = ratio(SQR(pv(ccbulk::bcc(d), idx)), rho);
+              const Real vad2 = ratio(SQR(pv(ccbulk::bfield(d), idx)), rho);
               const Real s = a2 + va2;
               const Real cf2 =
                   0.5 * (s + std::sqrt(std::max(SQR(s) - 4.0 * a2 * vad2, 0.0)));

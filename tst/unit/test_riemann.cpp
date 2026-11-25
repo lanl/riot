@@ -332,8 +332,8 @@ MHDFlux RunHLLD(const MHDState &l, const MHDState &r, const Real bn) {
   return RunOnDeviceMHD(KOKKOS_LAMBDA(MHDFlux & f) {
     f.smax = Hydro::lr_to_flux_hlld<DIR>(
         l.rho, r.rho, l.v1, r.v1, l.v2, r.v2, l.v3, r.v3, l.u, r.u, l.P, r.P, l.c, r.c,
-        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, f.f_v1, f.f_v2, f.f_v3, f.f_eng,
-        f.v1face, f.v2face, f.v3face, f.riemann_vel, f.emf0, f.emf1, f.vrho);
+        bn, l.b1, r.b1, l.b2, r.b2, l.b3, r.b3, f.f_v1, f.f_v2, f.f_v3, f.f_eng, f.v1face,
+        f.v2face, f.v3face, f.riemann_vel, f.emf0, f.emf1, f.vrho);
   });
 }
 template <int DIR>
@@ -373,8 +373,8 @@ Real FastSpeed(const MHDState &s, const int n) {
   const Real asq = s.c * s.c;
   const Real bsq = s.B2() / s.rho;
   const Real bnsq = s.B(n) * s.B(n) / s.rho;
-  return std::sqrt(0.5 * (asq + bsq + std::sqrt((asq + bsq) * (asq + bsq) -
-                                                4.0 * asq * bnsq)));
+  return std::sqrt(0.5 *
+                   (asq + bsq + std::sqrt((asq + bsq) * (asq + bsq) - 4.0 * asq * bnsq)));
 }
 
 void CheckMHDFlux(const MHDFlux &got, const MHDFlux &expected, const Real tol = 1e-10) {
@@ -389,8 +389,8 @@ void CheckMHDFlux(const MHDFlux &got, const MHDFlux &expected, const Real tol = 
 }
 
 // Moving, off-axis magnetized state with every field and velocity component nonzero.
-constexpr MHDState kMHDState{/*rho*/ 2.0, /*v1*/ 0.3,  /*v2*/ -0.4, /*v3*/ 0.1,
-                             /*u*/ 2.5,   /*P*/ 1.5,   /*c*/ 1.2,   /*b1*/ 0.7,
+constexpr MHDState kMHDState{/*rho*/ 2.0, /*v1*/ 0.3, /*v2*/ -0.4, /*v3*/ 0.1,
+                             /*u*/ 2.5,   /*P*/ 1.5,  /*c*/ 1.2,   /*b1*/ 0.7,
                              /*b2*/ -0.5, /*b3*/ 0.9};
 
 // Builds a state from components given in the (normal, ta, tb) frame of direction DIR.
@@ -551,7 +551,8 @@ TEST_CASE("HLLD is finite and continuous as the normal field vanishes",
 template <int DIR>
 void CheckHLLDMirrorSymmetry() {
   constexpr int n = DIR - 1;
-  const MHDState l = Rotated<DIR>(1.08, 1.2, 0.01, 0.5, 2.38, 0.95, 1.2, 0.56, 1.02, 0.56);
+  const MHDState l =
+      Rotated<DIR>(1.08, 1.2, 0.01, 0.5, 2.38, 0.95, 1.2, 0.56, 1.02, 0.56);
   const MHDState r = Rotated<DIR>(1.0, 0.0, 0.0, 0.0, 1.5, 1.0, 1.3, 0.56, 1.13, 0.56);
   auto mirror = [](MHDState s) {
     if (n == 0) s.v1 = -s.v1, s.b1 = -s.b1;

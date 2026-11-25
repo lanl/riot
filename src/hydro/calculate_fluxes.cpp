@@ -177,6 +177,7 @@ BulkRiemannFluxesMHD(const Pack_t &v, const IdxRange &idx_range, Delta delta,
                      const MHDBulk &mhd_minus, const MHDBulk &mhd_plus, Scratch &face_vel,
                      Scratch &riemann_vel, const bool store_vf) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   using TE = parthenon::TopologicalElement;
   constexpr auto te = (DIR == X1DIR) ? TE::F1 : (DIR == X2DIR ? TE::F2 : TE::F3);
   constexpr int dir = static_cast<int>(DIR);
@@ -203,11 +204,11 @@ BulkRiemannFluxesMHD(const Pack_t &v, const IdxRange &idx_range, Delta delta,
         sum_bulk_minus(ccbulk::internal_energy(), kji_R),
         set_bulk_plus(ccbulk::pressure(), kji_L),
         set_bulk_minus(ccbulk::pressure(), kji_R), cs_L, cs_R,
-        pv(te, ccbulk::bface_aligned(), kji), mhd_plus(ccbulk::bcc(0), kji_L),
-        mhd_minus(ccbulk::bcc(0), kji_R), mhd_plus(ccbulk::bcc(1), kji_L),
-        mhd_minus(ccbulk::bcc(1), kji_R), mhd_plus(ccbulk::bcc(2), kji_L),
-        mhd_minus(ccbulk::bcc(2), kji_R), f_v1, f_v2, f_v3, f_eng, v1face, v2face, v3face,
-        riemann_vel(kji), emf0, emf1, vrho);
+        pv(te, ffbulk::bnormal(), kji), mhd_plus(ccbulk::bfield(0), kji_L),
+        mhd_minus(ccbulk::bfield(0), kji_R), mhd_plus(ccbulk::bfield(1), kji_L),
+        mhd_minus(ccbulk::bfield(1), kji_R), mhd_plus(ccbulk::bfield(2), kji_L),
+        mhd_minus(ccbulk::bfield(2), kji_R), f_v1, f_v2, f_v3, f_eng, v1face, v2face,
+        v3face, riemann_vel(kji), emf0, emf1, vrho);
 
     fv(ccbulk::momentum(0), kji) = f_v1;
     fv(ccbulk::momentum(1), kji) = f_v2;
@@ -215,9 +216,9 @@ BulkRiemannFluxesMHD(const Pack_t &v, const IdxRange &idx_range, Delta delta,
     fv(ccbulk::total_material_energy(), kji) = f_eng;
     face_vel(kji) = (DIR == X1DIR) ? v1face : ((DIR == X2DIR) ? v2face : v3face);
     pv(te, ccbulk::face_signal(), kji) = signal_speed;
-    pv(te, ccbulk::face_emf(0), kji) = emf0;
-    pv(te, ccbulk::face_emf(1), kji) = emf1;
-    pv(te, ccbulk::face_vrho(), kji) = vrho;
+    pv(te, ffbulk::emf(0), kji) = emf0;
+    pv(te, ffbulk::emf(1), kji) = emf1;
+    pv(te, ffbulk::vrho(), kji) = vrho;
     StoreFaceVelocity<DIR>(pv, kji, store_vf, v1face, v2face, v3face);
   });
 }
@@ -854,8 +855,8 @@ void CalculateFluxesImpl(MeshData<Real> *md, const Pack_t &v, const StrPack_t &v
               GetTypeIndexedPerPointScratch<Real, mhd_recon_types>(halo_range);
           auto mhd_plus =
               GetTypeIndexedPerPointScratch<Real, mhd_recon_types>(halo_range);
-          ReconCells<ccbulk::bcc>(pv, halo_range, delta, mhd_minus, mhd_plus, recon_tag,
-                                  0, slope_limits.bulk);
+          ReconCells<ccbulk::bfield>(pv, halo_range, delta, mhd_minus, mhd_plus,
+                                     recon_tag, 0, slope_limits.bulk);
           halo_range.TeamBarrier();
           BulkRiemannFluxesMHD<DIR>(v, idx_range, delta, set_bulk_minus, set_bulk_plus,
                                     sum_bulk_minus, sum_bulk_plus, mhd_minus, mhd_plus,
@@ -924,6 +925,7 @@ void CalculateFluxesDir(const bool do_thinc, const Args &...args) {
 //! \brief Reconstruct state and calculate hydrodynamic fluxes in all directions
 TaskStatus CalculateFluxes(MeshData<Real> *md) {
   namespace ccbulk = cell_variables::cell_averaged::bulk;
+  namespace ffbulk = face_variables::face_averaged::bulk;
   namespace ccmat = cell_variables::cell_averaged::mat;
   namespace cm = cell_variables::material_averaged;
 
@@ -961,10 +963,10 @@ TaskStatus CalculateFluxes(MeshData<Real> *md) {
   auto v =
       riot::MakePack<ccbulk::pressure, ccbulk::velocity, ccbulk::momentum,
                      ccbulk::total_material_energy, ccbulk::electron_internal_energy,
-                     ccbulk::face_signal, ccbulk::face_velocity, ccbulk::bcc,
-                     ccbulk::bface_aligned, ccbulk::face_emf, ccbulk::face_vrho,
-                     ccmat::volume_fraction, ccmat::rho, cm::rho, cm::internal_energy,
-                     cm::bulk_modulus, cm::electron_internal_energy>(
+                     ccbulk::face_signal, ccbulk::face_velocity, ccbulk::bfield,
+                     ffbulk::bnormal, ffbulk::emf, ffbulk::vrho, ccmat::volume_fraction,
+                     ccmat::rho, cm::rho, cm::internal_energy, cm::bulk_modulus,
+                     cm::electron_internal_energy>(
           md, std::vector<int>{},
           std::set<parthenon::PDOpt>{parthenon::PDOpt::WithFluxes});
   const int nblocks = v.GetNBlocks();

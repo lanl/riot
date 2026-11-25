@@ -251,74 +251,61 @@ inline TaskStatus UpdateToNextStage(MeshData<Real> *umd, MeshData<Real> *u0md,
 
 //----------------------------------------------------------------------------------------
 //! \fn  TaskStatus sparse_update::DeepCopyData
-//! \brief
+//! \brief Deep copy the fields selected by flags over the entire domain. TT selects cell
+//!        or face fields. Face fields are copied through flat views of node memory, so
+//!        the selected face fields must have node layout (no Metadata::CellMemAligned).
 //  TODO(@jdolence): do we really want this templated?
-template <typename F, typename T>
-TaskStatus DeepCopyData(const std::vector<F> &flags, T *to, T *from) {
-  Kokkos::Profiling::pushRegion("Task_DeepCopy");
-
-  auto desc = riot::MakePackDescriptor(flags, to);
-  const auto &dst = riot::GetPack(desc, to);
-  const auto &src = riot::GetPack(desc, from);
-
-  const int nblocks = src.GetNBlocks();
-  using lt = RiotUtils::LoopType<>;
+template <typename F, typename T,
+          parthenon::TopologicalType TT = parthenon::TopologicalType::Cell>
+TaskStatus DeepCopyData(std::vector<F> flags, T *to, T *from) {
   using TE = parthenon::TopologicalElement;
-  auto idx_space = lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, TE::CC);
-
-  // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
-  // WeightedSumData. This was the fastest and most portable.
-  RiotLoop::outer(
-      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-        for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-          auto vsrc = RiotLoop::make_var_view(idx_range, src, var);
-          auto vdst = RiotLoop::make_var_view(idx_range, dst, var);
-          RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-        }
-      });
-  Kokkos::Profiling::popRegion(); // Task_DeepCopy
-  return TaskStatus::complete;
-}
-
-//----------------------------------------------------------------------------------------
-//! \fn  TaskStatus sparse_update::DeepCopyFaceData
-//! \brief Face-field counterpart of DeepCopyData: deep copy the face fields selected by
-//!        flags over the entire domain. Flat views index node memory, so the selected
-//!        fields must have node layout (no Metadata::CellMemAligned).
-template <typename T>
-TaskStatus DeepCopyFaceData(std::vector<MetadataFlag> flags, T *to, T *from) {
-  Kokkos::Profiling::pushRegion("Task_DeepCopyFace");
-  using TE = parthenon::TopologicalElement;
-  flags.push_back(Metadata::Face);
-  for (const auto &[id, m] : from->GetMeshPointer()->resolved_packages->AllFields()) {
-    const bool selected = std::all_of(flags.begin(), flags.end(),
-                                      [&](const auto &f) { return m.IsSet(f); });
-    PARTHENON_REQUIRE(!(selected && m.IsSet(Metadata::CellMemAligned)),
-                      "DeepCopyFaceData does not support cell-aligned face field " +
-                          id.label());
+  constexpr bool face = (TT == parthenon::TopologicalType::Face);
+  static_assert(face || TT == parthenon::TopologicalType::Cell,
+                "DeepCopyData supports cell and face fields");
+  Kokkos::Profiling::pushRegion(face ? "Task_DeepCopyFace" : "Task_DeepCopy");
+  if constexpr (face) {
+    flags.push_back(Metadata::Face);
+    for (const auto &[id, m] : from->GetMeshPointer()->resolved_packages->AllFields()) {
+      const bool selected = std::all_of(flags.begin(), flags.end(),
+                                        [&](const auto &f) { return m.IsSet(f); });
+      PARTHENON_REQUIRE(!(selected && m.IsSet(Metadata::CellMemAligned)),
+                        "DeepCopyData does not support cell-aligned face field " +
+                            id.label());
+    }
   }
 
   auto desc = riot::MakePackDescriptor(flags, to);
   const auto &dst = riot::GetPack(desc, to);
   const auto &src = riot::GetPack(desc, from);
+
   const int nblocks = src.GetNBlocks();
   if (nblocks > 0 && src.GetMaxNumberOfVars() > 0) {
     using lt = RiotUtils::LoopType<>;
+    constexpr TE layout = face ? TE::NN : TE::CC;
     auto idx_space =
-        lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, TE::NN, TE::NN);
+        lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, layout, layout);
+
+    // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
+    // WeightedSumData. This was the fastest and most portable.
     RiotLoop::outer(
         idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-            for (int d = 0; d < 3; d++) {
-              const TE te = (d == 0) ? TE::F1 : ((d == 1) ? TE::F2 : TE::F3);
-              auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
-              auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
+            if constexpr (face) {
+              for (int d = 0; d < 3; d++) {
+                const TE te = (d == 0) ? TE::F1 : ((d == 1) ? TE::F2 : TE::F3);
+                auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
+                auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
+                RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
+              }
+            } else {
+              auto vsrc = RiotLoop::make_var_view(idx_range, src, var);
+              auto vdst = RiotLoop::make_var_view(idx_range, dst, var);
               RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
             }
           }
         });
   }
-  Kokkos::Profiling::popRegion(); // Task_DeepCopyFace
+  Kokkos::Profiling::popRegion();
   return TaskStatus::complete;
 }
 
@@ -332,7 +319,8 @@ TaskStatus DeepCopyIndependentData(T *to, T *from) {
   // fields (the CT magnetic field) have node layout.
   DeepCopyData(std::vector<MetadataFlag>({Metadata::Independent, Metadata::Cell}), to,
                from);
-  return DeepCopyFaceData({Metadata::Independent}, to, from);
+  return DeepCopyData<MetadataFlag, T, parthenon::TopologicalType::Face>(
+      {Metadata::Independent}, to, from);
 }
 
 } // namespace sparse_update

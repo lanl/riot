@@ -37,9 +37,7 @@ def problem_id(d):
 def run(**kwargs):
     for d in directions:
         logger.debug("Generating input " + __name__ + " dir " + str(d))
-        riot.generate(
-            "mhd/brio_wu.py", ["--dir", str(d), "--nx", str(nx), "--full3d"]
-        )
+        riot.generate("mhd/brio_wu.py", ["--dir", str(d), "--nx", str(nx), "--full3d"])
         logger.debug("Runnning test " + __name__ + " dir " + str(d))
         arguments = [
             "parthenon/job/problem_id=" + problem_id(d),
@@ -61,7 +59,7 @@ def load(d):
 
     rho = profile(data.Get("c.c.bulk.rho", False)[0])
     v = data.Get("c.c.bulk.velocity", False)[0]
-    b = data.Get("c.c.bulk.bcc", False)[0]
+    b = data.Get("c.c.bulk.bfield", False)[0]
     divb = data.Get("c.c.bulk.divb", False)
     return (
         rho,
@@ -98,7 +96,9 @@ def analyze():
     # within the initial states, the compound wave drives v_t to about -1.6, and the
     # tangential field reverses between the left and right states.
     if rho.min() < 0.1 or rho.max() > 1.0 + 1.0e-6:
-        logger.warning("Density out of range [{0:g}, {1:g}]".format(rho.min(), rho.max()))
+        logger.warning(
+            "Density out of range [{0:g}, {1:g}]".format(rho.min(), rho.max())
+        )
         analyze_status = False
     if not (-1.8 < vt.min() < -1.3):
         logger.warning("Unexpected minimum v_t: {0:g}".format(vt.min()))
@@ -111,8 +111,6 @@ def analyze():
         for name, a, b in zip(names, ref[:5], other[:5]):
             err = np.abs(a - b).max()
             if err > 1.0e-10:
-                logger.warning(
-                    "X{0} and X1 {1} differ by {2:g}".format(d, name, err)
-                )
+                logger.warning("X{0} and X1 {1} differ by {2:g}".format(d, name, err))
                 analyze_status = False
     return analyze_status
