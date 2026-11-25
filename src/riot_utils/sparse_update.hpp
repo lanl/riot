@@ -287,24 +287,18 @@ TaskStatus DeepCopyData(std::vector<F> flags, T *to, T *from) {
     using lt = RiotUtils::LoopType<>;
     auto idx_space =
         lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, layout, layout);
+    constexpr int nel = parthenon::NumberOfTopologicalElements(TT);
 
     // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
     // WeightedSumData. This was the fastest and most portable.
     RiotLoop::outer(
         idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
           for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-            if constexpr (cell) {
-              auto vsrc = RiotLoop::make_var_view(idx_range, src, var);
-              auto vdst = RiotLoop::make_var_view(idx_range, dst, var);
+            for (int d = 0; d < nel; d++) {
+              const TE te = parthenon::GetTopologicalElementInDir(TT, d);
+              auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
+              auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
               RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-            } else {
-              constexpr int nel = parthenon::NumberOfTopologicalElements(TT);
-              for (int d = 0; d < nel; d++) {
-                const TE te = parthenon::GetTopologicalElementInDir(TT, d);
-                auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
-                auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
-                RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-              }
             }
           }
         });
