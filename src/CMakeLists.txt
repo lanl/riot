@@ -133,6 +133,7 @@ set (SRC_LIST
   riot_driver.hpp
   riot_limits.hpp.in
 
+  riot_utils/sparse_update.cpp
   riot_utils/sparse_update.hpp
   riot_utils/ray_trace.hpp
   riot_utils/riot_loops.hpp

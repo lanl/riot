@@ -26,6 +26,7 @@ namespace sparse_update {
 
 using namespace parthenon::package::prelude;
 using parthenon::MetadataFlag;
+using parthenon::Uid_t;
 
 using dudt_pair_t = std::pair<MeshData<Real> *, std::vector<Uid_t>>;
 using dudt_vec_t = std::vector<dudt_pair_t>;
@@ -255,35 +256,17 @@ namespace impl {
 //! \brief Deep copy the variables uids, which share one memory layout, over the entire
 //!        domain. layout is the element whose index range covers each component's
 //!        allocation (CC for cell and Metadata::CellMemAligned fields, NN otherwise).
+//!        Defined in sparse_update.cpp and instantiated there for MeshData<Real> with
+//!        cell and face fields.
+//  @NOTE: The kernel must be compiled in one translation unit. nvcc stores the host
+//  copy and call operations of a KOKKOS_LAMBDA in TU-local statics that are set when the
+//  lambda is constructed, while the templates that copy the lambda (outer_kokkos) are
+//  merged across TUs at link time. With the kernel in a header instantiated in several
+//  TUs, the linker kept explicit.cpp's outer_kokkos while riot_driver.cpp constructed the
+//  lambda, so the copy called explicit.cpp's unset (null) helper (V100, nvhpc 25.1).
 template <typename T, parthenon::TopologicalType TT>
-void DeepCopyLayout(const std::vector<Uid_t> &uids, const parthenon::TopologicalElement layout,
-                    T *to, T *from) {
-  using TE = parthenon::TopologicalElement;
-  auto desc = riot::MakePackDescriptor(uids, to);
-  const auto &dst = desc.GetPack(to);
-  const auto &src = desc.GetPack(from);
-
-  const int nblocks = src.GetNBlocks();
-  if (nblocks == 0 || src.GetMaxNumberOfVars() == 0) return;
-  using lt = RiotUtils::LoopType<>;
-  auto idx_space =
-      lt::GetIndexSpace(IndexDomain::entire, 0, nblocks, from, layout, layout);
-  constexpr int nel = parthenon::NumberOfTopologicalElements(TT);
-
-  // @NOTE(JMM): Tested against memcpy, Kokkos::deep_copy, Kokkos::local_deep_copy,
-  // WeightedSumData. This was the fastest and most portable.
-  RiotLoop::outer(
-      idx_space, KOKKOS_LAMBDA(const lt::idx_range_t &idx_range, const int b) {
-        for (int var = src.GetLowerBound(b); var <= src.GetUpperBound(b); var++) {
-          for (int d = 0; d < nel; d++) {
-            const TE te = parthenon::GetTopologicalElementInDir(TT, d);
-            auto vsrc = RiotLoop::make_var_view(idx_range, src, te, var);
-            auto vdst = RiotLoop::make_var_view(idx_range, dst, te, var);
-            RiotLoop::inner(idx_range, [&](auto kji) { vdst(kji) = vsrc(kji); });
-          }
-        }
-      });
-}
+void DeepCopyLayout(const std::vector<Uid_t> &uids,
+                    const parthenon::TopologicalElement layout, T *to, T *from);
 } // namespace impl
 
 //----------------------------------------------------------------------------------------
@@ -292,9 +275,9 @@ void DeepCopyLayout(const std::vector<Uid_t> &uids, const parthenon::Topological
 //!        by flags over the entire domain. Fields stored with the cell layout
 //!        (Metadata::CellMemAligned) and with the full element layout are copied by
 //!        separate kernels; when the container only holds one layout, only one pack is
-//!        built. Copy on every block, not just the sparse_physics-active ones: a block can
-//!        become active between RK stages (cell_delta is allocated on ghost receive), and
-//!        its UpdateToNextStage then reads this copy as the start-of-step state.
+//!        built. Copy on every block, not just the sparse_physics-active ones: a block
+//!        can become active between RK stages (cell_delta is allocated on ghost receive),
+//!        and its UpdateToNextStage then reads this copy as the start-of-step state.
 //  TODO(@jdolence): do we really want this templated?
 template <typename F, typename T,
           parthenon::TopologicalType TT = parthenon::TopologicalType::Cell>
